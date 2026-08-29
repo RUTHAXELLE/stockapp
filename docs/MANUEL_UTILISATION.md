@@ -1,7 +1,7 @@
 # Manuel d'utilisation — ERP EMUCI
 
 **Version du logiciel** : branche `main`, commit `5ecb558` (29 août 2026)
-**Version du manuel** : 2.1
+**Version du manuel** : 2.2
 **Périmètre couvert** : 61 entrées de menu et les écrans hors menu,
 10 modules, 16 rôles, 21 sites actifs
 
@@ -95,22 +95,58 @@ ne déclenche pas de changement imposé.
 Écran **Mon Profil**, section « Changer le mot de passe ». C'est le seul
 endroit pour le faire hors contrainte.
 
-### 2.4 L'accueil
+### 2.4 Et ensuite
 
-Après connexion vous arrivez sur l'**accueil**, qui présente les modules
-auxquels votre rôle donne accès sous forme de cartes. Chaque carte ouvre le
-premier écran de son module.
-
-Le **tableau de bord** (section 11.1) montre, lui, ce qui vous concerne
-aujourd'hui.
+Vous arrivez sur l'**accueil**, qui est le point de départ de toute la
+navigation : voir la section 3.
 
 ---
 
 ## 3. S'orienter
 
-La barre latérale gauche regroupe les écrans en **dix modules**. Vous ne
-voyez que ceux auxquels votre rôle donne accès : une barre courte n'est pas
-un défaut d'affichage, c'est votre périmètre.
+La navigation fonctionne en **deux temps** : on choisit un module sur
+l'accueil, puis on circule dans ses écrans par la barre latérale.
+
+### 3.1 L'accueil, le point de départ
+
+C'est l'écran d'arrivée après connexion, et il a sa propre mise en page,
+différente du reste de l'application.
+
+Il présente sous forme de **cartes** les modules auxquels votre rôle donne
+accès. Vous ne voyez que les vôtres : peu de cartes n'est pas un défaut
+d'affichage, c'est votre périmètre.
+
+Cliquer sur une carte ouvre le module, et vous dépose sur **le premier écran
+que votre rôle peut réellement ouvrir** dans ce module — pas sur une page
+fixe. C'est pourquoi deux personnes cliquant sur la même carte peuvent
+atterrir sur des écrans différents.
+
+Revenir à l'accueil **quitte le module en cours**.
+
+### 3.2 La barre latérale, une fois dans un module
+
+Elle ne liste **jamais les dix modules**. Elle contient :
+
+- le bouton **Accueil**, toujours présent, pour revenir au choix des modules ;
+- le **nom du module en cours** ;
+- les **écrans de ce module**, et eux seuls.
+
+C'est la source de confusion la plus fréquente : si vous cherchez un écran
+qui appartient à un autre module, il ne sera pas dans la barre. Repassez par
+l'accueil.
+
+En bas de la barre figure votre **carte utilisateur** : nom, rôle, un lien
+vers **Mon Profil** et le bouton de **déconnexion**.
+
+### 3.3 La barre du haut
+
+Sur tous les écrans d'un module :
+
+- le **titre de l'écran** en cours ;
+- une **cloche de notifications**, avec le nombre de messages non lus ;
+- un **menu utilisateur** déroulant, menant à Mon Profil et à la déconnexion.
+
+### 3.4 Les dix modules
 
 | Module | Ce qu'on y fait | Section |
 |---|---|---|
@@ -657,12 +693,34 @@ pas ici, puisque l'écran sert à agir.
 
 ### 11.1 Le tableau de bord
 
-L'écran d'arrivée. Il montre ce qui vous concerne aujourd'hui, différemment
-selon votre métier : ce qui attend une action d'abord, la synthèse chiffrée
-ensuite, les graphes en soutien.
+Il montre ce qui vous concerne aujourd'hui, différemment selon votre métier.
+Ce n'est pas l'écran d'arrivée après connexion : c'est l'accueil qui l'est
+(section 3.1). On atteint le tableau de bord par le module **Dashboard**.
 
-Un filtre par site est disponible pour les profils qui couvrent plusieurs
+**La rangée d'indicateurs**, en tête, donne les chiffres du périmètre. Ils
+s'affichent selon vos droits : chaque indicateur dépend d'une permission, et
+vous ne voyez que ceux des modules qui vous sont ouverts.
+
+| Indicateur | Dépend du droit de lecture sur |
+|---|---|
+| Engins traités, Plaques posées | `operations` |
+| Bobines actives | `bobines` |
+| Commandes à servir | `commandes_bobines` |
+| Parc actif, Hors service, En maintenance, Fin de cycle ≤ 30 j | `equipements` |
+
+**En dessous**, deux blocs de tête — « Production du mois » et « Taux de
+validation » (points validés sur points saisis) — puis les blocs de détail,
+et enfin les graphes.
+
+**Un bouton Exporter** figure en haut à droite si vous avez le droit de
+lecture sur le module `rapports`.
+
+Un **filtre par site** est disponible pour les profils qui couvrent plusieurs
 sites. Le coordinateur, lui, est verrouillé sur le sien.
+
+> **Le rôle PDG (`lecteur`) garde la version précédente** du tableau de bord,
+> volontairement : la vue exécutive lui sert de tableau de bord, et la rangée
+> d'indicateurs ferait double emploi.
 
 > **Si le tableau de bord affiche un mois qui n'est pas le mois en cours**,
 > c'est voulu : quand le mois courant n'a encore aucun relevé validé, la
@@ -827,9 +885,13 @@ n'est pas changé, aucun autre écran ne s'ouvre. Voir section 2.1.
 L'écran « Changer mot de passe » ne sert qu'au changement imposé. Pour le
 faire de votre propre initiative, passez par **Mon Profil**. Voir section 2.3.
 
-**Je ne vois pas un module dans le menu.**
+**Je ne vois pas un module sur l'accueil.**
 Votre rôle ne l'ouvre pas. Ce n'est pas un défaut d'affichage. Voyez un
 administrateur si vous pensez que c'est une erreur de configuration.
+
+**Je cherche un écran mais il n'est pas dans la barre latérale.**
+La barre ne montre que les écrans du module en cours. Repassez par l'accueil
+et ouvrez le module auquel cet écran appartient. Voir section 3.2.
 
 **Mes chiffres n'apparaissent pas dans les rapports.**
 Vérifiez que vos points journaliers sont **validés** et non restés en
@@ -897,6 +959,7 @@ Trois points ne figurent dans aucun code et attendent une personne du métier :
 | 1.0 | 2026-08-29 | `5ecb558` | Première édition : 4 circuits principaux, rôles, permissions |
 | 2.0 | 2026-08-29 | `5ecb558` | Édition complète : les 61 écrans, structure par module |
 | 2.1 | 2026-08-29 | `5ecb558` | Changement de mot de passe imposé à la première connexion ; ajout des écrans hors menu |
+| 2.2 | 2026-08-29 | `5ecb558` | Navigation corrigée : l'accueil est le point de départ, la barre latérale ne montre que le module en cours ; tableau de bord v2 |
 
 > **Tenir ce manuel à jour.** Il décrit l'état du logiciel au commit
 > indiqué. À chaque évolution fonctionnelle notable, mettez à jour la
