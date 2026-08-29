@@ -158,20 +158,59 @@ Entité centrale : `op_points_journaliers`. Un relevé porte un site, une date,
 un type, et les quantités produites — véhicules par catégorie, plaques,
 rivets utilisés et endommagés, heures de travail.
 
-**Cycle de vie :**
+#### Cycle de vie
 
-| Statut | Effet |
-|---|---|
-| `brouillon` | Saisi, non transmis. **N'entre dans aucun agrégat.** |
-| `valide` | Validé par le superviseur. Compte partout. |
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> brouillon : saisie par le coordinateur
+    brouillon --> en_attente_validation : soumission
+    en_attente_validation --> valide : validation superviseur
+    en_attente_validation --> rejete : rejet, motif obligatoire
+    rejete --> brouillon : reprise par le coordinateur
+    valide --> valide : correction acceptée
+    valide --> [*]
+```
 
-**Règles :**
+| Statut | Qui agit | Effet |
+|---|---|---|
+| `brouillon` | Coordinateur | Saisi, non transmis. **N'entre dans aucun agrégat.** |
+| `en_attente_validation` | — | Transmis, attend le superviseur |
+| `valide` | Superviseur | Compte dans tous les indicateurs |
+| `rejete` | Superviseur | Refusé avec motif ; le coordinateur reprend |
 
-1. Seuls les points `valide` alimentent les indicateurs, les rapports et les
-   tableaux de bord.
-2. Un point validé n'est plus modifiable directement. La correction passe par
-   une entrée de `demandes_correction_saisie`, traitée par le superviseur.
-3. Le rejet d'un point exige un motif (`motif_rejet`).
+> **Trois statuts, pas deux.** La distinction `brouillon` /
+> `en_attente_validation` est structurante : un brouillon n'est visible que de
+> son auteur, un point en attente est dans la file du superviseur. Les
+> confondre fait chercher des points là où ils ne sont pas.
+
+#### Correction d'un point validé
+
+Un point `valide` n'est plus modifiable directement. La correction suit son
+propre circuit :
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Coordinateur
+    participant S as Superviseur
+    participant P as Point journalier
+    participant V as Validation stock matin
+    C->>S: demande de correction (motif)
+    S->>S: examen
+    alt acceptée
+        S->>P: applique la correction
+        S->>V: bascule la validation du jour en « réajusté »
+    else refusée
+        S->>C: refus motivé
+    end
+```
+
+**Effet de bord à connaître** : accepter une correction ne touche pas
+seulement le point. La **validation du stock du matin** du même site et de la
+même date passe au statut `reajuste`. Les deux domaines sont liés, parce
+qu'un chiffre de production corrigé invalide le rapprochement de stock qui en
+découlait.
 
 ### 5.2 Rapprochement EMUCI
 
@@ -241,15 +280,70 @@ actifs.
 Les champs de formulaire ne sont pas en base : ils sont déclarés dans
 `includes/demandes_champs.php`, et un moteur de rendu générique les affiche.
 
-### 7.2 Cycle de vie
+### 7.2 Workflow d'une demande
 
-`brouillon` → `en_attente` → `en_cours` → `approuve` → `approuve_traitement`
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> brouillon
+    brouillon --> en_attente : soumission
+    en_attente --> en_cours : premier visa
+    en_cours --> en_cours : visa intermédiaire
+    en_cours --> approuve : dernier visa, type sans traitement IT
+    en_cours --> approuve_traitement : dernier visa, type avec traitement IT
+    en_attente --> rejete : rejet motivé
+    en_cours --> rejete : rejet motivé
+    approuve_traitement --> traite : exécution par l'informatique
+    approuve --> [*]
+    traite --> [*]
+    rejete --> [*]
+```
 
-`rejete` est atteignable depuis toute étape, avec motif obligatoire.
+**La bifurcation finale dépend du type, pas de la demande.** Six types sur
+neuf portent le drapeau `traitement_it` :
 
-La distinction **approuvé / traité** est structurante : approuvé signifie
-autorisé, traité signifie exécuté par l'informatique
-(`di_traiter_it`).
+| Traitement IT requis | Types |
+|---|---|
+| Oui | Création d'accès NSIIV, basculement d'accès, basculement de compte, transfert d'agent, création de site, changement de géolocalisation |
+| Non | Autorisation d'absence, imputation courrier, demande exceptionnelle |
+
+Pour les six premiers, **approuvé ne suffit pas** : la demande reste à faire
+tant que l'informatique ne l'a pas marquée traitée (`traite_it`), avec
+éventuellement un numéro de ticket GLPI.
+
+#### Le déroulé, acteur par acteur
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as Demandeur
+    participant N as N+1
+    participant V as Valideurs suivants
+    participant IT as Informatique
+    D->>D: remplit le formulaire du type
+    Note over D: rattachement à un département exigé
+    D->>N: soumet
+    N-->>D: rejet motivé
+    N->>V: vise
+    loop chaque étape restante
+        V->>V: vise, ou rejette avec motif
+    end
+    alt type avec traitement IT
+        V->>IT: approuvée pour traitement
+        IT->>IT: exécute, puis marque traitée
+    else type sans traitement IT
+        V->>D: approuvée
+    end
+```
+
+#### Garde-fous
+
+| Garde | Effet si non satisfaite |
+|---|---|
+| Le demandeur est rattaché à un département | Soumission refusée, message explicite |
+| L'utilisateur n'est pas le demandeur | Impossible de viser sa propre demande |
+| La demande est en `en_attente` ou `en_cours` | Toute autre tentative de visa est rejetée |
+| Un rejet porte un motif | Rejet refusé sans motif |
 
 ### 7.3 Résolution des valideurs
 
@@ -285,23 +379,110 @@ message explicite. Les administrateurs sont exemptés.
 Le domaine le plus riche : 80 fonctions, 14 tables. Il porte des **règles de
 gestion numérotées** dans le code, reprises ici.
 
-### 8.1 Cycle de vie d'une FEB
+### 8.1 Workflow d'une FEB
+
+C'est le circuit le plus long du produit : **huit statuts**, quatre acteurs,
+et trois portes de retour en arrière.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> brouillon
+    brouillon --> en_attente_n1 : soumission, si le département a un N+1
+    brouillon --> soumise : soumission, sans N+1
+    en_attente_n1 --> soumise : aval du N+1
+    en_attente_n1 --> brouillon : refus motivé du N+1
+    soumise --> prise_en_charge : un acheteur la prend
+    prise_en_charge --> soumise : restitution à la file
+    prise_en_charge --> en_validation : lancement du circuit
+    en_validation --> confirmee : dernier visa du palier
+    en_validation --> rejetee : rejet motivé
+    rejetee --> prise_en_charge : reprise par l'acheteur
+    en_validation --> prise_en_charge : réouverture administrative
+    confirmee --> cloturee : bascule en commande
+    cloturee --> [*]
+```
+
+> **Le statut `en_attente_n1` conditionne tout le reste.** Sans l'aval du
+> supérieur hiérarchique, le service achats ne voit même pas la demande. La
+> personne est **figée** sur la fiche à la soumission (RG-11) : un changement
+> de responsable en cours de circuit ne déplace pas une signature attendue.
+
+#### Qui agit, et sur quoi
+
+| Transition | Acteur | Garde |
+|---|---|---|
+| Soumission | Demandeur | Trois familles au maximum (RG-02) |
+| Aval ou refus | N+1 figé sur la fiche | — |
+| Prise en charge | Acheteur | `acheteur_id` vide **et** statut `soumise` |
+| Restitution | Le même acheteur | Statut `prise_en_charge` |
+| Réattribution | Responsable | Statut `prise_en_charge` |
+| Lancement de la validation | Acheteur | Une offre retenue par lot, fournisseurs conformes, un palier couvre le montant |
+| Visa | Signataires du palier | Ne pas être le demandeur |
+| Reprise après rejet | Le même acheteur | Statut `rejetee` |
+| Réouverture | Administrateur | Statut `en_validation` — annule les signatures, tracé |
+| Bascule en commande | Acheteur | Statut `confirmee` |
+
+#### Le déroulé complet
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as Demandeur
+    participant N as N+1
+    participant A as Acheteur
+    participant S as Signataires du palier
+    participant M as Stock magasin
+    participant DP as Stock département
+    D->>D: rédige la FEB (site, service, lignes)
+    D->>N: soumet
+    N-->>D: refus motivé, retour en brouillon
+    N->>A: aval, la FEB entre en file
+    A->>A: prend en charge
+    A->>A: constitue les lots, collecte les offres
+    Note over A: une seule offre retenue par lot,<br/>fournisseur conforme exigé
+    A->>S: lance la validation (palier selon le montant total)
+    S-->>A: rejet motivé, l'acheteur reprend
+    loop chaque signataire du palier
+        S->>S: vise
+    end
+    S->>A: FEB confirmée
+    A->>A: saisit la DA puis le BC
+    M->>DP: réception : débite le magasin, crédite le département
+    A->>A: clôture, ou clôture de reliquat
+```
+
+#### Les trois retours en arrière
+
+Un circuit qui ne sait que remonter est un circuit qui bloque. Trois portes
+de sortie existent, chacune avec sa condition :
+
+| Porte | Depuis | Vers | Réservée à | Effet |
+|---|---|---|---|---|
+| Refus du N+1 | `en_attente_n1` | `brouillon` | Le N+1 figé | Le demandeur corrige et resoumet |
+| Reprise après rejet | `rejetee` | `prise_en_charge` | L'acheteur en charge | Les signatures sont remises à zéro |
+| Réouverture | `en_validation` | `prise_en_charge` | Administrateur seul | Annule les signatures, tracé explicitement |
+
+La troisième est **la seule porte de sortie d'une FEB en cours de
+validation** : offres et montants y sont verrouillés (RG-12).
+
+### 8.2 Les huit statuts
 
 | Statut | Signification |
 |---|---|
 | `brouillon` | En rédaction par le demandeur |
-| `soumise` | Transmise au service achats |
+| `en_attente_n1` | Attend l'aval du supérieur hiérarchique |
+| `soumise` | En file, aucun acheteur attribué |
 | `prise_en_charge` | Un acheteur se l'est attribuée |
-| `en_validation` | Dans le circuit de visas |
+| `en_validation` | Dans le circuit de visas, montants verrouillés |
 | `confirmee` | Validée, prête à commander |
 | `cloturee` | Terminée |
-| `rejetee` | Refusée |
+| `rejetee` | Refusée à une étape, avec motif |
 
-**Trois niveaux d'urgence** : normale (0), urgente (1), critique (2).
+Trois niveaux d'urgence : normale, urgente, critique. Le numéro est attribué
+automatiquement, par exercice.
 
-Le numéro de FEB est attribué automatiquement, par exercice.
-
-### 8.2 Les règles de gestion
+### 8.3 Les règles de gestion
 
 | Règle | Énoncé | Où |
 |---|---|---|
@@ -315,7 +496,7 @@ Le numéro de FEB est attribué automatiquement, par exercice.
 | **RG-12** | Offres et montants sont verrouillés dès `en_validation`. Seul un administrateur peut rouvrir, ce qui annule les signatures et laisse une trace. | `achats.php` |
 | **RG-13** | La grille des paliers actifs doit couvrir toute la plage de montants, **sans trou ni chevauchement**. Contrôlé à l'enregistrement et à la désactivation. | `param_paliers.php` |
 
-### 8.3 Le code analytique
+### 8.4 Le code analytique
 
 `SITE / DÉPARTEMENT / FAMILLE`, composé des trois codes, en majuscules et
 sans espaces. Vide si l'un des trois manque.
@@ -325,7 +506,7 @@ familles installées, toutes rattachées à un compte (241 outillage, 2442
 équipements, 604 consommables, 605 fournitures, 611 transport, 624
 maintenance, 628 télécoms, …).
 
-### 8.4 Circuit de visa par palier
+### 8.5 Circuit de visa par palier
 
 Un palier associe une tranche de montant à des signataires.
 
@@ -342,7 +523,7 @@ Un palier associe une tranche de montant à des signataires.
 **Le visa du N+1 intervient avant la prise en charge par les achats** : sans
 son aval, le service achats ne voit pas la demande (RG-11).
 
-### 8.5 Conformité fournisseur
+### 8.6 Conformité fournisseur
 
 Un fournisseur n'est retenu que s'il porte **trois pièces** :
 
@@ -354,7 +535,7 @@ Un fournisseur n'est retenu que s'il porte **trois pièces** :
 
 Une pièce manquante bloque la retenue de l'offre.
 
-### 8.6 Lots et comparatif d'offres
+### 8.7 Lots et comparatif d'offres
 
 Une FEB se découpe en **lots**, un par code analytique (RG-08). Chaque lot
 reçoit des offres (`feb_offres`), dont **une seule est retenue**.
@@ -366,7 +547,7 @@ sans fournisseur.
 Retenir une offre reporte le fournisseur sur les lignes du lot, **sauf les
 lignes en dérogation** (RG-09).
 
-### 8.7 Contrôle budgétaire
+### 8.8 Contrôle budgétaire
 
 Une **ligne budgétaire** porte un code comptable, un exercice, une enveloppe
 et un **comportement**. La situation d'une ligne distingue l'**engagé**, le
@@ -380,7 +561,7 @@ réouverture administrative possible.
 > enveloppe vide, donc aucun plafond n'est effectif, et le comportement est
 > `alerte` — jamais bloquant.
 
-### 8.8 Suivi et réception
+### 8.9 Suivi et réception
 
 Après confirmation, la FEB devient une commande suivie.
 
@@ -399,7 +580,7 @@ disponible.
 
 Un reliquat peut être clôturé explicitement.
 
-### 8.9 File d'attente et ancienneté
+### 8.10 File d'attente et ancienneté
 
 Une FEB soumise attend en file. Un acheteur la **prend en charge**, peut la
 **restituer**, ou un responsable peut la **réattribuer**.
@@ -407,7 +588,7 @@ Une FEB soumise attend en file. Un acheteur la **prend en charge**, peut la
 **L'ancienneté est calculée en heures ouvrées** : une fiche déposée vendredi
 soir n'est pas comptée en retard le lundi matin.
 
-### 8.10 Affectation des équipements achetés
+### 8.11 Affectation des équipements achetés
 
 Un équipement réceptionné suit un circuit propre : proposition
 d'affectation, visa, puis confirmation de réception par le destinataire. Les

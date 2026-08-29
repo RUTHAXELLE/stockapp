@@ -1,7 +1,7 @@
 # Manuel d'utilisation — ERP EMUCI
 
 **Version du logiciel** : branche `main`, commit `5ecb558` (29 août 2026)
-**Version du manuel** : 2.3
+**Version du manuel** : 2.4
 **Périmètre couvert** : 61 entrées de menu et les écrans hors menu,
 10 modules, 16 rôles, 21 sites actifs
 
@@ -206,19 +206,23 @@ C'est le relevé quotidien de production d'un site. Tout le reste en dépend.
 
 | Statut | Ce que ça veut dire |
 |---|---|
-| **Brouillon** | Saisi mais pas transmis. **Ses chiffres ne comptent nulle part.** |
-| **Validé** | Transmis et validé par le superviseur. Compte dans tous les indicateurs. |
+| **Brouillon** | Saisi mais pas transmis. Visible de vous seul. **Ses chiffres ne comptent nulle part.** |
+| **En attente de validation** | Transmis. Il est dans la file du superviseur, mais ne compte pas encore. |
+| **Validé** | Validé par le superviseur. Compte dans tous les indicateurs. |
+| **Rejeté** | Refusé avec un motif. À corriger et resoumettre. |
 
-> **Le piège à connaître.** Un brouillon oublié est invisible pour tout le
-> monde sauf vous, et ses chiffres n'apparaissent dans aucun rapport. Le
-> tableau de bord du superviseur affiche le nombre de points en attente
-> précisément pour éviter cela.
+> **Brouillon et « en attente » ne sont pas la même chose.** Un brouillon
+> n'est visible que de vous : le superviseur ne le voit pas et ne peut donc
+> pas le valider. Tant que vous ne l'avez pas soumis, il ne se passera rien.
+> C'est le piège le plus courant, et la raison pour laquelle le tableau de
+> bord affiche les points restés en attente.
 
 ### 5.2 Valider les points — superviseur opération
 
-1. Le tableau de bord signale les points en attente de validation.
+1. Le tableau de bord signale les points **en attente de validation**.
 2. Ouvrir le point, vérifier les quantités.
-3. Valider, ou rejeter en indiquant le motif.
+3. Valider, ou rejeter en indiquant le motif. Un point rejeté retourne au
+   coordinateur, qui le corrige et le resoumet.
 
 ### 5.3 Corriger un point déjà validé
 
@@ -1017,6 +1021,7 @@ sensible des trois.
 | 2.1 | 2026-08-29 | `5ecb558` | Changement de mot de passe imposé à la première connexion ; ajout des écrans hors menu |
 | 2.2 | 2026-08-29 | `5ecb558` | Navigation corrigée : l'accueil est le point de départ, la barre latérale ne montre que le module en cours ; tableau de bord v2 |
 | 2.3 | 2026-08-29 | `5ecb558` | Règles de visa, paliers et plan comptable documentés : ils étaient dans le code, non « à préciser » |
+| 2.4 | 2026-08-29 | `5ecb558` | Point journalier : quatre statuts, non deux — « en attente de validation » et « rejeté » manquaient |
 
 > **Tenir ce manuel à jour.** Il décrit l'état du logiciel au commit
 > indiqué. À chaque évolution fonctionnelle notable, mettez à jour la
