@@ -1,7 +1,7 @@
 # Manuel d'utilisation — ERP EMUCI
 
 **Version du logiciel** : branche `main`, commit `5ecb558` (29 août 2026)
-**Version du manuel** : 2.2
+**Version du manuel** : 2.3
 **Périmètre couvert** : 61 entrées de menu et les écrans hors menu,
 10 modules, 16 rôles, 21 sites actifs
 
@@ -11,10 +11,9 @@
 > vérifiables dans le dépôt. En revanche les détails d'écran (position d'un
 > bouton, libellé exact d'un message) n'ont pas été relevés un par un.
 >
-> Certaines règles métier ne figurent dans aucun code : pourquoi tel palier
-> de validation, quelle famille pour quel article. Ces passages sont signalés
-> par la mention **« à préciser »** : ils attendent qu'une personne du métier
-> les dicte.
+> Là où le logiciel signale lui-même qu'une valeur est provisoire, le manuel
+> le répercute plutôt que de la présenter comme arrêtée. Voir **« Ce qui reste
+> à décider »**, en fin de document.
 
 ---
 
@@ -482,9 +481,27 @@ ses étapes. Chaque étape désigne le rôle qui doit viser.
 **Module Demandes internes → Circuits avancés.** Paramétrage fin des rôles
 de validation, au-delà de l'enchaînement simple des étapes.
 
-> **À préciser.** Les règles exactes de résolution des rôles valideurs
-> dépendent de l'organisation et méritent d'être décrites par une personne de
-> l'administration.
+**Qui peut viser quelle étape** découle du rôle ERP, sans réglage à faire :
+
+| Rôle ERP | Étapes qu'il peut viser |
+|---|---|
+| `raf` | Visa RAF |
+| `daf` | Visa DAF |
+| `support_it`, `superviseur_it`, `maintenance_info` | Visa IT |
+| `directeur_general`, `lecteur` (PDG) | Visa Direction Générale |
+| `admin`, `superadmin` | Toutes les étapes |
+
+Trois règles s'ajoutent :
+
+- **Le N+1** n'est pas un rôle. C'est le responsable du département du
+  demandeur, résolu automatiquement.
+- **Une étape rattachée à un département** peut être visée par n'importe
+  quel membre de ce département. C'est ce qui fait vivre le visa
+  « Administration », dont le rôle ERP correspondant a été supprimé.
+- **Personne ne vise sa propre demande**, administrateurs compris.
+
+Des droits attribués manuellement du temps de l'ancien écran restent
+honorés, le temps de la transition.
 
 ### 8.10 Annuaire des agents
 
@@ -601,8 +618,19 @@ tranche de montant, qui doit signer.
 > sans circuit de visa. Si l'écran refuse votre saisie, c'est probablement
 > cela.
 
-> **À préciser.** Les montants des bornes et le choix des signataires
-> relèvent d'une décision de direction, pas du logiciel.
+**Les paliers livrés à l'installation :**
+
+| Montant (XOF) | Palier | Signataires |
+|---|---|---|
+| 0 à 500 000 | RAF seul | RAF |
+| 500 001 à 5 000 000 | RAF + DAF | RAF, DAF |
+| Au-delà de 5 000 000 | RAF + DAF + PDG | RAF, DAF, PDG |
+
+> **Ces bornes sont provisoires.** La migration qui les installe le dit
+> explicitement : « bornes de démarrage arbitraires, aucun seuil réel
+> fourni ». Elles fonctionnent, mais elles n'ont pas été arrêtées par la
+> direction. Tant qu'elles ne le sont pas, une FEB peut suivre un circuit qui
+> ne correspond pas à la règle de l'entreprise.
 
 ### 9.10 Fournisseurs
 
@@ -611,12 +639,34 @@ lors du passage en commande.
 
 ### 9.11 Familles & types
 
-**Module Achats → Familles & types.** Classement des articles achetés. La
-famille sert au **code analytique** de la ligne, donc à l'imputation
-comptable.
+**Module Achats → Familles & types.** Classement des articles achetés.
 
-> **À préciser.** La correspondance entre familles et imputations comptables
-> mérite d'être documentée par le service financier.
+**Chaque famille porte un compte comptable**, suivant le plan SYSCOHADA :
+trente-cinq familles sont installées, toutes rattachées à un compte. Quelques
+exemples :
+
+| Compte | Famille |
+|---|---|
+| 2442 | Équipements |
+| 604 | Consommables informatiques, consommables opérations (rivets) |
+| 605 | Fournitures de bureau, entretien, restauration |
+| 611 | Transport et logistique |
+| 624 | Maintenance |
+| 628 | Frais de télécommunications |
+
+**Le code analytique** d'une ligne se compose de trois segments, repris des
+codes du site, du département et de la famille :
+
+`SITE / DÉPARTEMENT / FAMILLE`
+
+Choisir la famille détermine donc à la fois l'imputation comptable et le
+troisième segment du code analytique. C'est la seule décision à prendre à la
+saisie ; le reste se déduit.
+
+> **Les types d'achat portent des libellés provisoires.** DAF, DAI et DAH
+> sont installés comme « Demande d'Achat Fournitures / Immobilisation /
+> Hors-marché », mais la migration signale que le sigle exact n'est pas
+> documenté. À confirmer auprès du service financier.
 
 ### 9.12 Lignes budgétaires
 
@@ -940,15 +990,21 @@ section 6.2.
 
 ---
 
-## Ce qui reste à préciser
+## Ce qui reste à décider
 
-Trois points ne figurent dans aucun code et attendent une personne du métier :
+Rien de ce qui suit n'est un trou dans la documentation : les mécanismes
+sont en place et décrits. Ce sont des **valeurs provisoires que le logiciel
+signale lui-même** comme n'ayant pas été arrêtées par l'entreprise.
 
-1. **Circuits avancés** (8.9) — les règles de résolution des rôles valideurs.
-2. **Paliers de validation** (9.9) — les montants des bornes et le choix des
-   signataires.
-3. **Familles & types** (9.11) — la correspondance entre familles d'articles
-   et imputations comptables.
+| Point | Section | Ce qui est en place | Ce qui manque |
+|---|---|---|---|
+| Paliers de validation | 9.9 | Trois paliers fonctionnels (500 000 et 5 000 000 XOF) | Les seuils réels, la migration les dit « arbitraires » |
+| Types d'achat | 9.11 | DAF, DAI, DAH avec des libellés développés | Le sigle exact, non documenté dans la spécification |
+| Lignes budgétaires | 9.12 | Six lignes, comportement « alerte » | Les enveloppes, toutes à vide : aucun montant n'est plafonné |
+
+Tant que les paliers ne sont pas arrêtés, une FEB peut suivre un circuit de
+visa qui ne correspond pas à la règle de l'entreprise. C'est le point le plus
+sensible des trois.
 
 ---
 
@@ -960,6 +1016,7 @@ Trois points ne figurent dans aucun code et attendent une personne du métier :
 | 2.0 | 2026-08-29 | `5ecb558` | Édition complète : les 61 écrans, structure par module |
 | 2.1 | 2026-08-29 | `5ecb558` | Changement de mot de passe imposé à la première connexion ; ajout des écrans hors menu |
 | 2.2 | 2026-08-29 | `5ecb558` | Navigation corrigée : l'accueil est le point de départ, la barre latérale ne montre que le module en cours ; tableau de bord v2 |
+| 2.3 | 2026-08-29 | `5ecb558` | Règles de visa, paliers et plan comptable documentés : ils étaient dans le code, non « à préciser » |
 
 > **Tenir ce manuel à jour.** Il décrit l'état du logiciel au commit
 > indiqué. À chaque évolution fonctionnelle notable, mettez à jour la
