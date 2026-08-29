@@ -1,8 +1,9 @@
 # Manuel d'utilisation — ERP EMUCI
 
 **Version du logiciel** : branche `main`, commit `5ecb558` (29 août 2026)
-**Version du manuel** : 2.0, édition complète
-**Périmètre couvert** : 61 écrans, 10 modules, 16 rôles, 21 sites actifs
+**Version du manuel** : 2.1
+**Périmètre couvert** : 61 entrées de menu et les écrans hors menu,
+10 modules, 16 rôles, 21 sites actifs
 
 > **Provenance de ce document.** Il est établi à partir du code source, pas
 > d'une session d'utilisation. La structure des menus, les rôles, les
@@ -31,6 +32,7 @@
 10. [L'informatique](#10-linformatique)
 11. [Rapports et exports](#11-rapports-et-exports)
 12. [L'administration](#12-ladministration)
+12 bis. [Les écrans hors menu](#12-bis-les-écrans-hors-menu)
 13. [Questions fréquentes](#13-questions-fréquentes)
 14. [À qui s'adresser](#14-à-qui-sadresser)
 
@@ -54,17 +56,53 @@ sites. Chacun n'y voit que ce que son rôle lui ouvre.
 2. Saisir son adresse e-mail professionnelle et son mot de passe.
 3. Valider.
 
-Après connexion vous arrivez sur le **tableau de bord**, qui montre ce qui
-vous concerne aujourd'hui, selon votre métier.
+### 2.1 La première connexion : changement de mot de passe imposé
 
-**Mot de passe oublié** : cliquez sur « Mot de passe oublié ? » sous le
-formulaire de connexion, saisissez votre adresse, et un lien de
-réinitialisation vous est envoyé par e-mail.
+Quand un administrateur **crée votre compte** ou **réinitialise votre mot de
+passe**, celui qu'il vous communique est provisoire.
+
+À votre connexion suivante, l'application vous envoie sur l'écran
+**« Changer mot de passe »** et **bloque tout le reste** tant que vous ne
+l'avez pas fait. Ce n'est pas une suggestion : aucun autre écran ne s'ouvre,
+et toute action renvoie « Vous devez changer votre mot de passe avant de
+continuer ».
+
+1. Saisir le mot de passe provisoire reçu.
+2. Saisir le nouveau, deux fois.
+3. Valider.
+
+La contrainte est alors levée et vous arrivez sur l'accueil.
+
+> **Attention aux espaces.** Un mot de passe collé depuis un e-mail traîne
+> souvent une espace au début ou à la fin. L'application les retire des deux
+> côtés, à la saisie comme à la connexion, mais mieux vaut coller proprement.
+
+Une fois la contrainte levée, cet écran n'est plus accessible : il vous
+renverrait à l'accueil. Pour changer votre mot de passe **de votre propre
+initiative**, voyez la section 2.3.
+
+### 2.2 Mot de passe oublié
+
+Cliquez sur « Mot de passe oublié ? » sous le formulaire de connexion,
+saisissez votre adresse, et un lien de réinitialisation vous est envoyé par
+e-mail. Le mot de passe que vous définissez par ce lien est définitif : il
+ne déclenche pas de changement imposé.
 
 **Compte bloqué, ou e-mail qui n'arrive pas** : contactez un administrateur.
 
-**Changer son mot de passe** : écran « Changer mot de passe », accessible
-depuis votre profil, en bas de la barre latérale.
+### 2.3 Changer son mot de passe volontairement
+
+Écran **Mon Profil**, section « Changer le mot de passe ». C'est le seul
+endroit pour le faire hors contrainte.
+
+### 2.4 L'accueil
+
+Après connexion vous arrivez sur l'**accueil**, qui présente les modules
+auxquels votre rôle donne accès sous forme de cartes. Chaque carte ouvre le
+premier écran de son module.
+
+Le **tableau de bord** (section 11.1) montre, lui, ce qui vous concerne
+aujourd'hui.
 
 ---
 
@@ -726,7 +764,68 @@ pourquoi.
 
 ---
 
+## 12 bis. Les écrans hors menu
+
+Certains écrans ne figurent dans aucun menu : on y arrive depuis une liste,
+un bouton, ou automatiquement. Ils comptent autant que les autres.
+
+### Mon Profil
+
+Vos informations personnelles, et la section **« Changer le mot de passe »**
+(section 2.3). Accessible depuis votre nom, en bas de la barre latérale.
+
+### Détail d'une FEB, et traitement
+
+Depuis **Mes FEB**, **File d'attente Achats** ou **Mes visas**, on ouvre le
+**détail** d'une fiche : son en-tête, ses lignes, son circuit et l'historique
+de ses visas.
+
+L'écran de **traitement** est celui de l'acheteur : c'est là qu'il complète
+la fiche, la bascule en commande, et suit son exécution.
+
+Trois exports PDF existent : la fiche seule, la fiche avec son circuit de
+validation, et le bon de commande.
+
+### Détail d'un inventaire
+
+Les écrans **Inventaire bobines**, **rivets**, **PMMA** et **équipements**
+listent les sessions. On ouvre une session pour arriver sur son **détail**,
+où se fait réellement le comptage, ligne par ligne.
+
+Une session en cours porte le statut **brouillon** tant qu'elle n'est pas
+clôturée.
+
+### Réceptions de commandes
+
+Écran de réception des commandes sur site, atteint depuis le suivi des
+commandes. Droit requis : **modification** sur le module `receptions` pour
+enregistrer une réception, lecture seule pour la consulter.
+
+### Import stock bobines
+
+Chargement du stock de bobines depuis un fichier **.xlsx**. Comme pour
+l'import EMUCI, les colonnes attendues sont vérifiées et l'import est refusé
+si l'une manque.
+
+### Impression du point journalier
+
+Un point journalier s'exporte en PDF depuis sa fiche.
+
+> **Un raccourci à connaître.** L'ancienne adresse `consommables.php` renvoie
+> désormais vers **Articles** : le module a été renommé, les anciens liens et
+> favoris continuent de fonctionner.
+
+---
+
 ## 13. Questions fréquentes
+
+**L'application me renvoie sans arrêt sur « Changer mot de passe ».**
+Votre mot de passe est provisoire, attribué par un administrateur. Tant qu'il
+n'est pas changé, aucun autre écran ne s'ouvre. Voir section 2.1.
+
+**Je veux changer mon mot de passe mais l'écran me renvoie à l'accueil.**
+L'écran « Changer mot de passe » ne sert qu'au changement imposé. Pour le
+faire de votre propre initiative, passez par **Mon Profil**. Voir section 2.3.
 
 **Je ne vois pas un module dans le menu.**
 Votre rôle ne l'ouvre pas. Ce n'est pas un défaut d'affichage. Voyez un
@@ -797,6 +896,7 @@ Trois points ne figurent dans aucun code et attendent une personne du métier :
 |---|---|---|---|
 | 1.0 | 2026-08-29 | `5ecb558` | Première édition : 4 circuits principaux, rôles, permissions |
 | 2.0 | 2026-08-29 | `5ecb558` | Édition complète : les 61 écrans, structure par module |
+| 2.1 | 2026-08-29 | `5ecb558` | Changement de mot de passe imposé à la première connexion ; ajout des écrans hors menu |
 
 > **Tenir ce manuel à jour.** Il décrit l'état du logiciel au commit
 > indiqué. À chaque évolution fonctionnelle notable, mettez à jour la
