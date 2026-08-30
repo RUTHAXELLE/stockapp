@@ -1,0 +1,1157 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manuel d'utilisation — ERP EMUCI</title>
+<meta name="description" content="Manuel d'utilisation de l'ERP EMUCI, arrete au commit 5ecb558">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
+
+<style>
+/* ── Mise en page pour l'impression et l'export PDF.
+   Le sommaire latéral n'a pas de sens sur papier : il devient un bloc en
+   tête. Les cadres qui défilent à l'écran doivent au contraire tout montrer,
+   puisqu'on ne peut pas faire défiler une feuille. */
+@media print{
+  @page{margin:14mm 12mm}
+  :root{--bg:#fff !important}
+  body{background:#fff !important;font-size:10.5pt;line-height:1.5}
+  .shell{display:block !important;max-width:none;padding:0}
+  .toc{position:static !important;max-height:none !important;overflow:visible !important;
+    margin:0 0 14mm;padding:0;border:none;box-shadow:none;
+    break-after:page;page-break-after:always}
+  .toc a{color:#000 !important;padding:2px 0;margin:0}
+  .tw,figure{overflow:visible !important;box-shadow:none;break-inside:avoid;page-break-inside:avoid}
+  table{min-width:0 !important;font-size:9pt}
+  th{background:#eef2fb !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .note{break-inside:avoid;page-break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  section{break-before:auto;margin-top:10mm}
+  h2{break-after:avoid;page-break-after:avoid}
+  h3,h4{break-after:avoid;page-break-after:avoid}
+  figure svg{max-width:100% !important}
+  a{text-decoration:none;color:inherit}
+  .impr-pied{display:block !important}
+}
+.impr-pied{display:none}
+</style>
+
+<style>*{box-sizing:border-box}html,body{margin:0}</style>
+</head>
+<body>
+<style>
+/* Palette : celle du produit. DESIGN.md et PRODUCT.md fixent le navy #06033A
+   et le bleu #1B75BC ; on ne réinvente pas une identité pour un document
+   interne qui doit ressembler à l'outil qu'il décrit. */
+:root{
+  --bg:#eef2fb; --surface:#fff; --surface-2:#f5f8fe;
+  --ink:#06033A; --body:#232c47; --muted:#4d5876;
+  --rule:#c3ccdf; --rule-soft:#dfe5f1;
+  --accent:#1B75BC; --accent-ink:#12547f; --accent-soft:#e6f0f9;
+  --warn:#8a5a00; --warn-soft:#fdf3e0; --warn-rule:#e5c58a;
+  --todo:#6b3fa0; --todo-soft:#f2edfa; --todo-rule:#cbb8e6;
+  --shadow:0 1px 2px rgba(6,3,58,.05), 0 8px 28px -14px rgba(6,3,58,.22);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0c1020; --surface:#151b31; --surface-2:#1b2340;
+    --ink:#e8ecf8; --body:#c6cee4; --muted:#98a3c0;
+    --rule:#39445f; --rule-soft:#2a3350;
+    --accent:#6fb2e8; --accent-ink:#a9d2f4; --accent-soft:#17273a;
+    --warn:#f0c473; --warn-soft:#2c2312; --warn-rule:#5c4a24;
+    --todo:#cbaef0; --todo-soft:#221a30; --todo-rule:#4a3a63;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -16px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0c1020; --surface:#151b31; --surface-2:#1b2340;
+  --ink:#e8ecf8; --body:#c6cee4; --muted:#98a3c0;
+  --rule:#39445f; --rule-soft:#2a3350;
+  --accent:#6fb2e8; --accent-ink:#a9d2f4; --accent-soft:#17273a;
+  --warn:#f0c473; --warn-soft:#2c2312; --warn-rule:#5c4a24;
+  --todo:#cbaef0; --todo-soft:#221a30; --todo-rule:#4a3a63;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -16px rgba(0,0,0,.7);
+}
+:root[data-theme="light"]{
+  --bg:#eef2fb; --surface:#fff; --surface-2:#f5f8fe;
+  --ink:#06033A; --body:#232c47; --muted:#4d5876;
+  --rule:#c3ccdf; --rule-soft:#dfe5f1;
+  --accent:#1B75BC; --accent-ink:#12547f; --accent-soft:#e6f0f9;
+  --warn:#8a5a00; --warn-soft:#fdf3e0; --warn-rule:#e5c58a;
+  --todo:#6b3fa0; --todo-soft:#f2edfa; --todo-rule:#cbb8e6;
+  --shadow:0 1px 2px rgba(6,3,58,.05), 0 8px 28px -14px rgba(6,3,58,.22);
+}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--body);margin:0;
+  font-family:'DM Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased}
+
+.shell{max-width:1220px;margin:0 auto;padding:40px 24px 96px;
+  display:grid;grid-template-columns:252px minmax(0,1fr);gap:52px;align-items:start}
+@media(max-width:960px){.shell{grid-template-columns:minmax(0,1fr);gap:0;padding:26px 18px 72px}}
+
+.toc{position:sticky;top:28px;font-size:13.5px;max-height:calc(100vh - 56px);overflow-y:auto}
+@media(max-width:960px){.toc{position:static;max-height:none;margin-bottom:34px;background:var(--surface);
+  border:1px solid var(--rule);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}}
+.toc-t{font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--muted);margin:0 0 12px}
+.toc ol{list-style:none;margin:0;padding:0}
+.toc a{display:flex;gap:9px;padding:5px 10px;margin-left:-10px;border-radius:8px;
+  color:var(--body);text-decoration:none;line-height:1.34;transition:background-color .14s,color .14s}
+.toc a:hover{background:var(--surface-2);color:var(--accent-ink)}
+.toc a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.toc .n{color:var(--muted);font-variant-numeric:tabular-nums;flex-shrink:0;font-weight:500;min-width:16px}
+
+.head{margin-bottom:34px}
+.eyebrow{font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--accent-ink);margin:0 0 10px}
+h1{font-family:'Montserrat',sans-serif;font-size:clamp(30px,4.4vw,42px);line-height:1.1;font-weight:800;
+  letter-spacing:-.022em;color:var(--ink);margin:0 0 14px;text-wrap:balance}
+.lede{font-size:18px;color:var(--muted);margin:0;max-width:62ch;text-wrap:pretty}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.chip{display:inline-flex;align-items:baseline;gap:7px;background:var(--surface);border:1px solid var(--rule);
+  border-radius:999px;padding:6px 14px;font-size:13px}
+.chip b{font-family:'Montserrat',sans-serif;font-weight:700;color:var(--ink);font-size:11.5px;
+  letter-spacing:.05em;text-transform:uppercase}
+
+section{margin-top:50px;scroll-margin-top:20px}
+h2{font-family:'Montserrat',sans-serif;font-size:24px;font-weight:700;letter-spacing:-.014em;color:var(--ink);
+  margin:0 0 14px;line-height:1.25;display:flex;gap:12px;align-items:baseline;text-wrap:balance}
+h2 .n{color:var(--accent-ink);font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;flex-shrink:0}
+h3{font-family:'Montserrat',sans-serif;font-size:16px;font-weight:700;color:var(--ink);
+  margin:28px 0 8px;letter-spacing:-.008em}
+p{margin:0 0 13px;max-width:70ch}
+ul{margin:0 0 13px;padding-left:22px;max-width:70ch}
+li{margin-bottom:5px}
+li::marker{color:var(--muted)}
+strong{color:var(--ink);font-weight:700}
+code{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:.87em;background:var(--surface-2);
+  border:1px solid var(--rule-soft);border-radius:5px;padding:1px 5px;color:var(--accent-ink)}
+
+.tw{overflow-x:auto;margin:0 0 18px;background:var(--surface);border:1px solid var(--rule);
+  border-radius:12px;box-shadow:var(--shadow)}
+table{width:100%;border-collapse:collapse;font-size:14.5px;min-width:420px}
+th{font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--muted);text-align:left;padding:11px 16px;border-bottom:1px solid var(--rule);
+  background:var(--surface-2);white-space:nowrap}
+td{padding:11px 16px;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td:first-child{color:var(--ink);font-weight:500}
+td code{white-space:nowrap}
+
+.note{border-radius:12px;padding:14px 18px;margin:0 0 18px;font-size:15px;max-width:72ch}
+.note p{margin:0}
+.note p + p{margin-top:8px}
+.note-t{font-family:'Montserrat',sans-serif;font-size:11.5px;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;margin:0 0 5px;display:block}
+.note-warn{background:var(--warn-soft);border:1px solid var(--warn-rule);color:var(--warn)}
+.note-warn .note-t,.note-warn strong{color:var(--warn)}
+.note-info{background:var(--accent-soft);border:1px solid var(--rule);color:var(--body)}
+.note-info .note-t{color:var(--accent-ink)}
+.note-todo{background:var(--todo-soft);border:1px solid var(--todo-rule);color:var(--todo)}
+.note-todo .note-t,.note-todo strong{color:var(--todo)}
+
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 18px}
+.flow-s{background:var(--surface);border:1px solid var(--rule);border-radius:9px;padding:8px 14px;
+  font-size:14px;font-weight:500;color:var(--ink);box-shadow:var(--shadow)}
+.flow-a{color:var(--muted)}
+
+ol.steps{list-style:none;padding:0;counter-reset:s;max-width:70ch;margin:0 0 13px}
+ol.steps > li{counter-increment:s;position:relative;padding-left:38px;margin-bottom:10px}
+ol.steps > li::before{content:counter(s);position:absolute;left:0;top:1px;width:25px;height:25px;
+  border-radius:50%;background:var(--accent-soft);border:1px solid var(--rule);color:var(--accent-ink);
+  font-family:'Montserrat',sans-serif;font-size:12px;font-weight:700;display:flex;align-items:center;
+  justify-content:center;font-variant-numeric:tabular-nums}
+
+.faq{margin-bottom:20px;max-width:72ch}
+.faq-q{font-weight:700;color:var(--ink);margin:0 0 3px}
+.faq p{margin:0}
+
+footer{margin-top:50px;padding-top:22px;border-top:1px solid var(--rule);font-size:14px;color:var(--muted)}
+footer p{max-width:72ch}
+</style>
+
+<div class="shell">
+  <nav class="toc" aria-label="Sommaire">
+    <p class="toc-t">Sommaire</p>
+    <ol>
+      <li><a href="#s1"><span class="n">1</span><span>À quoi sert l'application</span></a></li>
+      <li><a href="#s2"><span class="n">2</span><span>Se connecter</span></a></li>
+      <li><a href="#s3"><span class="n">3</span><span>S'orienter</span></a></li>
+      <li><a href="#s4"><span class="n">4</span><span>Les rôles</span></a></li>
+      <li><a href="#s5"><span class="n">5</span><span>Point journalier et EMUCI</span></a></li>
+      <li><a href="#s6"><span class="n">6</span><span>Le stock</span></a></li>
+      <li><a href="#s7"><span class="n">7</span><span>Bobines et inventaires</span></a></li>
+      <li><a href="#s8"><span class="n">8</span><span>Les demandes internes</span></a></li>
+      <li><a href="#s9"><span class="n">9</span><span>Les achats</span></a></li>
+      <li><a href="#s10"><span class="n">10</span><span>L'informatique</span></a></li>
+      <li><a href="#s11"><span class="n">11</span><span>Rapports et exports</span></a></li>
+      <li><a href="#s12"><span class="n">12</span><span>L'administration</span></a></li>
+      <li><a href="#s12b"><span class="n">12b</span><span>Les écrans hors menu</span></a></li>
+      <li><a href="#s13"><span class="n">13</span><span>Questions fréquentes</span></a></li>
+      <li><a href="#s14"><span class="n">14</span><span>À qui s'adresser</span></a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="head">
+      <p class="eyebrow">ERP EMUCI</p>
+      <h1>Manuel d'utilisation</h1>
+      <p class="lede">Suivi de la production de plaques et de la chaîne de stock qui
+        l'alimente : points journaliers, bobines, consommables, équipements, demandes
+        internes et achats, sur vingt et un sites.</p>
+      <div class="meta">
+        <span class="chip"><b>Logiciel</b> <code>main · 5ecb558</code></span>
+        <span class="chip"><b>Manuel</b> v2.4</span>
+        <span class="chip"><b>Couverture</b> menu + hors menu</span>
+        <span class="chip"><b>Arrêté au</b> 29 août 2026</span>
+      </div>
+    </header>
+
+    <div class="note note-info">
+      <span class="note-t">Provenance de ce document</span>
+      <p>Il est établi à partir du code source, pas d'une session d'utilisation. La
+      structure des menus, les rôles, les statuts, les circuits de validation et les
+      règles de gestion sont exacts et vérifiables dans le dépôt. Les détails d'écran,
+      position d'un bouton ou libellé exact d'un message, n'ont pas été relevés un par un.</p>
+      <p>Là où le logiciel signale lui-même qu'une valeur est provisoire, le manuel le
+      répercute plutôt que de la présenter comme arrêtée. Voir <strong>« Ce qui reste à
+      décider »</strong>, en fin de document.</p>
+    </div>
+
+    <section id="s1">
+      <h2><span class="n">1</span> À quoi sert l'application</h2>
+      <p>ERP EMUCI suit la production de plaques d'immatriculation et la chaîne de stock
+      qui l'alimente : points journaliers par site, bobines de film, consommables, rivets,
+      PMMA, équipements, maintenance, demandes internes et achats.</p>
+      <p>Elle est utilisée tous les jours par les mêmes personnes, sur vingt et un sites.
+      Chacun n'y voit que ce que son rôle lui ouvre.</p>
+    </section>
+
+    <section id="s2">
+      <h2><span class="n">2</span> Se connecter</h2>
+      <ol class="steps">
+        <li>Ouvrir l'adresse de l'application dans un navigateur.</li>
+        <li>Saisir son adresse e-mail professionnelle et son mot de passe.</li>
+        <li>Valider.</li>
+      </ol>
+
+      <h3>2.1 La première connexion : changement de mot de passe imposé</h3>
+      <p>Quand un administrateur <strong>crée votre compte</strong> ou
+      <strong>réinitialise votre mot de passe</strong>, celui qu'il vous communique est
+      provisoire.</p>
+      <p>À votre connexion suivante, l'application vous envoie sur l'écran <strong>« Changer
+      mot de passe »</strong> et <strong>bloque tout le reste</strong> tant que vous ne
+      l'avez pas fait. Ce n'est pas une suggestion : aucun autre écran ne s'ouvre, et toute
+      action renvoie « Vous devez changer votre mot de passe avant de continuer ».</p>
+      <ol class="steps">
+        <li>Saisir le mot de passe provisoire reçu.</li>
+        <li>Saisir le nouveau, deux fois.</li>
+        <li>Valider.</li>
+      </ol>
+      <p>La contrainte est alors levée et vous arrivez sur l'accueil.</p>
+      <div class="note note-warn">
+        <span class="note-t">Attention aux espaces</span>
+        <p>Un mot de passe collé depuis un e-mail traîne souvent une espace au début ou à
+        la fin. L'application les retire des deux côtés, à la saisie comme à la connexion,
+        mais mieux vaut coller proprement.</p>
+      </div>
+      <p>Une fois la contrainte levée, cet écran n'est plus accessible : il vous renverrait
+      à l'accueil. Pour changer votre mot de passe <strong>de votre propre
+      initiative</strong>, voyez la section 2.3.</p>
+
+      <h3>2.2 Mot de passe oublié</h3>
+      <p>Cliquez sur « Mot de passe oublié ? » sous le formulaire de connexion, saisissez
+      votre adresse, et un lien de réinitialisation vous est envoyé par e-mail. Le mot de
+      passe défini par ce lien est définitif : il ne déclenche pas de changement imposé.</p>
+      <p><strong>Compte bloqué, ou e-mail qui n'arrive pas</strong> : contactez un
+      administrateur.</p>
+
+      <h3>2.3 Changer son mot de passe volontairement</h3>
+      <p>Écran <strong>Mon Profil</strong>, section « Changer le mot de passe ». C'est le
+      seul endroit pour le faire hors contrainte.</p>
+
+      <h3>2.4 Et ensuite</h3>
+      <p>Vous arrivez sur l'<strong>accueil</strong>, qui est le point de départ de toute
+      la navigation : voir la section 3.</p>
+    </section>
+
+    <section id="s3">
+      <h2><span class="n">3</span> S'orienter</h2>
+      <p>La navigation fonctionne en <strong>deux temps</strong> : on choisit un module
+      sur l'accueil, puis on circule dans ses écrans par la barre latérale.</p>
+
+      <h3>3.1 L'accueil, le point de départ</h3>
+      <p>C'est l'écran d'arrivée après connexion, et il a sa propre mise en page,
+      différente du reste de l'application.</p>
+      <p>Il présente sous forme de <strong>cartes</strong> les modules auxquels votre rôle
+      donne accès. Vous ne voyez que les vôtres : peu de cartes n'est pas un défaut
+      d'affichage, c'est votre périmètre.</p>
+      <p>Cliquer sur une carte ouvre le module, et vous dépose sur <strong>le premier écran
+      que votre rôle peut réellement ouvrir</strong> dans ce module, pas sur une page fixe.
+      C'est pourquoi deux personnes cliquant sur la même carte peuvent atterrir sur des
+      écrans différents.</p>
+      <p>Revenir à l'accueil <strong>quitte le module en cours</strong>.</p>
+
+      <h3>3.2 La barre latérale, une fois dans un module</h3>
+      <p>Elle ne liste <strong>jamais les dix modules</strong>. Elle contient :</p>
+      <ul>
+        <li>le bouton <strong>Accueil</strong>, toujours présent, pour revenir au choix des modules ;</li>
+        <li>le <strong>nom du module en cours</strong> ;</li>
+        <li>les <strong>écrans de ce module</strong>, et eux seuls.</li>
+      </ul>
+      <div class="note note-warn">
+        <span class="note-t">La confusion la plus fréquente</span>
+        <p>Si vous cherchez un écran qui appartient à un autre module, il ne sera pas dans
+        la barre. Repassez par l'accueil.</p>
+      </div>
+      <p>En bas de la barre figure votre <strong>carte utilisateur</strong> : nom, rôle, un
+      lien vers <strong>Mon Profil</strong> et le bouton de <strong>déconnexion</strong>.</p>
+
+      <h3>3.3 La barre du haut</h3>
+      <p>Sur tous les écrans d'un module : le <strong>titre de l'écran</strong> en cours,
+      une <strong>cloche de notifications</strong> avec le nombre de messages non lus, et un
+      <strong>menu utilisateur</strong> déroulant menant à Mon Profil et à la déconnexion.</p>
+
+      <h3>3.4 Les dix modules</h3>
+      <div class="tw"><table>
+        <thead><tr><th>Module</th><th>Ce qu'on y fait</th><th>Section</th></tr></thead>
+        <tbody>
+          <tr><td>Dashboard</td><td>Tableau de bord du jour, vue exécutive</td><td><a href="#s11">11</a></td></tr>
+          <tr><td>Stock</td><td>Équipements, articles, PMMA, bobines, rivets, commandes</td><td><a href="#s6">6</a></td></tr>
+          <tr><td>Bobines</td><td>Commandes, validation du stock du matin, rapports</td><td><a href="#s7">7</a></td></tr>
+          <tr><td>Inventaire</td><td>Inventaires physiques et écarts</td><td><a href="#s7">7</a></td></tr>
+          <tr><td>Opérations</td><td>Point journalier, interventions, point et import EMUCI</td><td><a href="#s5">5</a></td></tr>
+          <tr><td>Informatique</td><td>Interventions, rapport journalier, affectations IT</td><td><a href="#s10">10</a></td></tr>
+          <tr><td>Rapports</td><td>Résumé superviseur, rapports généraux, exports</td><td><a href="#s11">11</a></td></tr>
+          <tr><td>Demandes internes</td><td>Demandes administratives et circuits de visa</td><td><a href="#s8">8</a></td></tr>
+          <tr><td>Achats</td><td>Expression de besoin, visas, suivi, réceptions</td><td><a href="#s9">9</a></td></tr>
+          <tr><td>Administration</td><td>Utilisateurs, rôles, permissions, sites, audit</td><td><a href="#s12">12</a></td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="s4">
+      <h2><span class="n">4</span> Les rôles</h2>
+      <p>Seize rôles existent. Le vôtre détermine ce que vous voyez et ce que vous pouvez
+      faire.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Rôle</th><th>Fonction</th></tr></thead>
+        <tbody>
+          <tr><td><code>superadmin</code></td><td>Super Administrateur, accès total</td></tr>
+          <tr><td><code>admin</code></td><td>Administrateur, accès total</td></tr>
+          <tr><td><code>lecteur</code></td><td>PDG, consultation et vue exécutive</td></tr>
+          <tr><td><code>directeur_general</code></td><td>Directeur Général, visas de direction</td></tr>
+          <tr><td><code>daf</code></td><td>Directeur Administratif et Financier</td></tr>
+          <tr><td><code>raf</code></td><td>Responsable Administratif et Financier</td></tr>
+          <tr><td><code>superviseur_operation</code></td><td>Supervision des opérations, validation des points</td></tr>
+          <tr><td><code>superviseur_achat</code></td><td>Supervision des achats</td></tr>
+          <tr><td><code>superviseur_it</code></td><td>Supervision informatique</td></tr>
+          <tr><td><code>coordinateur_site</code></td><td>Terrain, saisie du point journalier de son site</td></tr>
+          <tr><td><code>gestionnaire_operation</code></td><td>Gestion opérationnelle</td></tr>
+          <tr><td><code>gestionnaire_stock</code></td><td>Gestion du stock</td></tr>
+          <tr><td><code>gestionnaire_stock_bobines</code></td><td>Gestion du stock de bobines</td></tr>
+          <tr><td><code>controleur_production</code></td><td>Contrôle de production</td></tr>
+          <tr><td><code>maintenance_info</code></td><td>Maintenance informatique</td></tr>
+          <tr><td><code>support_it</code></td><td>Support informatique</td></tr>
+        </tbody>
+      </table></div>
+      <p><strong>Le coordinateur de site est verrouillé sur son site.</strong> Il ne voit
+      que ses propres données, et modifier l'adresse dans la barre du navigateur n'y
+      change rien.</p>
+    </section>
+
+    <section id="s5">
+      <h2><span class="n">5</span> Le point journalier et EMUCI</h2>
+      <p>C'est le relevé quotidien de production d'un site. Tout le reste en dépend.</p>
+
+      <h3>5.1 Saisir un point — coordinateur de site</h3>
+      <ol class="steps">
+        <li>Module <strong>Opérations</strong>, puis <strong>Point journalier</strong>.</li>
+        <li>Renseigner la date, le type de point et les quantités : véhicules par
+        catégorie, plaques posées, rivets utilisés, rivets endommagés, heures de travail.</li>
+        <li>Enregistrer.</li>
+      </ol>
+      <div class="tw"><table>
+        <thead><tr><th>Statut</th><th>Ce que ça veut dire</th></tr></thead>
+        <tbody>
+          <tr><td>Brouillon</td><td>Saisi mais pas transmis. Visible de vous seul. <strong>Ses chiffres ne comptent nulle part.</strong></td></tr>
+          <tr><td>En attente de validation</td><td>Transmis. Dans la file du superviseur, mais ne compte pas encore.</td></tr>
+          <tr><td>Validé</td><td>Validé par le superviseur. Compte dans tous les indicateurs.</td></tr>
+          <tr><td>Rejeté</td><td>Refusé avec un motif. À corriger et resoumettre.</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note note-warn">
+        <span class="note-t">Brouillon et « en attente » ne sont pas la même chose</span>
+        <p>Un brouillon n'est visible que de vous : le superviseur ne le voit pas et ne
+        peut donc pas le valider. Tant que vous ne l'avez pas soumis, il ne se passera
+        rien. C'est le piège le plus courant, et la raison pour laquelle le tableau de bord
+        affiche les points restés en attente.</p>
+      </div>
+
+      <h3>5.2 Valider les points — superviseur opération</h3>
+      <ol class="steps">
+        <li>Le tableau de bord signale les points en attente de validation.</li>
+        <li>Ouvrir le point, vérifier les quantités.</li>
+        <li>Valider, ou rejeter en indiquant le motif.</li>
+      </ol>
+
+      <h3>5.3 Corriger un point déjà validé</h3>
+      <p>Un point validé ne se modifie plus directement. Le coordinateur dépose une
+      <strong>demande de correction de saisie</strong>, que le superviseur traite. C'est ce
+      qui garantit qu'un chiffre validé ne bouge pas sans laisser de trace.</p>
+
+      <h3>5.4 Import EMUCI</h3>
+      <p><strong>Module Opérations → Import EMUCI.</strong> Charge le fichier produit par
+      la plateforme nationale, qui donne le nombre de plaques par site et par
+      <strong>statut de plaque</strong> (en service, déclarée cassée…).</p>
+      <ol class="steps">
+        <li>Sélectionner le fichier et la date d'import.</li>
+        <li>Lancer l'import.</li>
+        <li>L'écran affiche un <strong>résumé par site</strong> et le <strong>détail par
+        site et statut</strong>.</li>
+      </ol>
+      <p>Si des colonnes attendues manquent, l'import est refusé avec la liste des colonnes
+      absentes : corrigez le fichier plutôt que de forcer.</p>
+
+      <h3>5.5 Point EMUCI</h3>
+      <p><strong>Module Opérations → Point EMUCI.</strong> Compare ce que la plateforme
+      nationale a enregistré avec ce que les coordinateurs ont déclaré dans leurs points
+      journaliers, et met les <strong>écarts</strong> en évidence.</p>
+      <p>C'est l'écran de rapprochement : un écart signifie soit une erreur de saisie, soit
+      une plaque posée mais non remontée, soit l'inverse. Il se commente directement à
+      l'écran, pour que le motif reste attaché au chiffre.</p>
+    </section>
+
+    <section id="s6">
+      <h2><span class="n">6</span> Le stock</h2>
+
+      <h3>6.1 Équipements</h3>
+      <p>Deux entrées de menu pour un même écran, filtré différemment :
+      <strong>Équipements Informatique</strong> (postes, imprimantes, matériel IT) et
+      <strong>Équipements Opérationnel</strong> (matériel de pose et de terrain).</p>
+      <p>Chaque équipement porte un numéro de série, une nomenclature, un site, un état
+      (neuf, bon, usagé, réformé), une date de mise en service et une date de fin de cycle.
+      Les fins de cycle proches sont signalées sur le tableau de bord.</p>
+
+      <h3>6.2 Articles</h3>
+      <p><strong>Module Stock → Articles.</strong> Le catalogue des consommables : code,
+      libellé, type, unité, seuil d'alerte, prix unitaire, stock global.</p>
+      <div class="note note-warn">
+        <span class="note-t">Le stock d'un article est global</span>
+        <p>Il n'est pas ventilé par site. C'est pourquoi le compte des alertes de stock
+        reste global même quand vous filtrez le tableau de bord sur un site.</p>
+      </div>
+
+      <h3>6.3 Historique des mouvements</h3>
+      <p><strong>Module Stock → Historique des mouvements.</strong> Trace tous les
+      mouvements d'équipements : entrées, sorties, transferts, affectations. C'est l'écran
+      à ouvrir quand on cherche où est passé un matériel. Non accessible au coordinateur de
+      site.</p>
+
+      <h3>6.4 PMMA</h3>
+      <p><strong>Module Stock → PMMA.</strong> Suivi du stock de PMMA par site et par type,
+      avec seuil d'alerte. Son inventaire et ses écarts ont leurs propres écrans
+      (section&nbsp;7).</p>
+
+      <h3>6.5 Rivets</h3>
+      <p><strong>Module Stock → Rivets.</strong> Le stock de rivets par site et par type.
+      L'écran sert aussi à <strong>approvisionner</strong> un site : on saisit la quantité
+      livrée et le stock du site est crédité.</p>
+      <p>Le seuil d'alerte est de <strong>200 rivets</strong> : en dessous, le site est
+      signalé sur les tableaux de bord. Le coordinateur ne voit que le stock de son site.</p>
+
+      <h3>6.6 Vignette</h3>
+      <p><strong>Module Stock → Vignette.</strong> Même écran que Bobines, filtré sur la
+      catégorie vignette : les types y sont Réservoir et Pare-brise, au lieu des types de
+      plaques.</p>
+    </section>
+
+    <section id="s7">
+      <h2><span class="n">7</span> Bobines, rivets, PMMA et inventaires</h2>
+
+      <h3>7.1 La validation du stock du matin</h3>
+      <p>Chaque site déclare son stock en début de journée.</p>
+      <ol class="steps">
+        <li>Module <strong>Bobines</strong>, puis <strong>Validation stock jour</strong>.</li>
+        <li>Saisir les quantités constatées.</li>
+        <li>Valider.</li>
+      </ol>
+      <p>Trois résultats possibles : <strong>validé</strong>, <strong>validé avec
+      écarts</strong>, ou <strong>validé automatiquement</strong>. Un écart n'est pas une
+      faute en soi, mais il est tracé et doit être expliqué.</p>
+
+      <h3>7.2 Commander des bobines</h3>
+      <p><strong>Module Bobines → Commande bobines.</strong> La demande passe par le
+      gestionnaire de stock bobines, qui la sert.</p>
+
+      <h3>7.3 Vue stock par site</h3>
+      <p><strong>Module Bobines → Vue stock par site.</strong> Tableau de synthèse du stock
+      de bobines, site par site. Écran de consultation : on n'y saisit rien.</p>
+
+      <h3>7.4 Les bobines elles-mêmes</h3>
+      <p>Une bobine porte un numéro, un type, une série, un site, et un compte de films :
+      total, utilisés, endommagés, restants.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Statut</th><th>Signification</th></tr></thead>
+        <tbody>
+          <tr><td>En stock</td><td>Reçue, pas encore ouverte</td></tr>
+          <tr><td>En cours</td><td>Ouverte et en cours d'utilisation</td></tr>
+          <tr><td>Épuisée</td><td>Films consommés</td></tr>
+          <tr><td>Retirée</td><td>Sortie du circuit</td></tr>
+        </tbody>
+      </table></div>
+      <p>Seules les bobines <strong>en cours</strong> comptent dans les films restants
+      affichés sur les tableaux de bord.</p>
+
+      <h3>7.5 Les quatre inventaires</h3>
+      <p>Le principe est le même pour les quatre : on ouvre une session d'inventaire, on
+      saisit le comptage physique, puis l'écran d'écarts compare au stock théorique.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Inventaire</th><th>Écran d'écarts</th><th>Ce qu'on compte</th></tr></thead>
+        <tbody>
+          <tr><td>Inventaire bobines</td><td>Écarts bobines</td><td>Bobines et films restants</td></tr>
+          <tr><td>Inventaire rivets</td><td>Écarts rivets</td><td>Quantités de rivets par site</td></tr>
+          <tr><td>Inventaire PMMA</td><td>Écarts PMMA</td><td>PMMA par site et par type</td></tr>
+          <tr><td>Inventaire équipements</td><td>Écarts équipements</td><td>Présence physique du matériel</td></tr>
+        </tbody>
+      </table></div>
+      <ol class="steps">
+        <li>Ouvrir une session d'inventaire sur l'écran correspondant.</li>
+        <li>Saisir le comptage physique, site par site.</li>
+        <li>Clôturer la session.</li>
+        <li>Ouvrir l'écran <strong>Écarts</strong> correspondant : il liste les différences
+        entre le physique et le théorique.</li>
+        <li>Justifier chaque écart.</li>
+      </ol>
+      <div class="note note-warn">
+        <span class="note-t">Un écart non justifié reste ouvert</span>
+        <p>C'est voulu : la trace de l'explication vaut autant que la correction du chiffre.</p>
+      </div>
+    </section>
+
+    <section id="s8">
+      <h2><span class="n">8</span> Les demandes internes</h2>
+      <p>Neuf types de demandes administratives, chacune avec son circuit de visas.</p>
+
+      <h3>8.1 Les types disponibles</h3>
+      <div class="tw"><table>
+        <thead><tr><th>Type</th><th>Objet</th></tr></thead>
+        <tbody>
+          <tr><td>Autorisation d'absence</td><td>Congé, permission, absence exceptionnelle</td></tr>
+          <tr><td>Création d'accès NSIIV</td><td>Ouverture d'accès aux plateformes</td></tr>
+          <tr><td>Basculement d'accès</td><td>Transfert d'accès d'un site à un autre</td></tr>
+          <tr><td>Basculement de compte EMUCI</td><td>Changement de poste ou de profil</td></tr>
+          <tr><td>Transfert d'agent</td><td>Mutation temporaire ou définitive</td></tr>
+          <tr><td>Création de site</td><td>Ouverture d'un nouveau site</td></tr>
+          <tr><td>Changement de géolocalisation</td><td>Correction des coordonnées d'un site</td></tr>
+          <tr><td>Imputation courrier entrant</td><td>Affectation d'un courrier à un service</td></tr>
+          <tr><td>Demande exceptionnelle</td><td>Ce qui n'entre dans aucune des cases ci-dessus</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>8.2 Déposer une demande</h3>
+      <ol class="steps">
+        <li>Module <strong>Demandes internes</strong>, puis <strong>Nouvelle demande</strong>.</li>
+        <li>Choisir le type. Le <strong>circuit de visa s'affiche en haut du
+        formulaire</strong> : vous savez d'avance par qui votre demande va passer.</li>
+        <li>Remplir le formulaire. Les champs marqués d'un astérisque rouge sont obligatoires.</li>
+        <li><strong>Enregistrer le brouillon</strong> pour reprendre plus tard, ou
+        <strong>Soumettre la demande</strong> pour lancer le circuit.</li>
+      </ol>
+      <div class="note note-warn">
+        <span class="note-t">Prérequis</span>
+        <p>Vous devez être rattaché à un département pour soumettre une demande. Sans
+        rattachement, un message explicite vous le dit : demandez à un administrateur de
+        vous assigner.</p>
+      </div>
+
+      <h3>8.3 Les aides à la saisie</h3>
+      <p><strong>Annuaire des agents.</strong> Commencez à taper un nom, choisissez dans la
+      liste, et l'e-mail, la fonction, le matricule, le département et la direction se
+      remplissent seuls.</p>
+      <p><strong>Autorisation d'absence.</strong> Choisissez un type de permission (« Décès
+      conjoint (5j) », « Mariage du travailleur (4j) »…) et la durée, la date de fin et la
+      date de reprise se calculent automatiquement. La reprise saute au prochain jour
+      ouvré, week-ends et jours fériés ivoiriens compris. En saisie manuelle, les quatre
+      champs restent cohérents entre eux : le dernier que vous touchez commande, les autres
+      suivent.</p>
+
+      <h3>8.4 Le cycle de vie d'une demande</h3>
+      <div class="tw"><table>
+        <thead><tr><th>Statut</th><th>Signification</th></tr></thead>
+        <tbody>
+          <tr><td>Brouillon</td><td>Non transmise</td></tr>
+          <tr><td>En attente</td><td>Attend un visa</td></tr>
+          <tr><td>En cours</td><td>Un visa a été donné, le circuit continue</td></tr>
+          <tr><td>Approuvée</td><td>Tous les visas obtenus</td></tr>
+          <tr><td>Approuvée pour traitement</td><td>Approuvée et transmise au service qui exécute</td></tr>
+          <tr><td>Rejetée</td><td>Refusée à une étape, avec motif</td></tr>
+        </tbody>
+      </table></div>
+      <p>Exemple de circuit, pour une autorisation d'absence :</p>
+      <div class="flow">
+        <span class="flow-s">Visa N+1</span><span class="flow-a">→</span>
+        <span class="flow-s">Visa Administration</span><span class="flow-a">→</span>
+        <span class="flow-s">Visa Direction Générale</span>
+      </div>
+
+      <h3>8.5 Mes demandes</h3>
+      <p><strong>Module Demandes internes → Mes demandes.</strong> La liste de tout ce que
+      vous avez déposé, avec le statut et l'étape en cours. C'est ici qu'on vient voir « où
+      en est ma demande ». Un brouillon s'y reprend et se complète.</p>
+
+      <h3>8.6 Viser une demande</h3>
+      <ol class="steps">
+        <li>Module <strong>Demandes internes</strong>, puis <strong>À valider</strong>.</li>
+        <li>Ouvrir la demande, lire les champs et les visas déjà donnés.</li>
+        <li>Approuver, ou rejeter. <strong>Un rejet exige un motif</strong> : la personne
+        doit savoir quoi corriger.</li>
+      </ol>
+      <p>Le <strong>N+1</strong> n'est pas un rôle mais le responsable du département du
+      demandeur. Il est résolu automatiquement.</p>
+
+      <h3>8.7 Traitements IT</h3>
+      <p><strong>Module Demandes internes → Traitements IT.</strong> Une fois une demande
+      d'accès approuvée, elle arrive ici pour exécution : c'est l'informatique qui crée
+      réellement le compte ou l'accès, puis marque la demande comme traitée.</p>
+      <p>La distinction compte : <strong>approuvée</strong> veut dire « autorisée »,
+      <strong>traitée</strong> veut dire « faite ».</p>
+
+      <h3>8.8 Types &amp; circuits</h3>
+      <p><strong>Module Demandes internes → Types &amp; circuits.</strong> Écran
+      d'administration : créer un type de demande, définir ses étapes de visa et leur
+      ordre. Un type porte un code, un libellé, une description, et la liste ordonnée de
+      ses étapes. Chaque étape désigne le rôle qui doit viser.</p>
+
+      <h3>8.9 Circuits avancés</h3>
+      <p><strong>Module Demandes internes → Circuits avancés.</strong> Paramétrage fin des
+      rôles de validation, au-delà de l'enchaînement simple des étapes.</p>
+      <p><strong>Qui peut viser quelle étape</strong> découle du rôle ERP, sans réglage
+      à faire :</p>
+      <div class="tw"><table>
+        <thead><tr><th>Rôle ERP</th><th>Étapes qu'il peut viser</th></tr></thead>
+        <tbody>
+          <tr><td><code>raf</code></td><td>Visa RAF</td></tr>
+          <tr><td><code>daf</code></td><td>Visa DAF</td></tr>
+          <tr><td><code>support_it</code>, <code>superviseur_it</code>, <code>maintenance_info</code></td><td>Visa IT</td></tr>
+          <tr><td><code>directeur_general</code>, <code>lecteur</code> (PDG)</td><td>Visa Direction Générale</td></tr>
+          <tr><td><code>admin</code>, <code>superadmin</code></td><td>Toutes les étapes</td></tr>
+        </tbody>
+      </table></div>
+      <p>Trois règles s'ajoutent :</p>
+      <ul>
+        <li><strong>Le N+1</strong> n'est pas un rôle. C'est le responsable du département
+        du demandeur, résolu automatiquement.</li>
+        <li><strong>Une étape rattachée à un département</strong> peut être visée par
+        n'importe quel membre de ce département. C'est ce qui fait vivre le visa
+        « Administration », dont le rôle ERP correspondant a été supprimé.</li>
+        <li><strong>Personne ne vise sa propre demande</strong>, administrateurs compris.</li>
+      </ul>
+      <p>Des droits attribués manuellement du temps de l'ancien écran restent honorés, le
+      temps de la transition.</p>
+
+      <h3>8.10 Annuaire des agents</h3>
+      <p><strong>Module Demandes internes → Annuaire agents.</strong> La liste des agents,
+      avec matricule, nom, prénom, e-mail, téléphone, fonction, département, direction,
+      site, grade et statut. Il alimente le remplissage automatique des formulaires, et
+      s'alimente par import depuis un fichier Excel.</p>
+      <div class="note note-warn">
+        <span class="note-t">Un annuaire vide vide aussi les formulaires</span>
+        <p>Si le remplissage automatique ne propose personne, c'est ici qu'il faut regarder
+        d'abord.</p>
+      </div>
+    </section>
+
+    <section id="s9">
+      <h2><span class="n">9</span> Les achats</h2>
+      <p>Le circuit part d'un besoin exprimé par un service et va jusqu'à la réception de
+      la marchandise.</p>
+
+      <h3>9.1 Dashboard Achats</h3>
+      <p><strong>Module Achats → Dashboard Achats.</strong> Vue d'ensemble du module :
+      volumes, FEB en cours, en attente de visa, en retard. Point d'entrée pour qui pilote
+      les achats.</p>
+
+      <h3>9.2 Déposer une fiche d'expression de besoin</h3>
+      <ol class="steps">
+        <li>Module <strong>Achats</strong>, puis <strong>Nouvelle FEB</strong>.</li>
+        <li>Renseigner l'en-tête : exercice, département, ligne budgétaire, niveau d'urgence.</li>
+        <li>Ajouter les lignes : article, quantité, famille.</li>
+        <li>Enregistrer en brouillon, ou soumettre.</li>
+      </ol>
+      <div class="tw"><table>
+        <thead><tr><th>Niveau d'urgence</th><th>Usage</th></tr></thead>
+        <tbody>
+          <tr><td>Normale</td><td>Cas courant</td></tr>
+          <tr><td>Urgente</td><td>Besoin rapproché</td></tr>
+          <tr><td>Critique</td><td>Bloque l'activité</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>9.3 Le cycle d'une FEB</h3>
+      <div class="tw"><table>
+        <thead><tr><th>Statut</th><th>Signification</th></tr></thead>
+        <tbody>
+          <tr><td>Brouillon</td><td>En cours de rédaction</td></tr>
+          <tr><td>Soumise</td><td>Transmise au service achats</td></tr>
+          <tr><td>Prise en charge</td><td>Un acheteur s'en est saisi</td></tr>
+          <tr><td>En validation</td><td>Dans le circuit de visas</td></tr>
+          <tr><td>Confirmée</td><td>Validée, prête à être commandée</td></tr>
+          <tr><td>Clôturée</td><td>Terminée</td></tr>
+          <tr><td>Rejetée</td><td>Refusée</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>9.4 Mes FEB</h3>
+      <p><strong>Module Achats → Mes FEB.</strong> Vos propres fiches, avec leur statut. On
+      y reprend un brouillon et on y suit l'avancement d'une demande soumise.</p>
+
+      <h3>9.5 File d'attente Achats</h3>
+      <p><strong>Module Achats → File d'attente Achats.</strong> Réservé aux acheteurs :
+      les FEB soumises qui attendent une prise en charge. Un acheteur <strong>prend en
+      charge</strong> une fiche, ce qui la lui attribue. Il peut aussi la
+      <strong>restituer</strong> à la file, ou un responsable peut la
+      <strong>réattribuer</strong> à quelqu'un d'autre.</p>
+      <p>L'ancienneté est calculée en <strong>heures ouvrées</strong> : une fiche déposée
+      vendredi soir n'est pas comptée en retard le lundi matin.</p>
+
+      <h3>9.6 Mes visas</h3>
+      <p><strong>Module Achats → Mes visas.</strong> Les FEB qui attendent votre signature.
+      Approuver ou rejeter, avec motif en cas de refus. Le circuit de visas dépend du
+      montant : voir les paliers, section&nbsp;9.9.</p>
+
+      <h3>9.7 Suivre et réceptionner</h3>
+      <p>Une fois confirmée, la FEB devient une commande suivie dans <strong>Suivi Achats
+      (DA/BC)</strong>.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Statut de suivi</th><th>Signification</th></tr></thead>
+        <tbody>
+          <tr><td>En attente</td><td>Pas encore commandé</td></tr>
+          <tr><td>Commandé</td><td>Bon de commande émis</td></tr>
+          <tr><td>En retard</td><td>Délai dépassé</td></tr>
+          <tr><td>Livrée</td><td>Marchandise arrivée</td></tr>
+          <tr><td>Réceptionnée</td><td>Contrôlée et entrée en stock</td></tr>
+        </tbody>
+      </table></div>
+      <p>La réception se fait dans <strong>Achats → Réceptions</strong>. Elle
+      <strong>débite le stock du magasin</strong> et <strong>crédite le stock du
+      département</strong> demandeur.</p>
+
+      <h3>9.8 Stock par département</h3>
+      <p><strong>Module Achats → Stock par département.</strong> Ce que chaque département
+      détient après réception. À distinguer du stock magasin, qui est le stock central.</p>
+
+      <h3>9.9 Paliers de validation</h3>
+      <p><strong>Module Achats → Paliers de validation.</strong> Un palier définit, pour
+      une tranche de montant, qui doit signer.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Champ</th><th>Rôle</th></tr></thead>
+        <tbody>
+          <tr><td>Borne minimale</td><td>Montant à partir duquel le palier s'applique</td></tr>
+          <tr><td>Borne maximale</td><td>Montant jusqu'auquel il s'applique</td></tr>
+          <tr><td>Libellé</td><td>Nom du palier</td></tr>
+          <tr><td>Signataires</td><td>Qui doit viser</td></tr>
+          <tr><td>Ordre</td><td>Position dans l'enchaînement</td></tr>
+          <tr><td>Actif</td><td>Palier en vigueur ou non</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note note-warn">
+        <span class="note-t">Les paliers doivent couvrir tout l'intervalle</span>
+        <p>L'application le vérifie : un trou entre deux paliers laisserait des FEB sans
+        circuit de visa. Si l'écran refuse votre saisie, c'est probablement cela.</p>
+      </div>
+      <p><strong>Les paliers livrés à l'installation :</strong></p>
+      <div class="tw"><table>
+        <thead><tr><th>Montant (XOF)</th><th>Palier</th><th>Signataires</th></tr></thead>
+        <tbody>
+          <tr><td>0 à 500 000</td><td>RAF seul</td><td>RAF</td></tr>
+          <tr><td>500 001 à 5 000 000</td><td>RAF + DAF</td><td>RAF, DAF</td></tr>
+          <tr><td>Au-delà de 5 000 000</td><td>RAF + DAF + PDG</td><td>RAF, DAF, PDG</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note note-todo">
+        <span class="note-t">Ces bornes sont provisoires</span>
+        <p>La migration qui les installe le dit explicitement : « bornes de démarrage
+        arbitraires, aucun seuil réel fourni ». Elles fonctionnent, mais elles n'ont pas
+        été arrêtées par la direction. Tant qu'elles ne le sont pas, une FEB peut suivre un
+        circuit qui ne correspond pas à la règle de l'entreprise.</p>
+      </div>
+
+      <h3>9.10 Fournisseurs</h3>
+      <p><strong>Module Achats → Fournisseurs.</strong> Le référentiel des fournisseurs,
+      utilisé lors du passage en commande.</p>
+
+      <h3>9.11 Familles &amp; types</h3>
+      <p><strong>Module Achats → Familles &amp; types.</strong> Classement des articles
+      achetés.</p>
+      <p><strong>Chaque famille porte un compte comptable</strong>, suivant le plan
+      SYSCOHADA : trente-cinq familles sont installées, toutes rattachées à un compte.
+      Quelques exemples :</p>
+      <div class="tw"><table>
+        <thead><tr><th>Compte</th><th>Famille</th></tr></thead>
+        <tbody>
+          <tr><td>2442</td><td>Équipements</td></tr>
+          <tr><td>604</td><td>Consommables informatiques, consommables opérations (rivets)</td></tr>
+          <tr><td>605</td><td>Fournitures de bureau, entretien, restauration</td></tr>
+          <tr><td>611</td><td>Transport et logistique</td></tr>
+          <tr><td>624</td><td>Maintenance</td></tr>
+          <tr><td>628</td><td>Frais de télécommunications</td></tr>
+        </tbody>
+      </table></div>
+      <p><strong>Le code analytique</strong> d'une ligne se compose de trois segments,
+      repris des codes du site, du département et de la famille :</p>
+      <div class="flow">
+        <span class="flow-s">SITE</span><span class="flow-a">/</span>
+        <span class="flow-s">DÉPARTEMENT</span><span class="flow-a">/</span>
+        <span class="flow-s">FAMILLE</span>
+      </div>
+      <p>Choisir la famille détermine donc à la fois l'imputation comptable et le troisième
+      segment du code analytique. C'est la seule décision à prendre à la saisie ; le reste
+      se déduit.</p>
+      <div class="note note-todo">
+        <span class="note-t">Les types d'achat portent des libellés provisoires</span>
+        <p>DAF, DAI et DAH sont installés comme « Demande d'Achat Fournitures /
+        Immobilisation / Hors-marché », mais la migration signale que le sigle exact n'est
+        pas documenté. À confirmer auprès du service financier.</p>
+      </div>
+
+      <h3>9.12 Lignes budgétaires</h3>
+      <p><strong>Module Achats → Lignes budgétaires.</strong> Les enveloppes sur lesquelles
+      les FEB s'imputent. Chaque fiche en désigne une.</p>
+
+      <h3>9.13 Paramètres généraux</h3>
+      <p><strong>Module Achats → Paramètres généraux.</strong> Réglages transverses du
+      module : exercice en cours, délais, numérotation des FEB. Le numéro d'une FEB est
+      attribué automatiquement, par exercice.</p>
+    </section>
+
+    <section id="s10">
+      <h2><span class="n">10</span> L'informatique</h2>
+
+      <h3>10.1 Interventions et maintenance</h3>
+      <p><strong>Module Informatique → Interventions</strong>, ou <strong>Opérations →
+      Demande d'intervention</strong> : même écran, deux portes d'entrée.</p>
+      <ol class="steps">
+        <li>Ouvrir <strong>Nouvelle intervention</strong>.</li>
+        <li>Décrire le problème observé, désigner l'équipement et le site.</li>
+        <li>Enregistrer.</li>
+      </ol>
+      <p>Le technicien renseigne ensuite les travaux prévus, puis les travaux effectués et
+      les pièces remplacées.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Statut après intervention</th><th>Signification</th></tr></thead>
+        <tbody>
+          <tr><td>En attente</td><td>Déclarée, pas encore traitée</td></tr>
+          <tr><td>En cours</td><td>Prise en charge</td></tr>
+          <tr><td>Partiel</td><td>Traitée partiellement, à reprendre</td></tr>
+          <tr><td>Résolu</td><td>Terminée</td></tr>
+        </tbody>
+      </table></div>
+      <p>Une intervention porte aussi sa durée en minutes et peut recevoir un rapport en
+      pièce jointe.</p>
+
+      <h3>10.2 Rapport journalier</h3>
+      <p><strong>Module Informatique → Rapport journalier.</strong> Le compte rendu
+      quotidien de l'activité informatique.</p>
+
+      <h3>10.3 Affectations IT</h3>
+      <p><strong>Module Informatique → Affectations IT.</strong> Gestion du support
+      informatique : qui prend en charge quoi.</p>
+
+      <h3>10.4 Transfert d'équipement</h3>
+      <ol class="steps">
+        <li>Saisir le <strong>numéro de série</strong> de l'équipement : l'écran le
+        recherche à la frappe.</li>
+        <li>Indiquer la destination.</li>
+        <li>Renseigner la <strong>raison du transfert</strong>.</li>
+        <li>Valider.</li>
+      </ol>
+      <p>Le transfert est tracé et apparaît dans l'historique des mouvements
+      (section&nbsp;6.3).</p>
+      <div class="note note-info">
+        <span class="note-t">Droit requis</span>
+        <p><strong>Création</strong> sur le module <code>affectations</code>. La lecture
+        seule ne suffit pas ici, puisque l'écran sert à agir.</p>
+      </div>
+    </section>
+
+    <section id="s11">
+      <h2><span class="n">11</span> Rapports et exports</h2>
+
+      <h3>11.1 Le tableau de bord</h3>
+      <p>Il montre ce qui vous concerne aujourd'hui, différemment selon votre métier. Ce
+      n'est pas l'écran d'arrivée après connexion : c'est l'accueil qui l'est
+      (section&nbsp;3.1). On atteint le tableau de bord par le module
+      <strong>Dashboard</strong>.</p>
+      <p><strong>La rangée d'indicateurs</strong>, en tête, donne les chiffres du
+      périmètre. Ils s'affichent selon vos droits : chaque indicateur dépend d'une
+      permission, et vous ne voyez que ceux des modules qui vous sont ouverts.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Indicateur</th><th>Dépend du droit de lecture sur</th></tr></thead>
+        <tbody>
+          <tr><td>Engins traités, Plaques posées</td><td><code>operations</code></td></tr>
+          <tr><td>Bobines actives</td><td><code>bobines</code></td></tr>
+          <tr><td>Commandes à servir</td><td><code>commandes_bobines</code></td></tr>
+          <tr><td>Parc actif, Hors service, En maintenance, Fin de cycle ≤ 30 j</td><td><code>equipements</code></td></tr>
+        </tbody>
+      </table></div>
+      <p><strong>En dessous</strong>, deux blocs de tête, « Production du mois » et « Taux
+      de validation » (points validés sur points saisis), puis les blocs de détail, et
+      enfin les graphes.</p>
+      <p><strong>Un bouton Exporter</strong> figure en haut à droite si vous avez le droit
+      de lecture sur le module <code>rapports</code>.</p>
+      <p>Un <strong>filtre par site</strong> est disponible pour les profils qui couvrent
+      plusieurs sites. Le coordinateur, lui, est verrouillé sur le sien.</p>
+      <div class="note note-info">
+        <span class="note-t">Le rôle PDG garde la version précédente</span>
+        <p>C'est volontaire : la vue exécutive lui sert de tableau de bord, et la rangée
+        d'indicateurs ferait double emploi.</p>
+      </div>
+      <div class="note note-info">
+        <span class="note-t">Si le mois affiché n'est pas le mois en cours</span>
+        <p>C'est voulu : quand le mois courant n'a encore aucun relevé validé, la synthèse
+        retombe sur le dernier mois qui en a, et le libellé le nomme. Mieux vaut un chiffre
+        daté qu'un zéro trompeur.</p>
+      </div>
+
+      <h3>11.2 Vue exécutive</h3>
+      <p><strong>Module Dashboard → Vue exécutive.</strong> La vue de direction :
+      indicateurs consolidés, répartitions en anneaux, évolution sur douze mois,
+      performance par site, alertes.</p>
+      <p>Elle est <strong>accessible à tous les comptes</strong>, pas réservée à la
+      direction. Un filtre par site et par mois permet d'en resserrer le périmètre, et les
+      chiffres se réactualisent sans recharger la page.</p>
+
+      <h3>11.3 Les écrans de rapport</h3>
+      <div class="tw"><table>
+        <thead><tr><th>Écran</th><th>Contenu</th></tr></thead>
+        <tbody>
+          <tr><td>Résumé superviseur</td><td>Synthèse des opérations pour l'encadrement</td></tr>
+          <tr><td>Rapports généraux</td><td>Analyses transverses</td></tr>
+          <tr><td>Exports</td><td>Extraction des données</td></tr>
+          <tr><td>Rapports &amp; Exports (Bobines)</td><td>Spécifique au stock bobines</td></tr>
+        </tbody>
+      </table></div>
+      <p>La plupart des écrans de liste proposent aussi un export direct, si votre rôle a
+      le droit d'exporter sur ce module.</p>
+    </section>
+
+    <section id="s12">
+      <h2><span class="n">12</span> L'administration</h2>
+
+      <h3>12.1 Utilisateurs</h3>
+      <p><strong>Administration → Utilisateurs.</strong> Créer un compte, modifier ses
+      informations, l'activer ou le désactiver, lui attribuer un rôle et un site. La saisie
+      est contrôlée : une adresse e-mail ou un numéro de téléphone mal formé est signalé en
+      rouge dès que vous quittez le champ.</p>
+      <div class="note note-info">
+        <span class="note-t">Un compte désactivé n'est pas supprimé</span>
+        <p>Ses données et sa trace dans le journal d'audit restent. C'est ce qui permet de
+        savoir qui a fait quoi, même après un départ.</p>
+      </div>
+
+      <h3>12.2 Permissions</h3>
+      <p><strong>Administration → Permissions.</strong> Chaque rôle reçoit, module par
+      module, cinq droits : <strong>lire</strong>, <strong>créer</strong>,
+      <strong>modifier</strong>, <strong>supprimer</strong>, <strong>exporter</strong>.
+      Trente-sept modules sont gérés.</p>
+      <div class="note note-warn">
+        <span class="note-t">Configuration absente n'est pas refus</span>
+        <p>Un rôle dont aucune permission n'est renseignée voit le profil par défaut, pas
+        une page vide. C'est délibéré : une configuration oubliée ne doit pas ressembler à
+        un refus. Dès que ses permissions sont renseignées, elles s'appliquent pleinement.</p>
+      </div>
+      <p>Si quelqu'un signale qu'il ne voit pas un écran auquel il devrait avoir accès,
+      vérifiez d'abord ses permissions ici avant de conclure à un défaut du logiciel.</p>
+
+      <h3>12.3 Délégations</h3>
+      <p><strong>Administration → Délégations.</strong> Un utilisateur peut déléguer
+      temporairement ses visas à un autre. Utile pour les congés : sans cela, une demande
+      reste bloquée à l'étape d'une personne absente.</p>
+
+      <h3>12.4 Sites</h3>
+      <p><strong>Administration → Sites.</strong> Le référentiel des sites : nom, type,
+      localisation, coordonnées géographiques, état actif ou non.</p>
+      <p>Le <strong>type</strong> du site compte : seuls les sites de type
+      <strong>magasin</strong> portent le stock central utilisé par les réceptions d'achats
+      (section&nbsp;9.7).</p>
+
+      <h3>12.5 Départements</h3>
+      <p><strong>Administration → Départements.</strong> Le référentiel des départements et
+      le rattachement des utilisateurs.</p>
+      <div class="note note-warn">
+        <span class="note-t">Ce rattachement n'est pas décoratif</span>
+        <p>Il détermine le N+1 dans les circuits de visa, et il conditionne la possibilité
+        même de déposer une demande interne. Un utilisateur non rattaché ne peut rien
+        soumettre.</p>
+      </div>
+
+      <h3>12.6 Nomenclatures</h3>
+      <p><strong>Administration → Nomenclatures.</strong> Le catalogue des types
+      d'équipements : code, catégorie, libellé, description, <strong>durée de vie en
+      mois</strong>, <strong>seuil d'alerte</strong>, <strong>durée
+      d'amortissement</strong>. La durée de vie alimente le calcul des fins de cycle
+      signalées sur le tableau de bord.</p>
+
+      <h3>12.7 Journal d'audit</h3>
+      <p><strong>Administration → Audit.</strong> La trace des actions faites dans
+      l'application : qui, quoi, quand. C'est l'écran à ouvrir quand une donnée a changé et
+      que personne ne sait pourquoi.</p>
+    </section>
+
+    <section id="s12b">
+      <h2><span class="n">12 bis</span> Les écrans hors menu</h2>
+      <p>Certains écrans ne figurent dans aucun menu : on y arrive depuis une liste, un
+      bouton, ou automatiquement. Ils comptent autant que les autres.</p>
+
+      <h3>Mon Profil</h3>
+      <p>Vos informations personnelles, et la section <strong>« Changer le mot de
+      passe »</strong> (section 2.3). Accessible depuis votre nom, en bas de la barre
+      latérale.</p>
+
+      <h3>Détail d'une FEB, et traitement</h3>
+      <p>Depuis <strong>Mes FEB</strong>, <strong>File d'attente Achats</strong> ou
+      <strong>Mes visas</strong>, on ouvre le <strong>détail</strong> d'une fiche : son
+      en-tête, ses lignes, son circuit et l'historique de ses visas.</p>
+      <p>L'écran de <strong>traitement</strong> est celui de l'acheteur : c'est là qu'il
+      complète la fiche, la bascule en commande, et suit son exécution.</p>
+      <p>Trois <strong>exports PDF</strong> existent : la fiche seule, la fiche avec son
+      circuit de validation, et le bon de commande.</p>
+
+      <h3>Détail d'un inventaire</h3>
+      <p>Les écrans <strong>Inventaire bobines</strong>, <strong>rivets</strong>,
+      <strong>PMMA</strong> et <strong>équipements</strong> listent les sessions. On ouvre
+      une session pour arriver sur son <strong>détail</strong>, où se fait réellement le
+      comptage, ligne par ligne. Une session en cours porte le statut
+      <strong>brouillon</strong> tant qu'elle n'est pas clôturée.</p>
+
+      <h3>Réceptions de commandes</h3>
+      <p>Écran de réception des commandes sur site, atteint depuis le suivi des commandes.
+      Droit requis : <strong>modification</strong> sur le module <code>receptions</code>
+      pour enregistrer une réception, lecture seule pour la consulter.</p>
+
+      <h3>Import stock bobines</h3>
+      <p>Chargement du stock de bobines depuis un fichier <strong>.xlsx</strong>. Comme
+      pour l'import EMUCI, les colonnes attendues sont vérifiées et l'import est refusé si
+      l'une manque.</p>
+
+      <h3>Impression du point journalier</h3>
+      <p>Un point journalier s'exporte en PDF depuis sa fiche.</p>
+
+      <div class="note note-info">
+        <span class="note-t">Un raccourci à connaître</span>
+        <p>L'ancienne adresse <code>consommables.php</code> renvoie désormais vers
+        <strong>Articles</strong> : le module a été renommé, les anciens liens et favoris
+        continuent de fonctionner.</p>
+      </div>
+    </section>
+
+    <section id="s13">
+      <h2><span class="n">13</span> Questions fréquentes</h2>
+
+      <div class="faq"><p class="faq-q">L'application me renvoie sans arrêt sur « Changer
+      mot de passe ».</p>
+      <p>Votre mot de passe est provisoire, attribué par un administrateur. Tant qu'il
+      n'est pas changé, aucun autre écran ne s'ouvre. Voir section 2.1.</p></div>
+
+      <div class="faq"><p class="faq-q">Je veux changer mon mot de passe mais l'écran me
+      renvoie à l'accueil.</p>
+      <p>L'écran « Changer mot de passe » ne sert qu'au changement imposé. Pour le faire de
+      votre propre initiative, passez par <strong>Mon Profil</strong>. Voir section 2.3.</p></div>
+
+      <div class="faq"><p class="faq-q">Je ne vois pas un module sur l'accueil.</p>
+      <p>Votre rôle ne l'ouvre pas. Ce n'est pas un défaut d'affichage. Voyez un
+      administrateur si vous pensez que c'est une erreur de configuration.</p></div>
+
+      <div class="faq"><p class="faq-q">Je cherche un écran mais il n'est pas dans la barre
+      latérale.</p>
+      <p>La barre ne montre que les écrans du module en cours. Repassez par l'accueil et
+      ouvrez le module auquel cet écran appartient. Voir section 3.2.</p></div>
+
+      <div class="faq"><p class="faq-q">Mes chiffres n'apparaissent pas dans les rapports.</p>
+      <p>Vérifiez que vos points journaliers sont validés et non restés en brouillon. Un
+      brouillon ne compte nulle part.</p></div>
+
+      <div class="faq"><p class="faq-q">Je ne peux pas soumettre une demande interne.</p>
+      <p>Vous n'êtes probablement pas rattaché à un département. Le message d'erreur le dit
+      explicitement. Un administrateur doit vous assigner.</p></div>
+
+      <div class="faq"><p class="faq-q">Je ne peux plus modifier un point journalier.</p>
+      <p>Il est validé. Déposez une demande de correction de saisie.</p></div>
+
+      <div class="faq"><p class="faq-q">Une demande est bloquée dans le circuit.</p>
+      <p>Regardez à quelle étape elle se trouve : le visa attendu est peut-être celui d'une
+      personne absente. Une délégation peut débloquer la situation.</p></div>
+
+      <div class="faq"><p class="faq-q">Le remplissage automatique ne propose aucun agent.</p>
+      <p>L'annuaire des agents est vide ou n'a pas été importé. Voir section 8.10.</p></div>
+
+      <div class="faq"><p class="faq-q">L'écran des paliers refuse ma saisie.</p>
+      <p>Les paliers doivent couvrir tout l'intervalle des montants, sans trou. Voir
+      section 9.9.</p></div>
+
+      <div class="faq"><p class="faq-q">Ma demande d'accès est approuvée mais je n'ai
+      toujours pas l'accès.</p>
+      <p>Approuvée veut dire autorisée ; il reste le traitement par l'informatique. Voir
+      section 8.7.</p></div>
+
+      <div class="faq"><p class="faq-q">Le compte des alertes de stock ne change pas quand
+      je filtre sur un site.</p>
+      <p>C'est normal : le stock des articles est global, pas ventilé par site. Voir
+      section 6.2.</p></div>
+    </section>
+
+    <section id="s14">
+      <h2><span class="n">14</span> À qui s'adresser</h2>
+      <div class="tw"><table>
+        <thead><tr><th>Besoin</th><th>Interlocuteur</th></tr></thead>
+        <tbody>
+          <tr><td>Compte, mot de passe, permissions</td><td>Administrateur</td></tr>
+          <tr><td>Rattachement à un département</td><td>Administrateur</td></tr>
+          <tr><td>Problème d'accès aux plateformes</td><td>Support IT, via une demande interne</td></tr>
+          <tr><td>Anomalie de données</td><td>Superviseur du module concerné</td></tr>
+          <tr><td>Paliers, familles, lignes budgétaires</td><td>Service financier</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Ce qui reste à décider</h3>
+      <p>Rien de ce qui suit n'est un trou dans la documentation : les mécanismes sont en
+      place et décrits. Ce sont des <strong>valeurs provisoires que le logiciel signale
+      lui-même</strong> comme n'ayant pas été arrêtées par l'entreprise.</p>
+      <div class="tw"><table>
+        <thead><tr><th>Point</th><th>Section</th><th>En place</th><th>Ce qui manque</th></tr></thead>
+        <tbody>
+          <tr><td>Paliers de validation</td><td>9.9</td><td>Trois paliers fonctionnels (500 000 et 5 000 000 XOF)</td><td>Les seuils réels, la migration les dit « arbitraires »</td></tr>
+          <tr><td>Types d'achat</td><td>9.11</td><td>DAF, DAI, DAH avec des libellés développés</td><td>Le sigle exact, non documenté dans la spécification</td></tr>
+          <tr><td>Lignes budgétaires</td><td>9.12</td><td>Six lignes, comportement « alerte »</td><td>Les enveloppes, toutes à vide : aucun montant n'est plafonné</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note note-warn">
+        <span class="note-t">Le point le plus sensible</span>
+        <p>Tant que les paliers ne sont pas arrêtés, une FEB peut suivre un circuit de visa
+        qui ne correspond pas à la règle de l'entreprise.</p>
+      </div>
+    </section>
+
+    <footer>
+      <p><strong>Tenir ce manuel à jour.</strong> Il décrit l'état du logiciel au commit
+      <code>5ecb558</code> du 29 août 2026. À chaque évolution fonctionnelle notable,
+      mettez à jour la section concernée et la version. Un manuel qui ne dit pas sur quelle
+      version il porte ne vaut rien.</p>
+      <p>Source de référence : <code>docs/MANUEL_UTILISATION.md</code> dans le dépôt.</p>
+    </footer>
+  </main>
+</div>
+
+<div class="impr-pied" style="margin-top:10mm;padding-top:4mm;border-top:1px solid #c3ccdf;
+     font-size:9pt;color:#4d5876">
+  Manuel d'utilisation — ERP EMUCI — document interne EMUCI. État du logiciel au commit <code>5ecb558</code>,
+  29 août 2026. Toute évolution fonctionnelle rend une section caduque : vérifiez la
+  version avant de vous y fier.
+</div>
+
+</body>
+</html>
