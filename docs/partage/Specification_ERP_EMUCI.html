@@ -23,7 +23,10 @@
     margin:0 0 14mm;padding:0;border:none;box-shadow:none;
     break-after:page;page-break-after:always}
   .toc a{color:#000 !important;padding:2px 0;margin:0}
-  .tw,figure{overflow:visible !important;box-shadow:none;break-inside:avoid;page-break-inside:avoid}
+  /* Aucune ombre a l'impression : Chrome les rastérise, ce qui alourdit
+     le fichier et salit les bords sur papier. */
+  *{box-shadow:none !important}
+  .tw,figure{overflow:visible !important;break-inside:avoid;page-break-inside:avoid}
   table{min-width:0 !important;font-size:9pt}
   th{background:#eef2fb !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .note{break-inside:avoid;page-break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}

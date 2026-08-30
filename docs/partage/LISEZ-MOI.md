@@ -2,26 +2,40 @@
 
 Deux fichiers HTML **autonomes**, destinés à être joints à un e-mail.
 
-| Fichier | Public | Contenu |
+| Document | Public | Contenu |
 |---|---|---|
-| `Manuel_utilisation_ERP_EMUCI.html` | Coordinateurs, superviseurs, tout utilisateur | Comment se servir de l'application |
-| `Specification_ERP_EMUCI.html` | Équipe technique, direction | Ce que le système est, ses règles et ses limites |
+| Manuel d'utilisation | Coordinateurs, superviseurs, tout utilisateur | Comment se servir de l'application |
+| Spécification | Équipe technique, direction | Ce que le système est, ses règles et ses limites |
 
-## Comment s'en servir
+Chacun existe en **deux formats** :
 
-- **Ouvrir** : double-clic. Aucun logiciel à installer, n'importe quel
-  navigateur suffit.
-- **Convertir en PDF** : ouvrir le fichier, puis `Ctrl+P` et
-  « Enregistrer au format PDF ». La mise en page d'impression est prévue :
-  le sommaire passe en première page, les tableaux et les schémas ne sont
-  pas coupés en deux.
-- **Envoyer** : joindre le fichier tel quel. Il ne dépend d'aucun serveur.
+| Format | Usage |
+|---|---|
+| `.pdf` | **À joindre à un e-mail.** 28 pages, texte cherchable, rien à installer chez le destinataire. |
+| `.html` | Pour lire à l'écran ou régénérer le PDF après une modification. |
+
+## Régénérer les PDF
+
+Ils sont produits depuis les fichiers HTML par le moteur de rendu de Chrome,
+qui applique la feuille d'impression du document.
+
+```bash
+chrome --headless=new --disable-gpu --no-pdf-header-footer   --print-to-pdf="<chemin absolu>\Specification_ERP_EMUCI.pdf"   "http://localhost:8080/docs/partage/Specification_ERP_EMUCI.html"
+```
+
+Le chemin de sortie doit être **absolu et au format Windows**. Avec un chemin
+relatif ou de style Unix, Chrome annonce avoir écrit le fichier mais le
+dépose ailleurs, sans erreur : vérifiez la date du fichier après coup.
+
+À défaut, ouvrir le `.html` et faire `Ctrl+P` puis « Enregistrer au format
+PDF » donne le même résultat.
 
 ## Deux points à connaître avant d'envoyer
 
-**Les polices viennent de Google Fonts.** Un destinataire hors ligne verra le
-document dans la police système de sa machine. La mise en page et la
-lisibilité restent correctes, seul le dessin des caractères change.
+**Les polices sont embarquées dans les PDF** : ils s'affichent partout à
+l'identique, y compris hors ligne. Les fichiers HTML, eux, chargent leurs
+polices depuis Google Fonts et retombent sur la police système si le
+destinataire est hors ligne.
 
 **Les deux documents portent leur version logicielle** : commit `5ecb558` du
 29 août 2026. Ils décrivent l'application à cette date. Après une évolution
