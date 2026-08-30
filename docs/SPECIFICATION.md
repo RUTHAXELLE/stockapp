@@ -1,7 +1,7 @@
 # Spécification fonctionnelle et technique — ERP EMUCI
 
 **Version du logiciel** : branche `main`, commit `5ecb558` (29 août 2026)
-**Version de la spécification** : 2.0
+**Version de la spécification** : 2.1
 **Objet** : décrire ce que le système est, comment il est construit, les
 règles qu'il applique et les limites qu'il porte.
 
@@ -176,10 +176,11 @@ La configuration est portée par des constantes (`APP_URL`, `APP_NAME`,
 **124 index** dans le dump principal, seize de plus apportés par les
 migrations du module achats.
 
-### 3.2 Colonnes JSONB, et ce qu'elles impliquent
+### 3.2 Le circuit stocké sur la demande
 
-Le circuit de validation ne stocke pas ses étapes en lignes : il les met en
-JSONB sur la demande elle-même.
+Le circuit de validation ne se stocke pas en lignes : il vit sur la demande
+elle-même, sérialisé en JSON. Trois colonnes, présentes à l'identique dans
+les demandes internes, les FEB et les affectations d'équipement.
 
 | Colonne | Contenu |
 |---|---|
@@ -191,6 +192,8 @@ JSONB sur la demande elle-même.
 sa propre copie du circuit. Modifier un type de demande ne réécrit donc pas
 l'histoire des demandes en cours. Le prix à payer est qu'on ne peut pas
 interroger les visas en SQL aussi simplement qu'une table de jointure.
+
+Le **type de colonne diffère selon le module** : voir 3.5.
 
 ### 3.3 Trois notions de stock, à ne pas confondre
 
@@ -205,6 +208,111 @@ C'est la source d'erreur la plus probable pour qui découvre le modèle.
 Une réception d'achat **débite le magasin et crédite le département**. Le
 stock global des articles n'est pas ventilé : c'est pourquoi un filtre par
 site ne change pas le compte des alertes de stock.
+
+### 3.4 Dictionnaire des tables centrales
+
+Sept tables portent l'essentiel du produit. Leurs colonnes structurantes,
+leurs clés et leurs contraintes.
+
+#### `users` — comptes
+
+| Colonne | Type | Note |
+|---|---|---|
+| `id` | integer | Clé primaire |
+| `nom`, `prenom`, `email` | varchar | `email` sert d'identifiant de connexion |
+| `password_hash` | varchar | bcrypt, coût 12 |
+| `role_id` | integer | → `roles.id` |
+| `site_id` | integer | Site de rattachement, verrouille le coordinateur |
+| `actif` | smallint | Un compte désactivé n'est jamais supprimé |
+| `must_change_password` | smallint | Bloque toute page tant qu'il vaut 1 |
+| `reset_token`, `reset_token_expiry` | varchar, timestamp | Réinitialisation en libre-service |
+
+#### `permissions` — habilitations
+
+| Colonne | Type | Note |
+|---|---|---|
+| `role_id` | integer | → `roles.id` |
+| `module` | varchar | Un des trente-sept modules |
+| `can_create`, `can_read`, `can_update`, `can_delete`, `can_export` | smallint | 0 ou 1 |
+
+**Unicité sur `(role_id, module)`** : un rôle a au plus une ligne par module.
+C'est ce qui rend `ON CONFLICT` utilisable dans les migrations de droits.
+
+#### `op_points_journaliers` — le relevé quotidien
+
+| Colonne | Type | Note |
+|---|---|---|
+| `site_id` | integer | → `sites.id` |
+| `date_point` | date | Avec `site_id` et `type_point`, identifie le relevé |
+| `type_point`, `statut` | text | `brouillon`, `en_attente_validation`, `valide`, `rejete` |
+| `nb_vp`, `nb_camion`, `nb_semi`, `nb_moto` | integer | Détail par catégorie |
+| `total_engins`, `total_plaques` | integer | Agrégats saisis |
+| `rivets_utilises`, `rivets_endommages` | integer | |
+| `created_by`, `validated_by` | integer | → `users.id` |
+| `motif_rejet` | text | Obligatoire au rejet |
+
+#### `op_bobines` — bobines de film
+
+| Colonne | Type | Note |
+|---|---|---|
+| `numero` | varchar | **Unique** |
+| `type_code`, `serie` | varchar | |
+| `type_vehicule_id` | integer | → `op_types_vehicule.id` |
+| `films_total`, `films_utilises`, `films_endommages`, `films_restants` | integer | `films_restants` est stocké, pas calculé à la volée |
+| `site_id` | integer | → `sites.id` |
+| `statut` | text | `en_stock`, `en_cours`, `epuisee`, `retiree` |
+
+#### `di_demandes` — demandes internes
+
+| Colonne | Type | Note |
+|---|---|---|
+| `numero` | varchar | **Unique** |
+| `type_code` | varchar | → `di_types.code` |
+| `statut`, `etape_actuelle`, `etape_rejet` | varchar, integer | Position dans le circuit |
+| `demandeur_id`, `n1_user_id`, `traite_par` | integer | → `users.id` |
+| `site_id` | integer | → `sites.id` |
+| `champs` | **text** | Les valeurs du formulaire, en JSON |
+| `workflow_snapshot`, `signatures`, `historique` | **text** | Le circuit figé, les visas, la trace |
+| `traite_it` | smallint | Exécution informatique effectuée |
+
+#### `feb` — expression de besoin
+
+| Colonne | Type | Note |
+|---|---|---|
+| `numero` | varchar | **Unique**, attribué par exercice |
+| `exercice` | integer | |
+| `demandeur_id`, `acheteur_id`, `n1_user_id` | integer | → `users.id` |
+| `site_id`, `departement_id` | integer | Constants sur toute la FEB (RG-06) |
+| `urgence` | smallint | 0 normale, 1 urgente, 2 critique |
+| `statut` | varchar | Les huit statuts |
+| `montant_total` | **bigint** | En XOF, entier — pas de flottant |
+| `workflow_snapshot`, `signatures`, `historique` | **jsonb** | |
+
+#### `feb_lignes` — lignes d'une FEB
+
+| Colonne | Type | Note |
+|---|---|---|
+| `feb_id` | integer | → `feb.id` |
+| `numero_ligne` | integer | |
+| `designation` | varchar | |
+| `article_id`, `famille_id`, `fournisseur_id`, `nomenclature_id` | integer | Références au référentiel |
+| `type_achat` | varchar | → `achat_types.code` |
+| `code_analytique` | varchar | Dérivé, jamais saisi (RG-05) |
+| `lot` | varchar | Égal au code analytique (RG-08) |
+| `montant_ttc` | **bigint** | En XOF |
+
+### 3.5 Deux observations sur les types
+
+**Les montants sont des entiers (`bigint`), jamais des flottants.** Un
+montant en XOF n'a pas de sous-unité : le stocker en entier évite les erreurs
+d'arrondi qu'un `float` introduirait sur les cumuls et les comparaisons de
+paliers.
+
+> **Incohérence entre deux modules.** `feb` et `equipement_affectations`
+> stockent leurs circuits en **`jsonb`** ; `di_demandes`, plus ancien, les
+> stocke en **`text`**. Même structure, deux types. Le module des demandes
+> internes se prive donc des opérateurs JSON de PostgreSQL : on ne peut pas y
+> interroger un visa directement en SQL, il faut décoder côté PHP.
 
 ---
 
@@ -972,3 +1080,4 @@ validation, bon de commande — et l'impression du point journalier.
 | 1.0 | 2026-08-29 | `5ecb558` | Première édition |
 | 1.1 | 2026-08-29 | `5ecb558` | Workflows ajoutés ; deux statuts manquants corrigés (`en_attente_validation`, `en_attente_n1`) |
 | 2.0 | 2026-08-30 | `5ecb558` | Partie technique réelle : exécution, transactions et concurrence, sécurité, exploitation |
+| 2.1 | 2026-08-30 | `5ecb558` | Dictionnaire des tables centrales ; schémas en SVG plutôt qu'en mermaid sur la page publiée |
