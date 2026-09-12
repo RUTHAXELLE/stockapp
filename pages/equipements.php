@@ -10,7 +10,17 @@ require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
 
 require_auth();
-require_permission('equipements', 'can_read');
+
+// Deux modules de permission distincts depuis la scission Informatique /
+// Opérationnel (2026-09) : chaque catégorie s'octroie indépendamment dans
+// Administration → Permissions. « equipements » reste le module de la
+// catégorie Informatique (nom historique, pas renommé pour ne pas perdre
+// les droits déjà accordés) ; « equipements_operationnel » est le nouveau
+// module, seedé depuis « equipements » par sql/migration_split_
+// equipements_operationnel_vignette.sql.
+$f_categorie  = trim($_GET['categorie'] ?? 'informatique');
+$perm_module  = $f_categorie === 'operationnel' ? 'equipements_operationnel' : 'equipements';
+require_permission($perm_module, 'can_read');
 
 $user      = current_user();
 $role_slug = $user['role_slug'] ?? '';
@@ -19,7 +29,6 @@ $site_force= ($is_coord && ($user['site_id'] ?? 0)) ? (int)$user['site_id'] : 0;
 
 $page_title  = 'Équipements';
 $active_page = isset($_GET['categorie']) && $_GET['categorie']==='operationnel' ? 'equipements_op' : 'equipements_info';
-$f_categorie = trim($_GET['categorie'] ?? 'informatique');
 $f_site      = $site_force ?: (int)($_GET['site'] ?? 0);
 $f_etat      = trim($_GET['etat'] ?? '');
 $f_type      = (int)($_GET['type'] ?? 0);
@@ -30,8 +39,8 @@ $f_fin_cycle    = !empty($_GET['fin_cycle']);
 $sites_list  = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
 $nomenclatures     = db_fetch_all("SELECT id,libelle,categorie,duree_vie_mois FROM nomenclatures WHERE categorie=? ORDER BY libelle", [$f_categorie]);
 $all_nomenclatures = db_fetch_all("SELECT id,libelle,categorie FROM nomenclatures ORDER BY categorie,libelle");
-$can_create  = can('equipements','can_create');
-$can_update  = can('equipements','can_update');
+$can_create  = can($perm_module,'can_create');
+$can_update  = can($perm_module,'can_update');
 
 // ── Amortissements OHADA (durées standard en mois)
 $ohada_durees = [
@@ -42,10 +51,34 @@ $ohada_durees = [
     'default'       => 60,
 ];
 
+// ── Numéro de série interne "CODE-EMUCI-NNNN" — reprise du trigger MySQL
+// trg_equipement_numero_serie (sql/migration_stockapp_complet.sql), jamais
+// recréé lors de la migration vers PostgreSQL du 2026-07-21 : le champ
+// restait vide à la création faute d'équivalent côté base. Séquence par
+// nomenclature (comme l'original), pas globale.
+function _prochain_numero_serie(int $nomenclature_id): string {
+    $code = $nomenclature_id
+        ? (db_fetch_value("SELECT code FROM nomenclatures WHERE id=?", [$nomenclature_id]) ?: 'EQP')
+        : 'EQP';
+    $seq = (int)db_fetch_value(
+        "SELECT COALESCE(MAX((regexp_replace(numero_serie_interne,'.*-',''))::int),0)+1
+         FROM equipements
+         WHERE nomenclature_id=? AND numero_serie_interne ~ ('^' || ? || '-[A-Z]+-[0-9]+$')",
+        [$nomenclature_id, $code]
+    );
+    return $code . '-EMUCI-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
+}
+
 // ── AJAX
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     header('Content-Type: application/json');
     $action = $_POST['action'] ?? '';
+
+    if ($action === 'apercu_numero') {
+        if (!$can_create) json_response(false,'Accès refusé.');
+        $nom_id = (int)($_POST['nomenclature_id'] ?? 0);
+        json_response(true, '', ['numero' => _prochain_numero_serie($nom_id)]);
+    }
 
     if ($action === 'creer' || $action === 'modifier') {
         if (!$can_create && $action==='creer') json_response(false,'Accès refusé.');
@@ -76,12 +109,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $label = ($marque ? $marque . ' ' : '') . ($modele ?: $nsi);
 
         if ($action === 'creer') {
+            if ($nsi === '' || $nsi === '0') $nsi = _prochain_numero_serie($nom_id);
+            $numero_chrono = (int)db_fetch_value("SELECT COALESCE(MAX(numero_chrono),0)+1 FROM equipements");
             db_query(
                 "INSERT INTO equipements
-                 (marque,modele,categorie,nomenclature_id,numero_serie_interne,numero_serie_externe,
-                  site_id,etat,statut_stock,date_acquisition,prix_achat,date_fin_cycle,duree_vie_mois,actif)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
-                [$marque,$modele,$f_categorie,$nom_id ?: null,$nsi,$nse,
+                 (marque,modele,categorie,nomenclature_id,numero_serie_interne,numero_chrono,numero_serie_origine,
+                  site_id,etat,statut_stock,date_acquisition,prix_achat,date_fin_cycle,duree_amortissement_mois,actif)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
+                [$marque,$modele,$f_categorie,$nom_id ?: null,$nsi,$numero_chrono,$nse,
                  $site_id,$etat,$statut_stock,$date_achat ?: null,$prix_achat,$date_fin_cycle,$duree_mois]
             );
             $id = (int)db_last_id();
@@ -91,8 +126,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             $id = (int)($_POST['id'] ?? 0);
             db_query(
                 "UPDATE equipements
-                 SET marque=?,modele=?,nomenclature_id=?,numero_serie_interne=?,numero_serie_externe=?,
-                     site_id=?,etat=?,statut_stock=?,date_acquisition=?,prix_achat=?,date_fin_cycle=?,duree_vie_mois=?
+                 SET marque=?,modele=?,nomenclature_id=?,numero_serie_interne=?,numero_serie_origine=?,
+                     site_id=?,etat=?,statut_stock=?,date_acquisition=?,prix_achat=?,date_fin_cycle=?,duree_amortissement_mois=?
                  WHERE id=?",
                 [$marque,$modele,$nom_id ?: null,$nsi,$nse,
                  $site_id,$etat,$statut_stock,$date_achat ?: null,$prix_achat,$date_fin_cycle,$duree_mois,$id]
@@ -444,7 +479,7 @@ include __DIR__ . '/../templates/header.php';
       </div>
       <div class="form-group">
         <label>N° Série interne</label>
-        <input type="text" class="form-control" id="eNsi">
+        <input type="text" class="form-control" id="eNsi" placeholder="Auto-généré après sélection du type">
       </div>
       <div class="form-group">
         <label>N° Série externe</label>
@@ -497,7 +532,7 @@ include __DIR__ . '/../templates/header.php';
 <?php endif; ?>
 
 <script>
-function ap(d){return fetch(window.location.href,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(d)}).then(r=>r.json());}
+function ap(d){return fetch(window.location.href,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(d)}).then(achParseJson);}
 
 // ── Filtres sans rechargement de page : remplace les KPI et le tableau par
 // le fragment equivalent de la page fraichement chargee (memes id), evite
@@ -567,7 +602,7 @@ function modifierEquip(e){
   document.getElementById('eMarque').value=e.marque||'';document.getElementById('eModele').value=e.modele||'';
   document.getElementById('eNom_id').value=e.nomenclature_id||'';
   document.getElementById('eNsi').value=e.numero_serie_interne||'';
-  document.getElementById('eNse').value=e.numero_serie_externe||'';
+  document.getElementById('eNse').value=e.numero_serie_origine||'';
   document.getElementById('eSite').value=e.site_id||'';
   document.getElementById('eEtat').value=e.etat||'bon';
   document.getElementById('eStatutStock').value=e.statut_stock||'affecte';
@@ -577,6 +612,13 @@ function modifierEquip(e){
   document.getElementById('modalEquip').style.display='flex';
 }
 function fermerModal(){document.getElementById('modalEquip').style.display='none';}
+document.getElementById('eNom_id').addEventListener('change', async function(){
+  if (document.getElementById('eAction').value !== 'creer') return;
+  if (document.getElementById('eNsi').value.trim() !== '') return;
+  if (!this.value) return;
+  const d = await ap({action:'apercu_numero', nomenclature_id:this.value});
+  if (d.success) document.getElementById('eNsi').value = d.data.numero;
+});
 async function sauvegarder(){
   const btn = document.getElementById('btnSave');
   btn.disabled = true;
@@ -606,7 +648,7 @@ async function sauvegarder(){
     }
   } catch(err) {
     document.getElementById('eAlert').innerHTML =
-      '<div class="alert alert-danger">Erreur réseau. Réessayez.</div>';
+      `<div class="alert alert-danger">${(err && err.message) || 'Erreur réseau. Réessayez.'}</div>`;
   } finally {
     btn.disabled = false;
     btn.textContent = '✅ Enregistrer';

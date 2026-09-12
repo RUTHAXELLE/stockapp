@@ -5,6 +5,7 @@
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/session.php';
 require_once __DIR__ . '/../includes/helpers.php';
+require_once __DIR__ . '/../includes/periode.php';
 require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/achats.php';
 
@@ -14,44 +15,29 @@ $user = current_user();
 $page_title  = 'Vue PDG';
 $active_page = 'pdg_overview';
 
-$mois    = trim($_GET['mois'] ?? date('Y-m'));
-if (!preg_match('/^\d{4}-\d{2}$/', $mois)) $mois = date('Y-m');
-$site_id = (int)($_GET['site_id'] ?? 0);
-$mc = ['01'=>'Jan','02'=>'Fév','03'=>'Mar','04'=>'Avr','05'=>'Mai','06'=>'Juin',
-       '07'=>'Juil','08'=>'Aoû','09'=>'Sep','10'=>'Oct','11'=>'Nov','12'=>'Déc'];
-$ml = ['01'=>'Janvier','02'=>'Février','03'=>'Mars','04'=>'Avril','05'=>'Mai','06'=>'Juin',
-       '07'=>'Juillet','08'=>'Août','09'=>'Septembre','10'=>'Octobre','11'=>'Novembre','12'=>'Décembre'];
-
-// ── PÉRIODE — mensuel (comportement d'origine) ou annuel (n° du rapport
-// réunion ERP : point d'une année complète). $date_fmt/$periode_val
-// pilotent tous les DATE_FORMAT(...)='?' de la page ; $periode_val_prec sert
-// aux comparaisons vs période précédente.
-$periode = ($_GET['periode'] ?? '') === 'annuel' ? 'annuel' : 'mensuel';
-$annee_max = (int)date('Y');
-$annee_min = (int)(db_fetch_value("SELECT MIN(YEAR(date_point)) FROM op_points_journaliers") ?? $annee_max);
-if ($annee_min > $annee_max) $annee_min = $annee_max;
-
-if ($periode === 'annuel') {
-    $annee_filtre = (int)($_GET['annee'] ?? $annee_max);
-    if ($annee_filtre < 2000 || $annee_filtre > 2100) $annee_filtre = $annee_max;
-    $annee            = (string)$annee_filtre;
-    $date_fmt         = '%Y';
-    $periode_val      = $annee;
-    $periode_val_prec = (string)($annee_filtre - 1);
-    $mois_display     = 'Année ' . $annee;
-    $mois_prec_lbl    = 'Année ' . $periode_val_prec;
-    $periode_mot      = 'cette année';
-} else {
-    $annee_filtre     = (int)substr($mois, 0, 4);
-    $annee            = substr($mois, 0, 4);
-    $date_fmt         = '%Y-%m';
-    $periode_val      = $mois;
-    $mois_prec        = date('Y-m', strtotime($mois.'-01 -1 month'));
-    $periode_val_prec = $mois_prec;
-    $mois_display     = ($ml[substr($mois,5,2)] ?? '') . ' ' . $annee;
-    $mois_prec_lbl    = ($mc[substr($mois_prec,5,2)] ?? '') . ' ' . substr($mois_prec,0,4);
-    $periode_mot      = 'ce mois';
-}
+// n° 2.2 — la granularité temporelle vient désormais de
+// includes/periode.php, partagée avec le dashboard KPI. Les variables
+// locales sont conservées sous leurs noms d'origine : les DATE_FORMAT(...)
+// et les comparaisons à la période précédente en aval restent inchangés
+// (cf. includes/periode.php — date_fmt en tokens MySQL sur cette branche,
+// pas les tokens TO_CHAR de main).
+$P = periode_contexte();
+$periode          = $P['periode'];
+$date_fmt         = $P['date_fmt'];
+$periode_val      = $P['val'];
+$periode_val_prec = $P['val_prec'];
+$periode_du       = $P['du'];
+$periode_au       = $P['au'];
+$mois_display     = $P['libelle'];
+$mois_prec_lbl    = $P['libelle_prec'];
+$periode_mot      = $P['mot'];
+$mois             = $P['mois'];
+$jour             = $P['jour'];
+$annee            = (string)$P['annee'];
+$annee_filtre     = (int)$P['annee'];
+$annee_min        = $P['annee_min'];
+$annee_max        = $P['annee_max'];
+$site_id          = (int)($_GET['site_id'] ?? 0);
 
 // ── LISTE DES SITES pour le filtre
 $sites_list = db_fetch_all("SELECT id, nom FROM sites WHERE actif=1 ORDER BY nom");
@@ -391,7 +377,9 @@ foreach ($prod_par_site as $i => $s) {
     ];
 }
 $js_pfw_sites    = json_encode($pfw_sites_json);
-$pfw_quarter_def = $periode === 'annuel' ? 1 : max(1, (int)ceil((int)substr($mois, 5, 2) / 3));
+$pfw_quarter_def = $periode === 'annuel'
+    ? 1
+    : max(1, (int)ceil((int)substr($periode_du, 5, 2) / 3));
 
 // ══════════════════════════════════════════════════════════
 //  KPI BUSINESS — service, gâche matière, écart de consommation,
@@ -728,13 +716,10 @@ $ach_kpis = null;
 if ($ach_visible) {
     $ach_perimetre = ach_perimetre_departements($user);
     $ach_perimetre_vide = is_array($ach_perimetre) && empty($ach_perimetre);
-    if ($periode === 'annuel') {
-        $ach_du = $annee . '-01-01';
-        $ach_au = $annee . '-12-31';
-    } else {
-        $ach_du = $mois . '-01';
-        $ach_au = date('Y-m-t', strtotime($ach_du));
-    }
+    // n° 2.4 CR PDG : l'intervalle vient de la période choisie, sinon les
+    // vues journalière et hebdomadaire retombaient sur le mois courant.
+    $ach_du = $periode_du;
+    $ach_au = $periode_au;
     if (!$ach_perimetre_vide) {
         [$ach_clause, $ach_pd] = ach_clause_departement($ach_perimetre, 'f');
         $ach_depense_totale = (int) db_fetch_value(
@@ -770,7 +755,9 @@ include __DIR__ . '/../templates/header.php';
         </option>
         <?php endforeach; ?>
       </select>
-      <select name="periode" class="month-inp" onchange="this.form.submit()" title="Type de période" style="min-width:104px">
+      <select name="periode" class="month-inp" onchange="this.form.submit()" title="Type de période" style="min-width:118px">
+        <option value="journalier"<?= $periode==='journalier' ? ' selected' : '' ?>>Journalier</option>
+        <option value="hebdomadaire"<?= $periode==='hebdomadaire' ? ' selected' : '' ?>>Hebdomadaire</option>
         <option value="mensuel"<?= $periode==='mensuel' ? ' selected' : '' ?>>Mensuel</option>
         <option value="annuel"<?= $periode==='annuel' ? ' selected' : '' ?>>Annuel</option>
       </select>
@@ -780,8 +767,12 @@ include __DIR__ . '/../templates/header.php';
         <option value="<?= $_y ?>"<?= $annee_filtre===$_y ? ' selected' : '' ?>><?= $_y ?></option>
         <?php endfor; ?>
       </select>
-      <?php else: ?>
+      <?php elseif ($periode === 'mensuel'): ?>
       <input type="month" name="mois" value="<?= h($mois) ?>" class="month-inp" onchange="this.form.submit()" aria-label="Choisir le mois">
+      <?php else: /* journalier et hebdomadaire se choisissent par une date :
+           la semaine est celle qui contient le jour retenu. */ ?>
+      <input type="date" name="jour" value="<?= h($jour) ?>" class="month-inp" onchange="this.form.submit()"
+             aria-label="<?= $periode==='hebdomadaire' ? 'Choisir une date dans la semaine' : 'Choisir le jour' ?>">
       <?php endif; ?>
     </form>
   </div>

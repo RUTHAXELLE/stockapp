@@ -379,6 +379,17 @@ if (can('achats_suivi', 'can_read')) {
 
 $kpi_total   = count($articles_list);
 $kpi_alertes = count(array_filter($articles_list, fn($a) => $a['stock_global'] <= $a['seuil_alerte']));
+
+// Valorisation (quantité × prix_unitaire) — reprise de l'ancien écran Achats
+// « Stock magasin » (fusionné ici le 2026-08-26, cf. commit 345f164), qui
+// avait ajouté cette colonne un jour avant la fusion sans qu'elle soit
+// reportée. Même calcul que Stock par département : $stock_affiche suit le
+// même filtre site que l'affichage des cartes ci-dessous.
+$total_valorisation = 0;
+foreach ($articles_list as $a) {
+    $qte = $f_site ? (int)$a['stock_site_filtre'] : (int)$a['stock_global'];
+    $total_valorisation += $qte * (int)($a['prix_unitaire'] ?? 0);
+}
 $kpi_receptions_mois = (int)db_fetch_value("SELECT COALESCE(SUM(quantite),0) FROM receptions_consommables WHERE date_reception >= DATE_FORMAT(CURRENT_DATE,'%Y-%m-01')");
 $kpi_distrib_mois    = (int)db_fetch_value("SELECT COALESCE(SUM(quantite),0) FROM livraisons_consommables WHERE type_mouvement='distribution' AND date_livraison >= DATE_FORMAT(CURRENT_DATE,'%Y-%m-01')");
 
@@ -485,6 +496,12 @@ include __DIR__ . '/../templates/header.php';
     <?php endif; ?>
   </div>
 
+  <?php if (can('achats_suivi', 'can_read')): ?>
+  <div class="ach-summary" style="margin-bottom:14px;font-size:13px;color:var(--muted)">
+    <?= $kpi_total ?> article(s) — <strong style="color:var(--navy)"><?= fmt_number((float)$total_valorisation) ?> FCFA</strong> valorisés<?= $f_site ? '' : ' (stock central)' ?>
+  </div>
+  <?php endif; ?>
+
   <div class="art-grid" id="artGrid">
   <?php foreach($articles_list as $a):
     // Un site est filtré : la carte montre sa quantité sur CE site plutôt
@@ -537,6 +554,12 @@ include __DIR__ . '/../templates/header.php';
       <span style="font-weight:700;color:var(--primary-d)"><?= fmt_number($a['prix_unitaire']) ?> FCFA/<?= $a['unite'] ?></span>
       <?php endif; ?>
     </div>
+    <?php if (can('achats_suivi', 'can_read') && !empty($a['prix_unitaire']) && $a['prix_unitaire']>0): ?>
+    <div class="ac-footer" style="border-top:1px dashed var(--border);padding-top:6px;margin-top:2px">
+      <span style="color:var(--muted)">Valorisation</span>
+      <span style="font-weight:700;color:var(--navy)"><?= fmt_number($stock_affiche * (int)$a['prix_unitaire']) ?> FCFA</span>
+    </div>
+    <?php endif; ?>
   </div>
   <?php endforeach; ?>
   <?php if(empty($articles_list)): ?>

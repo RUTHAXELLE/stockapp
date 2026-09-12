@@ -25,6 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         require_permission('affectations', 'can_update');
         $equip_id = (int)($_POST['equipement_id'] ?? 0);
         $notes    = trim($_POST['notes'] ?? '');
+        if (!$notes) json_response(false, 'Motif du retour obligatoire.');
         $equip    = db_fetch_one("SELECT * FROM equipements WHERE id=? AND actif=1", [$equip_id]);
         if (!$equip) json_response(false, 'Équipement introuvable.');
 
@@ -33,7 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             db_query(
                 "INSERT INTO mouvements_equipements (equipement_id,type,site_source_id,notes,created_by)
                  VALUES (?,?,?,?,?)",
-                [$equip_id, 'sortie', $equip['site_id'], $notes ?: 'Retour en stock', $user['id']]
+                [$equip_id, 'sortie', $equip['site_id'], $notes, $user['id']]
             );
             db_query("UPDATE equipements SET site_id=NULL, utilisateur_id=NULL WHERE id=?", [$equip_id]);
             audit_log($user['id'], 'UPDATE', 'affectations', $equip_id,

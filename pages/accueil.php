@@ -474,6 +474,29 @@ function refreshNotifs() {
 // même intervalle resserré + pause sur onglet caché que footer.php.
 setInterval(() => { if (!document.hidden) refreshNotifs(); }, 20000);
 
+// ===== DÉCONNEXION AUTOMATIQUE APRÈS INACTIVITÉ =====
+// Page standalone (n'inclut pas templates/footer.php) : copie du même
+// minuteur — sans lui, "Mes espaces" (première page vue après connexion)
+// ne surveille jamais l'inactivité réelle, et le polling notifications
+// ci-dessus suffit à maintenir la session active indéfiniment côté
+// serveur (last_activity rafraîchi à chaque appel). Basé sur de vrais
+// événements utilisateur, jamais sur les requêtes de fond, pour la même
+// raison que dans footer.php.
+(function() {
+  const DELAI_MS = 15 * 60 * 1000; // doit rester aligné sur INACTIVITY_TIMEOUT (includes/db.php)
+  let timer = null;
+  function reinitialiser() {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      window.location.href = _APP_URL + '/logout.php?timeout=1';
+    }, DELAI_MS);
+  }
+  ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart'].forEach(evt => {
+    document.addEventListener(evt, reinitialiser, { passive: true });
+  });
+  reinitialiser();
+})();
+
 // ── User chip ─────────────────────────────────────────────────
 function toggleUcMenu(e) {
   e.stopPropagation();

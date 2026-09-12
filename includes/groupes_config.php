@@ -31,6 +31,14 @@ function _groupes_def(): array {
                 // que celle du PDG.
                 ['label'=>'Vue exécutive','icon'=>'ph-chart-pie-slice',
                  'url'=>'pages/pdg_overview.php','active_keys'=>['pdg_overview']],
+                // n° 2.2 CR PDG — lecture rapide des indicateurs. Sa place est
+                // ici, aux côtés des deux autres vues d'ensemble : c'est un
+                // tableau de bord, pas un rapport. Il était dans RAPPORTS, où
+                // il obligeait à changer de groupe pour passer d'une lecture
+                // globale à une autre.
+                ['label'=>'Dashboard KPI','icon'=>'ph-gauge',
+                 'url'=>'pages/kpi_dashboard.php','active_keys'=>['kpi_dashboard'],
+                 'perm'=>['kpi_dashboard','can_read']],
             ],
         ],
 
@@ -47,10 +55,12 @@ function _groupes_def(): array {
                  'url'=>'pages/equipements.php?categorie=informatique',
                  'active_keys'=>['equipements','equipements_info'],
                  'perm'=>['equipements','can_read']],
+                // Module distinct depuis la scission Informatique/Opérationnel
+                // (2026-09) : ne dépend plus du seul droit 'equipements'.
                 ['label'=>'Équipements Opérationnel',   'icon'=>'ph-hard-hat',
                  'url'=>'pages/equipements.php?categorie=operationnel',
                  'active_keys'=>['equipements_op'],
-                 'perm'=>['equipements','can_read']],
+                 'perm'=>['equipements_operationnel','can_read']],
                 ['label'=>'Articles',      'icon'=>'ph-cube',
                  'url'=>'pages/articles.php','active_keys'=>['consommables'],
                  'perm'=>['consommables','can_read']],
@@ -70,11 +80,13 @@ function _groupes_def(): array {
                 ['label'=>'Bobines',   'icon'=>'ph-film-strip',
                  'url'=>'pages/operations/bobines.php','active_keys'=>['bobines'],
                  'perm'=>['bobines','can_read']],
-                // Meme page que "Bobines" (?categorie=vignette), meme droit —
-                // Reservoir/Pare-brise plutot que Auto/Carre/Moto/MotoII.
+                // Meme page que "Bobines" (?categorie=vignette) — Reservoir/
+                // Pare-brise plutot que Auto/Carre/Moto/MotoII. Module distinct
+                // depuis la scission Bobines/Vignette (2026-09) : ne dépend
+                // plus du seul droit 'bobines'.
                 ['label'=>'Vignette',  'icon'=>'ph-sticker',
                  'url'=>'pages/operations/bobines.php?categorie=vignette','active_keys'=>['bobines_vignette'],
-                 'perm'=>['bobines','can_read']],
+                 'perm'=>['vignette','can_read']],
                 ['label'=>'Rivets',    'icon'=>'ph-nut',
                  'url'=>'pages/operations/rivets.php','active_keys'=>['rivets'],
                  'perm'=>['rivets','can_read']],
@@ -121,6 +133,12 @@ function _groupes_def(): array {
                 ['label'=>'Vue stock par site',   'icon'=>'ph-table',
                  'url'=>'pages/stock_bobines_vue.php','active_keys'=>['stock_bobines_vue'],
                  'perm'=>['stock_bobines','can_read']],
+                // n° 2.1 CR PDG — historique des bobines endommagées. La
+                // saisie reste dans le point journalier ; cet écran ne fait
+                // que restituer, d'où le simple can_read.
+                ['label'=>'Traçabilité endommagements', 'icon'=>'ph-first-aid-kit',
+                 'url'=>'pages/tracabilite_endommagements.php','active_keys'=>['tracabilite_endommagements'],
+                 'perm'=>['tracabilite_endommagements','can_read']],
             ],
         ],
 
@@ -197,6 +215,12 @@ function _groupes_def(): array {
                  'perm'=>['commandes','can_read'],
                  'roles_include'=>['superviseur_operation','gestionnaire_operation']],
                 // EMUCI : réservé aux profils de supervision, pas au coordinateur
+                // n° 2.8 CR PDG — suivi des observations saisies dans le point
+                // journalier. Visible aussi du coordinateur : c'est lui qui
+                // relance et confirme la clôture, la page filtre sur son site.
+                ['label'=>'Suivi des observations', 'icon'=>'ph-chat-dots',
+                 'url'=>'pages/observations.php','active_keys'=>['observations'],
+                 'perm'=>['observations','can_read']],
                 ['label'=>'Point EMUCI',            'icon'=>'ph-chart-scatter',
                  'url'=>'pages/point_emuci.php','active_keys'=>['point_emuci'],
                  'perm'=>['point_emuci','can_read'],
@@ -259,6 +283,14 @@ function _groupes_def(): array {
                 ['label'=>'Rapports généraux','icon'=>'ph-chart-bar',
                  'url'=>'pages/rapports.php','active_keys'=>['rapports'],
                  'perm'=>['rapports','can_read']],
+                // n° 2.6 CR PDG — outil de projection. Le CR demandait un
+                // groupe de navigation dédié ; il rejoint RAPPORTS, qui
+                // existe déjà et accueille les écrans d'analyse. Créer un
+                // groupe pour une seule page aurait alourdi le menu sans
+                // rien clarifier.
+                ['label'=>'Simulation & projection', 'icon'=>'ph-trend-up',
+                 'url'=>'pages/simulation_stocks.php','active_keys'=>['simulation_stocks'],
+                 'perm'=>['simulation_stocks','can_read']],
                 ['label'=>'Exports',          'icon'=>'ph-export',
                  'url'=>'pages/export.php','active_keys'=>['export']],
             ],
@@ -282,11 +314,11 @@ function _groupes_def(): array {
                  'roles_exclude'=>['lecteur']],
                 ['label'=>'Nouvelle demande','icon'=>'ph-plus-circle',
                  'url'=>'pages/demandes_new.php','active_keys'=>['demandes_new'],
-                 'perm'=>['demandes','can_create'],
+                 'perm'=>['demandes_new','can_create'],
                  'roles_exclude'=>['lecteur']],
                 ['label'=>'À valider',       'icon'=>'ph-seal-check',
                  'url'=>'pages/demandes_a_valider.php','active_keys'=>['demandes_valider'],
-                 'perm'=>['demandes','can_read'],
+                 'perm'=>['demandes_valider','can_read'],
                  'roles_exclude'=>['coordinateur_site']],
                 // roles_include correspond exactement aux rôles ERP dont
                 // di_user_roles() inclut 'it' (includes/demandes.php) — accès
@@ -297,7 +329,7 @@ function _groupes_def(): array {
                 // du 2026-08-29).
                 ['label'=>'Traitements IT',  'icon'=>'ph-wrench',
                  'url'=>'pages/demandes_it.php','active_keys'=>['demandes_it'],
-                 'perm'=>['demandes','can_read'],
+                 'perm'=>['demandes_it','can_read'],
                  'roles_include'=>['admin','superadmin','support_it','superviseur_it','maintenance_info'],
                  'ou_departement_it'=>true],
                 ['label'=>'Types & circuits','icon'=>'ph-git-branch',
@@ -416,6 +448,9 @@ function _groupes_def(): array {
                  'url'=>'pages/admin/permissions.php','active_keys'=>['permissions']],
                 ['label'=>'Nomenclatures', 'icon'=>'ph-tag',
                  'url'=>'pages/admin/nomenclatures.php','active_keys'=>['nomenclatures']],
+                ['label'=>'Référentiels',  'icon'=>'ph-sliders-horizontal',
+                 'url'=>'pages/admin/referentiels_operations.php',
+                 'active_keys'=>['referentiels_operations']],
                 ['label'=>'Audit',         'icon'=>'ph-shield-check',
                  'url'=>'pages/admin/audit.php','active_keys'=>['audit']],
                 ['label'=>'Délégations',   'icon'=>'ph-handshake',

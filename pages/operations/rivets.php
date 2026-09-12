@@ -73,6 +73,7 @@ $stocks = db_fetch_all(
     "SELECT s.id, s.nom, s.type,
             sr.type_rivet,
             COALESCE(sr.quantite,0) AS quantite,
+            COALESCE(sr.seuil_alerte,200) AS seuil_alerte,
             COALESCE((SELECT SUM(p.rivets_utilises+p.rivets_endommages)
                       FROM op_points_journaliers p
                       WHERE p.site_id=s.id AND DATE_FORMAT(p.date_point,'%Y-%m')=DATE_FORMAT(CURRENT_DATE,'%Y-%m')),0) AS utilises_mois
@@ -93,7 +94,7 @@ foreach ($stocks as $sp_item) {
     $t = $sp_item['type_rivet'];
     if (!$t) continue;
     if (!in_array($t, $riv_types, true)) $riv_types[] = $t;
-    $riv_matrix[$sid][$t] = ['quantite' => (int)$sp_item['quantite'], 'mois' => (int)$sp_item['utilises_mois']];
+    $riv_matrix[$sid][$t] = ['quantite' => (int)$sp_item['quantite'], 'mois' => (int)$sp_item['utilises_mois'], 'seuil' => (int)$sp_item['seuil_alerte']];
 }
 usort($riv_types, fn($a, $b) => array_search($a, ['gonflable','eclate']) <=> array_search($b, ['gonflable','eclate']));
 
@@ -357,7 +358,7 @@ include __DIR__ . '/../../templates/header.php';
 <?php
 $kpi_gonfl  = array_sum(array_map(fn($r) => $r['type_rivet']==='gonflable' ? (int)$r['quantite'] : 0, $stocks));
 $kpi_eclat  = array_sum(array_map(fn($r) => $r['type_rivet']==='eclate'    ? (int)$r['quantite'] : 0, $stocks));
-$nb_bas     = count(array_filter($stocks, fn($r) => (int)$r['quantite'] < 200));
+$nb_bas     = count(array_filter($stocks, fn($r) => (int)$r['quantite'] < (int)$r['seuil_alerte']));
 ?>
 <div class="kpi-bar" id="rivKpis" data-active="stock">
   <?php if (!$f_type || $f_type === 'gonflable'): ?>
@@ -435,7 +436,7 @@ foreach ($stocks as $r) {
     <?php foreach ($items as $item):
       $lbl     = $item['type_rivet'] === 'gonflable' ? 'Gonflables' : 'Éclatés';
       $qty     = (int)$item['quantite'];
-      $low     = $qty < 200;
+      $low     = $qty < (int)$item['seuil_alerte'];
       $clr     = $low ? 'var(--danger-d)' : 'var(--blue)';
     ?>
     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
@@ -474,7 +475,7 @@ foreach ($stocks as $r) {
           <td style="font-weight:600;color:var(--navy)"><?= h($site_nom) ?></td>
           <?php foreach ($riv_types as $t): $cell = $riv_matrix[$sid][$t] ?? null; if ($cell) $site_total += $cell['quantite']; ?>
           <td>
-            <?php if ($cell): $bas = $cell['quantite'] < 200; ?>
+            <?php if ($cell): $bas = $cell['quantite'] < $cell['seuil']; ?>
             <span style="font-weight:700;color:<?= $bas ? 'var(--danger-d)' : 'var(--navy)' ?>"><?= fmt_number($cell['quantite']) ?></span>
             <?php if ($bas): ?><i class="ph-duotone ph-warning" style="color:var(--danger-d);margin-left:3px" title="Stock bas"></i><?php endif; ?>
             <?php else: ?><span style="color:var(--muted)">—</span><?php endif; ?>

@@ -472,6 +472,16 @@ $nb_non_saisi = count($lignes) - $nb_saisis;
 // ============================================================
 $export = trim($_GET['export'] ?? '');
 
+// n° 2.3 CR PDG — les exports XLSX et PDF contiennent la quantité système et
+// l'écart, précisément ce qu'on masque au coordinateur à l'écran. Sans cette
+// garde, un simple ?export=xlsx sur la page qu'il consulte pour compter lui
+// rendait l'intégralité de la comparaison : le masquage n'aurait tenu que sur
+// l'affichage.
+if ($export !== '' && $is_coord) {
+    http_response_code(403);
+    exit("Export réservé aux profils de validation.");
+}
+
 if ($export === 'xlsx') {
     $sp = new Spreadsheet();
     $sh = $sp->getActiveSheet()->setTitle('Inventaire');
@@ -683,12 +693,16 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
     </div>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <?php if(!$is_coord): /* exports refusés au coordinateur côté serveur —
+         cf. la garde en tête de fichier ; on masque aussi les boutons pour
+         ne pas lui proposer un lien qui renverra 403. */ ?>
     <a href="?id=<?= $inv_id ?>&export=xlsx" class="btn btn-secondary" style="font-size:13px;display:flex;align-items:center;gap:5px">
       <i class="ph-duotone ph-microsoft-excel-logo"></i> Excel
     </a>
     <a href="?id=<?= $inv_id ?>&export=pdf" class="btn btn-secondary" style="font-size:13px;display:flex;align-items:center;gap:5px">
       <i class="ph-duotone ph-file-pdf"></i> PDF
     </a>
+    <?php endif; ?>
     <?php if($can_edit): ?>
     <button class="btn btn-secondary" id="btnSauverTout" onclick="sauverTout()"><i class="ph ph-floppy-disk" aria-hidden="true"></i> Tout sauver</button>
     <?php endif; ?>
@@ -701,8 +715,12 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
 <!-- STATS -->
 <div class="stat-chips">
   <span class="chip blue"><i class="ph ph-package" aria-hidden="true"></i> Bobines : <strong id="statTotal"><?= count($lignes) ?></strong></span>
+  <?php if(!$is_coord): /* n° 2.3 CR PDG : ces deux compteurs comparent au
+       stock système — les afficher au coordinateur reviendrait à lui livrer
+       la valeur système qu'on masque par ailleurs. */ ?>
   <span class="chip green"><i class="ph ph-check-circle" aria-hidden="true"></i> OK : <strong id="statOk"><?= $nb_saisis - $nb_ecarts ?></strong></span>
   <span class="chip red"><i class="ph ph-warning" aria-hidden="true"></i> Écarts : <strong id="statEcarts"><?= $nb_ecarts ?></strong></span>
+  <?php endif; ?>
   <span class="chip gray">⏳ Non saisis : <strong id="statNonSaisis"><?= $nb_non_saisi ?></strong></span>
   <?php
   $nb_ecarts_connus = count(array_filter($bobine_ids, fn($id)=>isset($ecarts_connus_map[$id])));
@@ -774,17 +792,21 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
 <!-- LÉGENDE -->
 <div style="display:flex;gap:16px;font-size:12px;color:var(--muted);margin-bottom:12px;align-items:center">
   <span><i class="ph ph-note-pencil" aria-hidden="true"></i> <strong>Films comptés</strong> : stock réel compté physiquement</span>
+  <?php if(!$is_coord): /* décrit une colonne masquée au coordinateur */ ?>
   <span style="border-left:1px solid var(--border);padding-left:16px">
     <span style="border-bottom:2px dashed #f39c12;padding-bottom:1px"><strong>Écart connu</strong></span> : différence connue avant l'inventaire, renseignée automatiquement par le système
   </span>
+  <?php endif; ?>
 </div>
 
 <!-- TABLEAU PRINCIPAL -->
+<?php if(!$is_coord): /* décrit les colonnes masquées au coordinateur */ ?>
 <div style="background:#e8f4fd;border:1px solid #90caf9;border-radius:10px;padding:10px 16px;margin-bottom:14px;font-size:13px;display:flex;gap:20px;flex-wrap:wrap">
   <span><i class="ph ph-push-pin" aria-hidden="true"></i> <strong>Qté physique</strong> = photo figée à la date de l'inventaire</span>
   <span style="border-left:1px solid #90caf9;padding-left:20px"><i class="ph ph-circle" aria-hidden="true"></i> <strong>Qté temps réel</strong> = stock actuel mis à jour en continu par les consommations</span>
   <span style="border-left:1px solid #90caf9;padding-left:20px;border-bottom:2px dashed #f39c12;padding-bottom:1px"><strong>Écart connu</strong> = différence connue avant l'inventaire</span>
 </div>
+<?php endif; ?>
 
 <div class="card" style="padding:0;overflow:hidden">
   <div class="table-wrap" style="overflow-x:auto">
@@ -794,14 +816,20 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
           <th style="padding:10px 14px;text-align:left">Numéro</th>
           <th style="padding:10px 14px">Type</th>
           <th style="padding:10px 14px">Site</th>
+          <?php if(!$is_coord): ?>
           <th style="padding:10px 14px;text-align:right">Qté système <i class="ph ph-monitor" aria-hidden="true"></i></th>
+          <?php endif; ?>
           <th style="padding:10px 14px;text-align:right;border-right:1px solid rgba(255,255,255,.15)">Qté physique <i class="ph ph-push-pin" aria-hidden="true"></i></th>
+          <?php if(!$is_coord): /* n° 2.3 CR PDG — les écarts, mais aussi tout
+               le bloc « temps réel » : la quantité temps réel EST la valeur
+               système, et jours restants / épuisement s'en déduisent. */ ?>
           <th style="padding:10px 14px;text-align:center">Écart connu</th>
           <th style="padding:10px 14px;text-align:center">Écart mesuré</th>
           <th style="padding:10px 14px;text-align:right;background:rgba(255,255,255,.08);border-left:2px solid #f39c12"><i class="ph ph-circle" aria-hidden="true"></i> Qté temps réel</th>
           <th style="padding:10px 14px;text-align:right;background:rgba(255,255,255,.08)">Conso/j moy</th>
           <th style="padding:10px 14px;text-align:right;background:rgba(255,255,255,.08)">Jours restants</th>
           <th style="padding:10px 14px;text-align:center;background:rgba(255,255,255,.08)">Épuisement estimé</th>
+          <?php endif; ?>
           <?php if($can_edit): ?>
           <th style="padding:10px 14px;text-align:center">Enregistrement</th>
           <th style="padding:10px 14px;text-align:left">Demande de modification</th>
@@ -832,11 +860,15 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
         $jours_color= $jours_rt ? ($jours_rt<30?'#e74c3c':($jours_rt<90?'#f39c12':'#27ae60')) : '#94a3b8';
         $date_epuis_rt = $jours_rt ? date('Y-m-d', strtotime("+{$jours_rt} days")) : null;
 
-        // Couleur de fond
-        $row_bg = !$saisi && $ec_connu ? '#fffbec'
+        // Couleur de fond — n° 2.3 CR PDG : pour le coordinateur, elle ne
+        // distingue que « saisi » de « non saisi ». Le rouge de l'écart et
+        // l'ambre de l'écart connu révéleraient la comparaison au système.
+        $row_bg = $is_coord
+                ? ($saisi ? 'white' : '#fffbf0')
+                : (!$saisi && $ec_connu ? '#fffbec'
                 : (!$saisi             ? '#fffbf0'
                 : ($ecart_mes != 0     ? '#fff5f5'
-                :                        'white'));
+                :                        'white')));
       ?>
       <tr id="row-<?= $l['id'] ?>" style="border-bottom:1px solid #e2e8f0;background:<?= $row_bg ?>"
           data-numero="<?= h($l['numero']) ?>" data-connu="<?= (int)($l['ecart_connu_avant'] ?? 0) ?>">
@@ -853,26 +885,31 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
         <!-- Site -->
         <td style="padding:9px 14px;font-size:12px;color:var(--muted)"><?= h($l['site_nom']??'—') ?></td>
 
+        <?php if(!$is_coord): ?>
         <!-- Qté système (figée — valeur au moment de l'inventaire) -->
         <td style="padding:9px 14px;text-align:right">
           <span style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:15px;color:var(--navy)">
             <?= number_format((int)$l['stock_systeme']) ?>
           </span>
         </td>
+        <?php endif; ?>
 
         <!-- Qté physique (figée) -->
         <td style="padding:9px 14px;text-align:right;border-right:1px solid #e2e8f0">
           <?php if($can_edit): ?>
+          <?php /* n° 2.3 CR PDG — pour le coordinateur, ni data-sys ni
+             data-conso ni classe ok/nok : la valeur système ne doit
+             apparaître nulle part dans la page, même en attribut. */ ?>
           <input type="number" min="0"
-                 class="saisie <?= $saisi?($ecart_mes!=0?'nok':'ok'):'' ?>"
+                 class="saisie <?= (!$is_coord && $saisi) ? ($ecart_mes!=0?'nok':'ok') : '' ?>"
                  id="phy-<?= $l['id'] ?>"
                  value="<?= $saisi ? $stock_phy : '' ?>"
                  placeholder="—"
-                 data-sys="<?= $stock_rt ?>"
-                 data-conso="<?= $conso_moy ?>"
+                 <?php if(!$is_coord): ?>data-sys="<?= $stock_rt ?>"
+                 data-conso="<?= $conso_moy ?>"<?php endif; ?>
                  data-saved="<?= $saisi ? $stock_phy : '' ?>"
                  <?= ($saisi && !$deverrouille) ? 'disabled' : '' ?>
-                 oninput="onPhyInput(<?= $l['id'] ?>,<?= $stock_rt ?>,<?= $conso_moy ?>)">
+                 oninput="onPhyInput(<?= $l['id'] ?>,<?= $is_coord ? 'null,null' : $stock_rt.','.$conso_moy ?>)">
           <?php else: ?>
           <span style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:14px">
             <?= $saisi ? number_format($stock_phy) : '<span style="color:#94a3b8">—</span>' ?>
@@ -880,6 +917,8 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
           <?php endif; ?>
         </td>
 
+        <?php if(!$is_coord): /* n° 2.3 CR PDG — bloc masqué au coordinateur :
+             écarts + quantité temps réel + tout ce qui s'en déduit. */ ?>
         <!-- Écart connu — lecture seule, valeur système à l'ouverture de l'inventaire
              (n° 17 réunion ERP : plus de saisie libre, source d'erreur) -->
         <td style="padding:9px 14px;text-align:center">
@@ -937,6 +976,7 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
           <span style="color:<?= $jours_color ?>"><?= fmt_date($date_epuis_rt) ?></span>
           <?php else: ?><span style="color:#94a3b8">—</span><?php endif; ?>
         </td>
+        <?php endif; /* fin du bloc masqué au coordinateur */ ?>
 
         <!-- Sauver -->
         <?php if($can_edit): ?>
@@ -1062,6 +1102,12 @@ function majEtat(id, val, saved){
   }
 }
 
+// n° 2.3 CR PDG — le coordinateur compte sans voir le stock système. Tout
+// retour visuel dérivé de l'écart (classe ok/nok, cellule écart, jours
+// restants, couleur de ligne) est neutralisé pour lui : ces cellules ne sont
+// même pas rendues, et la coloration trahirait la valeur masquée.
+const MASQUE_SYSTEME = <?= $is_coord ? 'true' : 'false' ?>;
+
 function onPhyInput(id, stockSys, consoMoy){
   const inp  = document.getElementById('phy-'+id);
   const val  = inp.value;
@@ -1070,6 +1116,13 @@ function onPhyInput(id, stockSys, consoMoy){
   const eEl  = document.getElementById('epuis-'+id);
   const row  = document.getElementById('row-'+id);
   majEtat(id, val, inp.dataset.saved||'');
+
+  if(MASQUE_SYSTEME){
+    inp.className = 'saisie';
+    row.style.background = val === '' ? '#fffbf0' : 'white';
+    updateStats();
+    return;
+  }
 
   if(val === ''){
     inp.className='saisie'; ecEl.innerHTML='<span style="color:#94a3b8">—</span>';
@@ -1288,7 +1341,7 @@ function updateStats(){
     const phyEl=document.getElementById('phy-'+id);
     const ecEl=document.getElementById('ecart-'+id);
     if(!phyEl||phyEl.value===''){nonSaisis++;}
-    else{
+    else if(!MASQUE_SYSTEME){
       const phy=parseInt(phyEl.value);
       const sys=parseInt(phyEl.dataset.sys||0);
       if(phy===sys) ok++; else ecarts++;

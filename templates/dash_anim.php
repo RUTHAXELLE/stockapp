@@ -2,10 +2,15 @@
 /* templates/dash_anim.php — moteur d'animation partagé des tableaux de bord.
  *
  * À inclure une seule fois, après le contenu de la page, sur toute vue dont
- * la racine porte la classe `.pdg` (le vocabulaire visuel de
- * templates/dash_style.php). Le formulaire de filtres porte l'id
- * `pdg-filter-form` ; tout autre formulaire de filtre doit porter
- * `data-dash-filtre`, ou vivre dans un élément qui le porte.
+ * la racine porte la classe `.pdg`, `.dv2` ou `.kpi`. Le formulaire de
+ * filtres porte l'id `pdg-filter-form` ; tout autre formulaire de filtre
+ * doit porter `data-dash-filtre`, ou vivre dans un élément qui le porte.
+ * À l'inverse, un champ du formulaire de filtres qui ne doit PAS
+ * déclencher l'échange (ex. les checkboxes d'un sélecteur à choix
+ * multiple avec confirmation) vit dans un élément portant
+ * `data-dash-nofiltre` — voir pages/kpi_dashboard.php et
+ * `window.dashFiltrer`, pour déclencher l'échange explicitement une fois
+ * la confirmation donnée.
  *
  * Extrait de pages/pdg_overview.php pour que les tableaux de bord par profil
  * héritent du même mouvement sans en recopier une ligne.
@@ -28,11 +33,14 @@
   'use strict';
 
   // Racine échangée à chaque changement de filtre, et formulaires qui
-  // déclenchent l'échange. Deux crochets, pour que ce module serve
+  // déclenchent l'échange. Trois crochets, pour que ce module serve
   // n'importe quel tableau de bord construit sur dash_style.php.
-  // `.pdg` couvre la vue PDG, `.dv2` le tableau de bord v2. Une page ne
-  // porte jamais les deux : le premier sélecteur qui répond gagne.
-  var RACINE     = document.querySelector('.dv2') ? '.dv2' : '.pdg';
+  // `.pdg` couvre la vue PDG, `.dv2` le tableau de bord v2, `.kpi` le
+  // dashboard KPI (pages/kpi_dashboard.php, qui garde sa propre feuille
+  // de style). Une page ne porte jamais deux de ces racines à la fois :
+  // le premier sélecteur qui répond gagne.
+  var RACINE     = document.querySelector('.dv2') ? '.dv2'
+                  : document.querySelector('.kpi') ? '.kpi' : '.pdg';
   var SEL_FILTRE = '#pdg-filter-form, [data-dash-filtre]';
 
   var SOBRE  = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -331,9 +339,20 @@
   majCollee();
 
   // ── Changement de filtre sans rechargement visible ────────────────
+  // Les clés portées par CE formulaire sont effacées avant d'écrire ses
+  // valeurs actuelles : un champ répété (checkboxes de même nom, ex.
+  // sites[] sur pages/kpi_dashboard.php) doit pouvoir apporter plusieurs
+  // valeurs, pas seulement la dernière (.set() les aurait écrasées), et
+  // une checkbox tout juste décochée doit faire disparaître sa clé plutôt
+  // que de laisser traîner l'ancienne valeur de location.search — d'où la
+  // liste des noms lue sur f.elements (tous les champs du formulaire),
+  // pas sur FormData (qui omet les cases décochées).
   function urlDuFiltre(f) {
     var p = new URLSearchParams(location.search);
-    new FormData(f).forEach(function (v, k) { p.set(k, v); });
+    var noms = {};
+    Array.prototype.forEach.call(f.elements, function (el) { if (el.name) noms[el.name] = true; });
+    Object.keys(noms).forEach(function (k) { p.delete(k); });
+    new FormData(f).forEach(function (v, k) { p.append(k, v); });
     return location.pathname + '?' + p.toString();
   }
 
@@ -352,6 +371,10 @@
   document.addEventListener('change', function (ev) {
     var f = ev.target && ev.target.form;
     if (!estFiltre(f)) return;
+    // Champ sciemment exclu (checkboxes d'un choix multiple à confirmer,
+    // par ex.) : son propre gestionnaire garde la main, rien à échanger
+    // avant validation explicite via window.dashFiltrer.
+    if (ev.target.closest && ev.target.closest('[data-dash-nofiltre]')) return;
     if (!window.fetch || !window.DOMParser || !history.pushState) return;
     ev.stopPropagation();
     charger(urlDuFiltre(f));
@@ -457,5 +480,17 @@
   window.addEventListener('pageshow', function () {
     document.body.classList.remove('pdg-busy', 'pdg-move');
   });
+
+  // ── Déclenchement explicite ────────────────────────────────────────
+  // Pour un contrôle qui ne peut pas compter sur l'interception passive
+  // du 'change' ci-dessus — ex. le bouton « Appliquer » d'un sélecteur à
+  // choix multiple avec confirmation (pages/kpi_dashboard.php) : un clic
+  // n'émet pas de 'change', et les cases du sélecteur vivent de toute
+  // façon dans un élément [data-dash-nofiltre] pour ne rien déclencher
+  // avant cette validation explicite.
+  window.dashFiltrer = function (form) {
+    if (window.fetch && window.DOMParser && history.pushState) charger(urlDuFiltre(form));
+    else form.submit();
+  };
 })();
 </script>

@@ -23,13 +23,23 @@ RUN apt-get update && apt-get install -y \
 # avec chemins serveur complets, sur n'importe quelle page. Les erreurs
 # restent journalisées (log_errors=On, visibles via `docker logs`/Render
 # Logs) — rien n'est perdu pour le débogage, juste plus montré au visiteur.
+#
+# upload_max_filesize/post_max_size : sans ce fichier php.ini, PHP retombe
+# sur ses valeurs par défaut compilées (2M/8M) — bien trop petit pour un
+# export OptoPlate/OptoTrace national (CSV/XLSX), rejeté silencieusement
+# avant même d'atteindre le code applicatif (UPLOAD_ERR_INI_SIZE).
+# memory_limit relevé en conséquence : PhpSpreadsheet charge tout le
+# classeur XLSX en mémoire pour le lire.
 RUN echo "variables_order = EGPCS" >> /usr/local/etc/php/php.ini \
     && echo "auto_prepend_file =" >> /usr/local/etc/php/php.ini \
     && echo "display_errors = Off" >> /usr/local/etc/php/php.ini \
     && echo "display_startup_errors = Off" >> /usr/local/etc/php/php.ini \
     && echo "log_errors = On" >> /usr/local/etc/php/php.ini \
     && echo "error_reporting = E_ALL" >> /usr/local/etc/php/php.ini \
-    && echo "expose_php = Off" >> /usr/local/etc/php/php.ini
+    && echo "expose_php = Off" >> /usr/local/etc/php/php.ini \
+    && echo "upload_max_filesize = 50M" >> /usr/local/etc/php/php.ini \
+    && echo "post_max_size = 55M" >> /usr/local/etc/php/php.ini \
+    && echo "memory_limit = 256M" >> /usr/local/etc/php/php.ini
 
 # Installer Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer

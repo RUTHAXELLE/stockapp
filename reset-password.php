@@ -3,7 +3,6 @@ require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/session.php';
 require_once __DIR__ . '/includes/auth.php';
 
-session_start_secure();
 if (!empty($_SESSION['user_id'])) redirect_to('/pages/dashboard.php');
 
 $token = trim($_GET['token'] ?? '');

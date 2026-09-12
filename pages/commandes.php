@@ -15,6 +15,7 @@ require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
 // ach_debiter_stock_magasin() : contrepartie du décrément global à l'expédition.
 require_once __DIR__ . '/../includes/achats.php';
+require_once __DIR__ . '/../includes/referentiels.php';
 
 require_auth();
 
@@ -440,8 +441,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 [$cmd_id]
             );
             foreach ($lignes_pmma as $lr) {
-                // libelle = 'PMMA TYPE_X' → type_pmma = 'TYPE_X'
-                $type_pmma = trim(preg_replace('/^PMMA\s*/i', '', $lr['libelle']));
+                // Le libellé de la ligne commandée est saisi à la main : le
+                // découper donnait un type par variante d'écriture, donc un
+                // stock éclaté sur plusieurs lignes pour la même matière.
+                // On le ramène d'abord au code du catalogue ; à défaut, on
+                // garde le libellé découpé pour ne pas perdre la livraison.
+                $type_pmma = resoudre_type_pmma($lr['libelle'])
+                          ?? trim(preg_replace('/^PMMA\s*/i', '', $lr['libelle']));
                 if ($type_pmma) {
                     db_query(
                         "INSERT INTO stock_pmma_site (site_id, type_pmma, quantite) VALUES (?,?,?)

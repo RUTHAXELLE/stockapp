@@ -284,6 +284,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         json_response(true,'Stock validé automatiquement.');
     }
 
+    // ── VALIDATION MANUELLE SANS IMPORT EMUCI (déblocage)
+    //    Un site sans import EMUCI de référence pour cette date reste bloqué
+    //    indéfiniment sinon : ni auto-validable (0 écart sans référence ne
+    //    prouve rien), ni éligible à la décision GSB par bobine (pas d'écart
+    //    à traiter), ni à valider_auto (rejette explicitement ce cas). Le
+    //    coordinateur ne peut alors plus jamais saisir de nouveau point. Le
+    //    GSB assume ici la responsabilité de valider sans référence, motif
+    //    obligatoire pour la traçabilité.
+    if ($action === 'valider_sans_import') {
+        if (!$can_valider) json_response(false, 'Accès refusé.');
+        $site_id     = (int)($_POST['site_id'] ?? 0);
+        $date        = trim($_POST['date'] ?? date('Y-m-d'));
+        $commentaire = trim($_POST['commentaire'] ?? '');
+        if (!$site_id) json_response(false, 'Site obligatoire.');
+        if (!$commentaire) json_response(false, 'Un commentaire est obligatoire pour valider sans import EMUCI.');
+
+        $snap = _calculer_ecarts_site($site_id, $date);
+        if ($snap['dernier_import']) {
+            json_response(false, 'Un import EMUCI existe désormais pour ce site à cette date — utilisez la validation normale.');
+        }
+
+        $snapshot = json_encode($snap['bobines_detail'] ?: []);
+        db_query(
+            "INSERT INTO validations_stock_matin (site_id,date_validation,statut,nb_ecarts,bobines_snapshot,gsb_user_id,gsb_at,commentaire)
+             VALUES (?,?,'valide_gsb',0,?,?,NOW(),?)
+             ON CONFLICT (site_id,date_validation) DO UPDATE SET statut='valide_gsb',nb_ecarts=0,bobines_snapshot=EXCLUDED.bobines_snapshot,gsb_user_id=EXCLUDED.gsb_user_id,gsb_at=NOW(),commentaire=EXCLUDED.commentaire",
+            [$site_id, $date, $snapshot, $user['id'], "Validé sans référence EMUCI (aucun import disponible) : $commentaire"]
+        );
+        $coords = db_fetch_all("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug='coordinateur_site' AND u.site_id=? AND u.actif=1", [$site_id]);
+        foreach ($coords as $c) {
+            db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
+                [$c['id'],'stock_valide','✅ Stock validé',
+                 "Votre stock bobines du $date est validé (sans import EMUCI disponible). Vous pouvez saisir un nouveau point journalier.",
+                 '/pages/validation_stock_matin.php']);
+        }
+        audit_log($user['id'],'CREATE','validations_stock_matin',0,"Validation manuelle sans import EMUCI site:$site_id $date : $commentaire");
+        json_response(true,'Stock validé (sans référence EMUCI). Le coordinateur peut saisir un nouveau point.');
+    }
+
     // ── DÉCISION GSB (autoriser / réajuster / refuser)
     //    Traite les bobines transmises dans ecarts_json : une seule (décision
     //    ligne par ligne dans le tableau) ou plusieurs (traitement groupé).
@@ -1629,12 +1668,21 @@ $nb_total_bobines = count($coord_reajust_details);
 
 <!-- Sites avec point journalier mais sans import EMUCI (impossible de comparer) -->
 <?php if(!empty($sites_sans_import) && $can_valider): ?>
-<div style="background:#FFFBEB;border:1.5px solid #FDE68A;border-radius:12px;padding:13px 18px;margin-bottom:20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-  <i class="ph-duotone ph-clock-countdown" style="color:#92400E;font-size:20px;flex-shrink:0"></i>
-  <span style="font-weight:700;color:#92400E;font-size:13px"><?= count($sites_sans_import) ?> site(s) en attente d'import EMUCI (non validés — comparaison impossible)</span>
-  <div style="display:flex;gap:6px;flex-wrap:wrap">
+<div style="background:#FFFBEB;border:1.5px solid #FDE68A;border-radius:12px;padding:13px 18px;margin-bottom:20px">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+    <i class="ph-duotone ph-clock-countdown" style="color:#92400E;font-size:20px;flex-shrink:0"></i>
+    <span style="font-weight:700;color:#92400E;font-size:13px"><?= count($sites_sans_import) ?> site(s) en attente d'import EMUCI (comparaison impossible)</span>
+  </div>
+  <p style="font-size:12px;color:#92400E;margin:0 0 10px">Sans import EMUCI, le coordinateur reste bloqué indéfiniment sur cette date. Vous pouvez valider manuellement (motif obligatoire) si l'import n'est pas attendu ou n'arrivera pas.</p>
+  <div style="display:flex;flex-direction:column;gap:6px">
     <?php foreach($sites_sans_import as $s): ?>
-    <span style="background:#FEF3C7;color:#92400E;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600"><?= h($s['nom']) ?></span>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:#FEF3C7;border-radius:10px;padding:6px 10px 6px 14px">
+      <span style="color:#92400E;font-size:13px;font-weight:600"><?= h($s['nom']) ?></span>
+      <button onclick="validerSansImport(<?= (int)$s['id'] ?>,'<?= h($f_date) ?>','<?= addslashes(h($s['nom'])) ?>')"
+              style="background:#92400E;color:white;border:none;border-radius:7px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">
+        Valider quand même
+      </button>
+    </div>
     <?php endforeach; ?>
   </div>
 </div>
@@ -2370,6 +2418,17 @@ async function validerAuto(){
   const d=await ap({action:'valider_auto',site_id:currentSiteId,date:'<?= h($f_date) ?>'});
   if(d.success){toast(d.message);fermerVSM();setTimeout(()=>location.reload(),800);}
   else toast(d.message,'error');
+}
+
+async function validerSansImport(siteId, date, siteNom){
+  const commentaire = prompt(`Aucun import EMUCI n'existe pour « ${siteNom} » à cette date. Motif de la validation manuelle (obligatoire) :`);
+  if (commentaire === null) return;
+  if (!commentaire.trim()) { toast('Un commentaire est obligatoire.', 'error'); return; }
+  try {
+    const d = await ap({action:'valider_sans_import', site_id:siteId, date, commentaire: commentaire.trim()});
+    toast(d.message, d.success ? 'success' : 'error');
+    if (d.success) setTimeout(()=>location.reload(), 800);
+  } catch(e) { toast('Erreur réseau.', 'error'); }
 }
 
 // ── Cellule « Décision » d'une ligne bobine

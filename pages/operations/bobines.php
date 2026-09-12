@@ -9,6 +9,7 @@ require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/helpers.php';
 require_once __DIR__ . '/../../includes/notifications.php';
 require_once __DIR__ . '/../../includes/upload.php';
+require_once __DIR__ . '/../../includes/referentiels.php';
 
 require_auth();
  // Force rechargement depuis DB (évite cache de rôle périmé)
@@ -19,6 +20,12 @@ $role_slug = $user['role_slug'] ?? '';
 $is_coord = ($role_slug === 'coordinateur_site');
 $is_gsb   = in_array($role_slug, ['gestionnaire_stock_bobines','admin','superadmin']);
 
+// Bobine (plaques : Auto/Carré/Moto/MotoII) vs Vignette (Réservoir/Pare-brise) —
+// meme page, meme fonctionnement que pages/equipements.php (?categorie=), pour
+// ne pas dupliquer toute la logique (KPI, onglets, creation, import...).
+$f_categorie_bob = (($_GET['categorie'] ?? 'bobine') === 'vignette') ? 'vignette' : 'bobine';
+$series_actives  = $f_categorie_bob === 'vignette' ? ['TL','WSL'] : ['A','B','C','D'];
+
 // Gate pilotée par la permission DB — cf. sql/migration_bobines_permission_
 // alignement.sql : cette page n'appelait jamais require_permission() pour
 // la lecture, l'accès était géré à 100% par une liste de rôles en dur qui
@@ -27,15 +34,16 @@ $is_gsb   = in_array($role_slug, ['gestionnaire_stock_bobines','admin','superadm
 // support_it/gestionnaire_bobines — qui listait déjà 'bobines' dans son
 // sous-rôle sans jamais pouvoir l'atteindre — accède enfin à cette page
 // (trouvé en corrigeant, 2026-08-29).
-require_permission('bobines', 'can_read');
+//
+// Depuis la scission Bobines / Vignette (2026-09) : deux modules distincts,
+// octroyables indépendamment dans Administration → Permissions. « bobines »
+// reste le module historique (plaques Auto/Carré/Moto/MotoII) ; « vignette »
+// est nouveau, seedé depuis « bobines » par sql/migration_split_
+// equipements_operationnel_vignette.sql.
+$perm_module_bob = $f_categorie_bob === 'vignette' ? 'vignette' : 'bobines';
+require_permission($perm_module_bob, 'can_read');
 
 $site_force = ($is_coord && ($user['site_id'] ?? 0)) ? (int)$user['site_id'] : 0;
-
-// Bobine (plaques : Auto/Carré/Moto/MotoII) vs Vignette (Réservoir/Pare-brise) —
-// meme page, meme fonctionnement que pages/equipements.php (?categorie=), pour
-// ne pas dupliquer toute la logique (KPI, onglets, creation, import...).
-$f_categorie_bob = (($_GET['categorie'] ?? 'bobine') === 'vignette') ? 'vignette' : 'bobine';
-$series_actives  = $f_categorie_bob === 'vignette' ? ['TL','WSL'] : ['A','B','C','D'];
 $serie_ph        = implode(',', array_fill(0, count($series_actives), '?'));
 
 if ($f_categorie_bob === 'vignette') {
@@ -73,7 +81,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
     // ── CRÉER BOBINE
     if ($action==='create') {
-        require_permission('bobines','can_create');
+        require_permission($perm_module_bob,'can_create');
         $numero    = strtoupper(trim($_POST['numero']    ?? ''));
         $type_code = strtoupper(trim($_POST['type_code'] ?? ''));
         $format    = trim($_POST['format'] ?? '');
@@ -87,22 +95,26 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         if (!$serie) json_response(false,"Type '$type_code' inconnu au catalogue.");
         if (!in_array($serie, $series_actives, true)) json_response(false,"Ce type n'appartient pas à la catégorie « $bob_label_pl ».");
         $tv = db_fetch_one("SELECT id FROM op_types_vehicule WHERE serie_bobine=?",[$serie]);
+        // Capacité lue au catalogue : le 500 en dur ici créait des TL/WSL à
+        // 500 films alors qu'elles en contiennent 2000, écart que seuls les
+        // imports corrigeaient.
+        $cap = capacite_bobine($type_code);
         db_begin();
         try {
-            db_query("INSERT INTO op_bobines (numero,type_code,serie,type_vehicule_id,site_id,format,qte_initiale,stock_systeme,statut) VALUES (?,?,?,?,?,?,500,500,'en_stock')",
-                [$numero,$type_code,$serie,$tv['id']??null,$site_id,$format]);
+            db_query("INSERT INTO op_bobines (numero,type_code,serie,type_vehicule_id,site_id,format,qte_initiale,stock_systeme,statut) VALUES (?,?,?,?,?,?,?,?,'en_stock')",
+                [$numero,$type_code,$serie,$tv['id']??null,$site_id,$format,$cap,$cap]);
             $id = (int)db_last_id();
             db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by) VALUES (?,?,?,?,?,?,?)",
-                [$id,'entree',500,0,500,"Création bobine $numero",$user['id']]);
-            audit_log($user['id'],'CREATE','operations',$id,"Création bobine $numero ($type_code) — stock initial: 500");
+                [$id,'entree',$cap,0,$cap,"Création bobine $numero",$user['id']]);
+            audit_log($user['id'],'CREATE','operations',$id,"Création bobine $numero ($type_code) — stock initial: $cap");
             db_commit();
-            json_response(true,'Bobine créée avec stock initial de 500.',['id'=>$id]);
+            json_response(true,"Bobine créée avec stock initial de $cap.",['id'=>$id]);
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 
     // ── AFFECTER AU SITE
     if ($action==='affecter_site') {
-        require_permission('bobines','can_update');
+        require_permission($perm_module_bob,'can_update');
         $id      = (int)($_POST['id']      ?? 0);
         $site_id = (int)($_POST['site_id'] ?? 0);
         $bob = db_fetch_one("SELECT * FROM op_bobines WHERE id=?",[$id]);
@@ -116,7 +128,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
     // ── SAISIE CONSOMMATION JOURNALIÈRE
     if ($action==='consommation') {
-        require_permission('bobines','can_create');
+        require_permission($perm_module_bob,'can_create');
         $bobine_id = (int)($_POST['bobine_id'] ?? 0);
         $qte       = (int)($_POST['quantite']  ?? 0);
         $date_conso= trim($_POST['date_conso'] ?? date('Y-m-d'));
@@ -147,7 +159,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
     // ── RETIRER BOBINE
     if ($action==='retirer') {
-        require_permission('bobines','can_update');
+        require_permission($perm_module_bob,'can_update');
         $id = (int)($_POST['id'] ?? 0);
         $bob = db_fetch_one("SELECT * FROM op_bobines WHERE id=?",[$id]);
         db_query("UPDATE op_bobines SET statut='retiree' WHERE id=?",[$id]);
@@ -157,7 +169,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
     // ── CHANGER STATUT (en_cours ↔ en_stock)
     if ($action==='changer_statut') {
-        require_permission('bobines','can_update');
+        require_permission($perm_module_bob,'can_update');
         $id      = (int)($_POST['id'] ?? 0);
         $statut  = trim($_POST['statut'] ?? '');
         $motif   = trim($_POST['motif'] ?? '');
@@ -177,7 +189,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
     // ── DÉCLARER PERDUE
     if ($action==='declarer_perdue') {
-        require_permission('bobines','can_update');
+        require_permission($perm_module_bob,'can_update');
         $id    = (int)($_POST['id'] ?? 0);
         $motif = trim($_POST['motif'] ?? '');
         if (!$motif) json_response(false,'Le motif est obligatoire pour déclarer une perte.');
@@ -217,7 +229,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
             db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
                 [$gsb['id'],'info','🎞️ Demande utilisation bobine',
                  "{$user['prenom']} {$user['nom']} demande l'utilisation de la bobine {$bob['numero']} ({$bob['site_nom']}). Motif : $motif",
-                 'bobines.php']);
+                 '/pages/operations/bobines.php']);
         }
         audit_log($user['id'],'CREATE','demandes_bobines',$dem_id,"Demande utilisation bobine {$bob['numero']} — $motif");
         json_response(true,'Demande envoyée. En attente de validation du gestionnaire stock bobines.');
@@ -246,7 +258,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
                 [$dem['demande_par'],'info',
                  $decision==='approuvee'?'🎞️ Demande bobine approuvée':'🎞️ Demande bobine refusée',
                  "Votre demande pour la bobine {$dem['bobine_num']} a été ".($decision==='approuvee'?'approuvée ✅':'refusée ❌').". Motif : $motif_rep",
-                 'bobines.php']);
+                 '/pages/operations/bobines.php']);
             audit_log($user['id'],'UPDATE','demandes_bobines',$dem_id,"$decision bobine {$dem['bobine_num']} — $motif_rep");
             db_commit();
             json_response(true,$decision==='approuvee'?'Demande approuvée. Bobine mise en utilisation.':'Demande refusée.');
@@ -255,7 +267,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
 
     if ($action==='import_lot') {
-        require_permission('bobines','can_create');
+        require_permission($perm_module_bob,'can_create');
         $items   = json_decode($_POST['items']??'[]',true);
         $site_id = (int)($_POST['site_id']??0)?:null;
         $created = 0; $errors = [];
@@ -269,11 +281,12 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
                 if (!$serie) {$errors[]="$num : type '$type' inconnu";continue;}
                 if (!in_array($serie, $series_actives, true)) {$errors[]="$num : type '$type' hors categorie $bob_label_pl";continue;}
                 $tv=db_fetch_one("SELECT id FROM op_types_vehicule WHERE serie_bobine=?",[$serie]);
-                db_query("INSERT INTO op_bobines (numero,type_code,serie,type_vehicule_id,site_id,format,qte_initiale,stock_systeme,statut) VALUES (?,?,?,?,?,?,500,500,'en_stock')",
-                    [strtoupper($num),strtoupper($type),$serie,$tv['id']??null,$site_id,$format]);
+                $cap=capacite_bobine($type);
+                db_query("INSERT INTO op_bobines (numero,type_code,serie,type_vehicule_id,site_id,format,qte_initiale,stock_systeme,statut) VALUES (?,?,?,?,?,?,?,?,'en_stock')",
+                    [strtoupper($num),strtoupper($type),$serie,$tv['id']??null,$site_id,$format,$cap,$cap]);
                 $new_id=(int)db_last_id();
                 db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by) VALUES (?,?,?,?,?,?,?)",
-                    [$new_id,'entree',500,0,500,"Import lot - bobine $num",$user['id']]);
+                    [$new_id,'entree',$cap,0,$cap,"Import lot - bobine $num",$user['id']]);
                 $created++;
             }
             db_commit();
@@ -394,7 +407,8 @@ $bobines = db_fetch_all(
                  WHERE m.bobine_id=b.id AND m.type='transfert'
                  ORDER BY m.created_at DESC LIMIT 1),
                 b.qte_initiale
-            ) AS qte_livree
+            ) AS qte_livree,
+            (SELECT dd.id FROM demandes_bobines dd WHERE dd.bobine_id=b.id AND dd.statut='en_attente' LIMIT 1) AS demande_attente_id
      FROM op_bobines b
      LEFT JOIN sites s ON s.id=b.site_id
      LEFT JOIN op_types_vehicule tv ON tv.id=b.type_vehicule_id
@@ -550,9 +564,13 @@ $coord_types = db_fetch_all("SELECT DISTINCT type_code FROM op_bobines WHERE sit
         </td>
         <td style="text-align:center">
           <?php if($b['statut'] === 'en_stock'): ?>
-          <button class="btn btn-primary btn-sm" onclick="demanderUtilisation(<?= $b['id'] ?>, '<?= h($b['numero']) ?>')">
-            ▶️ Demander utilisation
-          </button>
+            <?php if(!empty($b['demande_attente_id'])): ?>
+            <span style="display:inline-block;padding:4px 10px;border-radius:12px;font-size:12px;font-weight:700;background:#fff3e0;color:#e65100">⏳ Demande envoyée</span>
+            <?php else: ?>
+            <button class="btn btn-primary btn-sm" onclick="demanderUtilisation(<?= $b['id'] ?>, '<?= h($b['numero']) ?>')">
+              ▶️ Demander utilisation
+            </button>
+            <?php endif; ?>
           <?php endif; ?>
         </td>
       </tr>
@@ -633,10 +651,10 @@ endif;
   <button class="tab-btn" onclick="showTab('ecarts',this)" id="tabEcartsBtn">
     <i class="ph ph-warning" aria-hidden="true"></i> Écarts <?= $nb_ecarts_ouverts>0?"<span style='background:var(--danger);color:white;border-radius:10px;padding:1px 7px;font-size:12px;margin-left:4px'>$nb_ecarts_ouverts</span>":'' ?>
   </button>
-  <?php if(can('bobines','can_create') && !$is_coord): ?>
+  <?php if(can($perm_module_bob,'can_create') && !$is_coord): ?>
   <button class="tab-btn" onclick="showTab('conso',this)"><i class="ph ph-chart-line-down" aria-hidden="true"></i> Consommation</button>
   <?php endif; ?>
-  <?php if(can('bobines','can_create') && !$is_coord): ?>
+  <?php if(can($perm_module_bob,'can_create') && !$is_coord): ?>
   <button class="tab-btn" onclick="showTab('nouvelle',this)"><i class="ph ph-plus" aria-hidden="true"></i> Nouvelle</button>
   <button class="tab-btn" onclick="showTab('import',this)"><i class="ph ph-upload-simple" aria-hidden="true"></i> Import</button>
   <?php endif; ?>
@@ -743,13 +761,13 @@ endif;
             <td><span class="bobine-status <?= $b['statut'] ?>"><?= ['en_stock'=>'<i class="ph ph-package" aria-hidden="true"></i> En stock','en_cours'=>'<i class="ph ph-film-strip" aria-hidden="true"></i> En cours','epuisee'=>'<i class="ph ph-x-circle" aria-hidden="true"></i> Épuisée','retiree'=>'<i class="ph ph-circle" aria-hidden="true"></i> Retirée'][$b['statut']]??$b['statut'] ?></span></td>
             <td style="text-align:center;white-space:nowrap">
               <button class="btn btn-secondary btn-sm" onclick="viewBobine(<?= $b['id'] ?>)" title="Détail"><i class="ph ph-magnifying-glass" aria-hidden="true"></i></button>
-              <?php if(can('bobines','can_create') && $b['statut']!=='retiree' && $b['statut']!=='epuisee'): ?>
+              <?php if(can($perm_module_bob,'can_create') && $b['statut']!=='retiree' && $b['statut']!=='epuisee'): ?>
               <button class="btn btn-sm" style="background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;padding:4px 8px;border-radius:6px;cursor:pointer;margin-left:2px" onclick="openConso(<?= $b['id'] ?>,'<?= h($b['numero']) ?>',<?= $b['stock_systeme'] ?>)" title="Saisir consommation"><i class="ph ph-chart-line-down" aria-hidden="true"></i></button>
               <?php endif; ?>
-              <?php if(can('bobines','can_create') && $b['statut']!=='retiree'): ?>
+              <?php if(can($perm_module_bob,'can_create') && $b['statut']!=='retiree'): ?>
               <button class="btn btn-sm" style="background:#fff8e7;color:#b7791f;border:1px solid #f6d860;padding:4px 8px;border-radius:6px;cursor:pointer;margin-left:2px" onclick="openDeclarerEcart(<?= $b['id'] ?>,'<?= h($b['numero']) ?>',<?= $b['stock_systeme'] ?>)" title="Déclarer un écart"><i class="ph ph-warning" aria-hidden="true"></i></button>
               <?php endif; ?>
-              <?php if(can('bobines','can_update') && !$is_coord && $b['statut']==='en_stock'): ?>
+              <?php if(can($perm_module_bob,'can_update') && !$is_coord && $b['statut']==='en_stock'): ?>
               <button class="btn btn-sm" style="background:#e3f2fd;color:#1565c0;border:1px solid #90caf9;padding:4px 8px;border-radius:6px;cursor:pointer;margin-left:2px" onclick="openAffecter(<?= $b['id'] ?>,'<?= h($b['numero']) ?>')"><i class="ph ph-buildings" aria-hidden="true"></i></button>
               <?php endif; ?>
             </td>
@@ -805,7 +823,7 @@ endif;
 </div>
 
 <!-- TAB NOUVELLE BOBINE -->
-<?php if(can('bobines','can_create') && !$is_coord): ?>
+<?php if(can($perm_module_bob,'can_create') && !$is_coord): ?>
 <div id="tab-nouvelle" style="display:none">
   <div class="card" style="max-width:500px">
     <div class="card-header"><h3><i class="ph ph-plus" aria-hidden="true"></i> Créer une bobine</h3></div>
@@ -847,7 +865,7 @@ endif;
 <?php endif; ?>
 
 <!-- TAB IMPORT -->
-<?php if(can('bobines','can_create') && !$is_coord): ?>
+<?php if(can($perm_module_bob,'can_create') && !$is_coord): ?>
 <div id="tab-import" style="display:none">
   <div class="card" style="max-width:560px">
     <div class="card-header"><h3><i class="ph ph-upload-simple" aria-hidden="true"></i> Import en lot</h3></div>
@@ -912,7 +930,7 @@ endif;
               </div>
             </td>
             <td style="text-align:center;white-space:nowrap">
-              <?php if(can('bobines','can_update')): ?>
+              <?php if(can($perm_module_bob,'can_update')): ?>
               <button class="btn btn-secondary btn-sm" onclick="changerStatut(<?= $b['id'] ?>,'en_stock')" title="Remettre en stock"><i class="ph ph-package" aria-hidden="true"></i> → Stock</button>
               <button class="btn btn-sm" style="background:#fff3e0;color:#e65100;border:1px solid #ffcc80"
                       onclick="declararerPerdue(<?= $b['id'] ?>, '<?= h($b['numero']) ?>')" title="Déclarer perdue"><i class="ph ph-x-circle" aria-hidden="true"></i> Perdue</button>
@@ -961,7 +979,7 @@ endif;
               <button class="btn btn-primary btn-sm" onclick="demanderUtilisation(<?= $b['id'] ?>, '<?= h($b['numero']) ?>')">
                 ▶️ Demander utilisation
               </button>
-              <?php elseif(can('bobines','can_update')): ?>
+              <?php elseif(can($perm_module_bob,'can_update')): ?>
               <!-- Admin/Superviseur/GSB : changement direct -->
               <button class="btn btn-primary btn-sm" onclick="changerStatut(<?= $b['id'] ?>,'en_cours')" title="Mettre en utilisation">▶️ Mettre en utilisation</button>
               <?php endif; ?>

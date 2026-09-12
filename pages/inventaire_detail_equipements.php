@@ -450,9 +450,11 @@ include __DIR__ . '/../templates/header.php';
 <!-- LÉGENDE -->
 <div style="display:flex;gap:16px;font-size:12px;color:var(--muted);margin-bottom:12px;align-items:center">
   <span><i class="ph ph-note-pencil" aria-hidden="true"></i> <strong>Statut constaté</strong> : présence physique confirmée sur site</span>
+  <?php if(!$is_coord): /* décrit une colonne masquée au coordinateur */ ?>
   <span style="border-left:1px solid var(--border);padding-left:16px">
     <span style="border-bottom:2px dashed #f39c12;padding-bottom:1px"><strong>Écart connu</strong></span> : déjà signalé manquant lors d'un précédent inventaire, non résolu
   </span>
+  <?php endif; ?>
 </div>
 
 <!-- TABLEAU PRINCIPAL -->
@@ -465,7 +467,9 @@ include __DIR__ . '/../templates/header.php';
           <th style="padding:10px 14px;text-align:left">Type</th>
           <th style="padding:10px 14px;text-align:left">Marque / Modèle</th>
           <th style="padding:10px 14px;text-align:left">Affecté à</th>
+          <?php if(!$is_coord): /* nerf 2.3 */ ?>
           <th style="padding:10px 14px;text-align:center">Écart connu</th>
+          <?php endif; ?>
           <th style="padding:10px 14px;text-align:center">Statut constaté</th>
           <?php if($can_edit): ?>
           <th style="padding:10px 14px;text-align:center">Enregistrement</th>
@@ -486,25 +490,31 @@ include __DIR__ . '/../templates/header.php';
             || ($demande_active['type'] === 'demande_autorisation' && $demande_active['statut'] === 'autorise')
         );
 
-        $row_bg = !$saisi && $ecart_connu_avant ? '#fffbec'
+        // n erf 2.3 CR PDG : l'ambre signale un manquant deja connu du
+        // systeme — le coordinateur ne doit pas partir avec cet a priori.
+        $row_bg = $is_coord
+                ? (!$saisi ? '#fffbf0' : ($manquant ? '#fff5f5' : 'white'))
+                : (!$saisi && $ecart_connu_avant ? '#fffbec'
                 : (!$saisi                      ? '#fffbf0'
                 : ($manquant                     ? '#fff5f5'
-                :                                  'white'));
+                :                                  'white')));
       ?>
       <tr id="row-<?= $l['id'] ?>" style="border-bottom:1px solid #e2e8f0;background:<?= $row_bg ?>"
-          data-numero="<?= h($l['numero_serie_interne']) ?>" data-connu="<?= $ecart_connu_avant ?>">
+          data-numero="<?= h($l['numero_serie_interne']) ?>"<?php if(!$is_coord): ?> data-connu="<?= $ecart_connu_avant ?>"<?php endif; ?>>
 
         <td style="padding:9px 14px;font-family:monospace;font-weight:700;color:var(--navy);font-size:13px"><?= h($l['numero_serie_interne']) ?></td>
         <td style="padding:9px 14px;font-size:12.5px"><?= h($l['type_libelle'] ?? '—') ?></td>
         <td style="padding:9px 14px;font-size:12.5px;color:var(--muted)"><?= h(trim(($l['marque']??'').' '.($l['modele']??'')) ?: '—') ?></td>
         <td style="padding:9px 14px;font-size:12.5px"><?= h($l['utilisateur_nom'] ?? '—') ?></td>
 
+        <?php if(!$is_coord): ?>
         <td style="padding:9px 14px;text-align:center">
           <?php if ($ecart_connu_avant): ?>
             <span style="font-family:'Montserrat',sans-serif;font-weight:800;color:#e74c3c"
                   title="Déjà signalé manquant, non résolu">Manquant</span>
           <?php else: ?><span style="color:#94a3b8">—</span><?php endif; ?>
         </td>
+        <?php endif; ?>
 
         <td style="padding:9px 14px;text-align:center" id="statut-<?= $l['id'] ?>">
           <?php if($can_edit): ?>

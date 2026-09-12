@@ -6,6 +6,7 @@
 //  et pages/inventaire_bobines.php.
 // ============================================================
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/consommation.php';
 
 // ── Durée (en mois) de chaque type de période standard
 const INV_PERIODES = ['mensuel' => 1, 'trimestriel' => 3, 'semestriel' => 6, 'annuel' => 12];
@@ -77,10 +78,9 @@ function inv_creer_mensuel(int $site_id, string $date, ?int $session_id, int $us
     $inv_id = (int)db_last_id();
 
     foreach ($bobines as $b) {
-        $conso_moy = (float)db_fetch_value(
-            "SELECT COALESCE(SUM(quantite)/GREATEST(DATEDIFF(NOW(), MIN(date_conso)),1),0) FROM consommations_bobines WHERE bobine_id=? AND date_conso>=(CURRENT_DATE - INTERVAL 30 DAY)",
-            [$b['id']]
-        );
+        // n° 3.0 — formule centralisee dans includes/consommation.php,
+        // partagee avec les modules KPI et Simulation.
+        $conso_moy = conso_moy_bobine((int)$b['id']);
         $ecart_connu = (int)db_fetch_value("SELECT COALESCE(SUM(ecart),0) FROM ecarts_bobines WHERE bobine_id=? AND statut='ouvert'", [$b['id']]);
         db_query(
             "INSERT INTO inventaire_details_bobines (inventaire_id,bobine_id,stock_systeme,qte_temps_reel,stock_physique,ecart,ecart_connu_avant,conso_quotidienne_moy)

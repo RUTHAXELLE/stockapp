@@ -9,6 +9,7 @@ require_once __DIR__ . '/../includes/session.php';
 require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
+require_once __DIR__ . '/../includes/point_emuci_corrections.php';
 
 require_auth();
 
@@ -26,21 +27,45 @@ $can_correct = can('point_emuci', 'can_update');
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     $action = $_POST['action'] ?? '';
 
-    if ($action === 'corriger') {
+    if ($action === 'demander_correction') {
         if (!$can_correct) json_response(false, 'Accès refusé.');
-        $pj_id     = (int)($_POST['pj_id']     ?? 0);
-        $new_total = (int)($_POST['new_total']  ?? 0);
-        $motif     = trim($_POST['motif']       ?? '');
-        if (!$pj_id)    json_response(false, 'Point journalier introuvable.');
-        if (!$motif)    json_response(false, 'Motif de correction obligatoire.');
-        if ($new_total < 0) json_response(false, 'Valeur invalide.');
-        db_query(
-            "UPDATE op_points_journaliers SET correction_gp=?, motif_correction_gp=?, corrected_by_gp=?, corrected_at=NOW() WHERE id=?",
-            [$new_total, $motif, $user['id'], $pj_id]
-        );
-        audit_log($user['id'], 'UPDATE', 'op_points_journaliers', $pj_id,
-            "Correction GP total_plaques→$new_total | motif: $motif");
-        json_response(true, 'Correction enregistrée.', ['new_total' => $new_total]);
+        $pj_id    = (int)($_POST['pj_id'] ?? 0);
+        $propose  = (int)($_POST['new_total'] ?? -1);
+        $motif    = trim($_POST['motif'] ?? '');
+        if (!$pj_id) json_response(false, 'Point journalier introuvable.');
+        if ($propose < 0) json_response(false, 'Valeur invalide.');
+        $pj = db_fetch_one("SELECT * FROM op_points_journaliers WHERE id=?", [$pj_id]);
+        if (!$pj) json_response(false, 'Point journalier introuvable.');
+        try {
+            $id = pec_demander($pj, $user, $propose, $motif);
+            audit_log($user['id'], 'CREATE', 'corrections_point_emuci', $id,
+                "Demande correction PJ#$pj_id → $propose | motif: $motif");
+            json_response(true, 'Demande envoyée au coordinateur.');
+        } catch (Exception $e) { json_response(false, $e->getMessage()); }
+    }
+
+    if ($action === 'valider_contestation') {
+        if (!$can_correct) json_response(false, 'Accès refusé.');
+        $corr_id = (int)($_POST['corr_id'] ?? 0);
+        $corr = db_fetch_one("SELECT * FROM corrections_point_emuci WHERE id=? AND statut='conteste'", [$corr_id]);
+        if (!$corr) json_response(false, 'Contestation introuvable ou déjà traitée.');
+        try {
+            pec_valider_contestation($corr, $user);
+            audit_log($user['id'], 'UPDATE', 'corrections_point_emuci', $corr_id, "Contestation validée");
+            json_response(true, 'Contre-proposition du coordinateur validée.');
+        } catch (Exception $e) { json_response(false, $e->getMessage()); }
+    }
+
+    if ($action === 'refuser_contestation') {
+        if (!$can_correct) json_response(false, 'Accès refusé.');
+        $corr_id = (int)($_POST['corr_id'] ?? 0);
+        $corr = db_fetch_one("SELECT * FROM corrections_point_emuci WHERE id=? AND statut='conteste'", [$corr_id]);
+        if (!$corr) json_response(false, 'Contestation introuvable ou déjà traitée.');
+        try {
+            pec_refuser_contestation($corr, $user);
+            audit_log($user['id'], 'UPDATE', 'corrections_point_emuci', $corr_id, "Contestation refusée");
+            json_response(true, 'Contestation refusée, valeur d\'origine maintenue.');
+        } catch (Exception $e) { json_response(false, $e->getMessage()); }
     }
 
     if ($action === 'annuler_correction') {
@@ -68,7 +93,7 @@ if (!$f_date) {
 }
 
 $has_import = (int)db_fetch_value(
-    "SELECT COUNT(*) FROM import_optoplate WHERE date_import=?", [$f_date]
+    "SELECT COUNT(*) FROM import_optoplate WHERE date_import=? OR date_installation::date=?", [$f_date, $f_date]
 ) > 0;
 
 $sites_list = db_fetch_all("SELECT id, nom FROM sites WHERE actif=1 ORDER BY nom");
@@ -91,8 +116,13 @@ foreach ($sites_list as $s) {
         [$sid, $f_date]
     );
 
+    // Comparaison au jour réel d'installation (date_installation), pas à la date
+    // saisie à l'écran d'import (date_import) : un import OptoPlate couvre souvent
+    // plusieurs jours ("export_plates_from_...until_..."), voire un historique
+    // complet — compter par date_import y ferait remonter tout le fichier sous
+    // une seule journée.
     $in_use   = (int)db_fetch_value(
-        "SELECT COUNT(*) FROM import_optoplate WHERE site_id=? AND statut_plaque='in_use' AND date_import=?",
+        "SELECT COUNT(*) FROM import_optoplate WHERE site_id=? AND statut_plaque='in_use' AND date_installation::date=?",
         [$sid, $f_date]
     );
     $reserved = (int)db_fetch_value(
@@ -106,6 +136,8 @@ foreach ($sites_list as $s) {
     $ecart      = ($effective !== null && ($in_use > 0 || $reserved > 0))
                   ? ($in_use - $effective)
                   : null;
+
+    $demande = $pj ? pec_active((int)$pj['id']) : null;
 
     if ($declared === null && $in_use === 0 && $reserved === 0) continue;
 
@@ -127,6 +159,7 @@ foreach ($sites_list as $s) {
         'in_use'       => $in_use,
         'reserved'     => $reserved,
         'ecart'        => $ecart,
+        'demande'      => $demande,
     ];
 }
 
@@ -221,11 +254,11 @@ include __DIR__ . '/../templates/header.php';
     <thead>
       <tr>
         <th>Site</th>
+        <th style="text-align:center">Plaques posées (système)</th>
+        <th style="text-align:center">Plaques réservées</th>
         <th style="text-align:center">Déclaratif coord.</th>
-        <th style="text-align:center">Correction GP</th>
-        <th style="text-align:center">OptoPlate <em>in_use</em></th>
-        <th style="text-align:center">OptoPlate <em>reserved</em></th>
         <th style="text-align:center">Écart</th>
+        <th style="text-align:center">Correction</th>
         <?php if ($can_correct): ?><th style="text-align:center">Action</th><?php endif; ?>
       </tr>
     </thead>
@@ -238,18 +271,28 @@ include __DIR__ . '/../templates/header.php';
     ?>
     <tr id="row-<?= $r['site_id'] ?>">
       <td><strong><?= h($r['site_nom']) ?></strong></td>
+      <td style="text-align:center;font-weight:600;color:#1565c0"><?= $r['in_use'] ?></td>
+      <td style="text-align:center;color:var(--muted)"><?= $r['reserved'] ?></td>
       <td style="text-align:center">
         <?php if ($r['declared'] !== null): ?>
           <span style="font-weight:600;font-size:15px"><?= $r['declared'] ?></span>
-          <?php if ($r['corrected'] !== null): ?>
-            <div style="font-size:12px;color:var(--muted);text-decoration:line-through"><?= $r['declared'] ?></div>
-          <?php endif; ?>
         <?php else: ?>
           <span class="no-pj">Pas de point</span>
         <?php endif; ?>
       </td>
+      <td style="text-align:center">
+        <span id="ecart-<?= $r['site_id'] ?>" class="<?= $ecart_cls ?>"><?= $ecart_lbl ?></span>
+      </td>
       <td style="text-align:center" id="corr-<?= $r['site_id'] ?>">
-        <?php if ($r['corrected'] !== null): ?>
+        <?php if ($r['demande'] && $r['demande']['statut'] === 'en_attente'): ?>
+          <span class="corr-badge" style="background:#fff3e0;color:#e65100;cursor:default" title="Motif : <?= h($r['demande']['motif_gp']) ?>">
+            ⏳ En attente (<?= (int)$r['demande']['total_propose'] ?>)
+          </span>
+        <?php elseif ($r['demande'] && $r['demande']['statut'] === 'conteste'): ?>
+          <span class="corr-badge" style="background:#fce4ec;color:#c62828;cursor:default" title="Réponse du coordinateur : <?= h($r['demande']['reponse_coord']) ?>">
+            ⚠️ Contesté (<?= (int)$r['demande']['total_propose_coord'] ?>)
+          </span>
+        <?php elseif ($r['corrected'] !== null): ?>
           <span class="corr-badge" title="<?= h($r['motif']) ?> — <?= h($r['corrected_by']) ?>"
                 onclick="showMotif(<?= $r['pj_id'] ?>, '<?= h(addslashes($r['motif'])) ?>', '<?= h(addslashes($r['corrected_by'] ?? '')) ?>', '<?= h($r['corrected_at']) ?>')">
             <?= $r['corrected'] ?> <i class="ph ph-pencil-simple" aria-hidden="true"></i>
@@ -258,22 +301,24 @@ include __DIR__ . '/../templates/header.php';
           <span style="color:var(--muted);font-size:13px">—</span>
         <?php endif; ?>
       </td>
-      <td style="text-align:center;font-weight:600;color:#1565c0"><?= $r['in_use'] ?></td>
-      <td style="text-align:center;color:var(--muted)"><?= $r['reserved'] ?></td>
-      <td style="text-align:center">
-        <span id="ecart-<?= $r['site_id'] ?>" class="<?= $ecart_cls ?>"><?= $ecart_lbl ?></span>
-      </td>
       <?php if ($can_correct): ?>
       <td style="text-align:center;white-space:nowrap;padding:8px 12px">
-        <?php if ($r['pj_id']): ?>
+        <?php if (!$r['pj_id']): ?>
+          <span class="no-pj">Pas de PJ</span>
+        <?php elseif ($r['demande'] && $r['demande']['statut'] === 'en_attente'): ?>
+          <span style="color:var(--muted);font-size:12px;font-style:italic">En attente du coordinateur</span>
+        <?php elseif ($r['demande'] && $r['demande']['statut'] === 'conteste'): ?>
+          <button class="btn-correct" style="background:#2e7d32" onclick="validerContestation(<?= $r['demande']['id'] ?>,<?= $r['site_id'] ?>)">
+            <i class="ph ph-check" aria-hidden="true"></i> Valider
+          </button>
+          <button class="btn-annul" onclick="refuserContestation(<?= $r['demande']['id'] ?>,<?= $r['site_id'] ?>)" title="Refuser, garder ma valeur"><i class="ph ph-x" aria-hidden="true"></i></button>
+        <?php else: ?>
           <button class="btn-correct" onclick="openCorrection(<?= $r['pj_id'] ?>,<?= $r['site_id'] ?>,<?= $r['effective'] ?? 0 ?>,'<?= h(addslashes($r['site_nom'])) ?>')">
-            <i class="ph ph-pencil-simple" aria-hidden="true"></i> Corriger
+            <i class="ph ph-pencil-simple" aria-hidden="true"></i> Demander correction
           </button>
           <?php if ($r['corrected'] !== null): ?>
-          <button class="btn-annul" onclick="annulerCorrection(<?= $r['pj_id'] ?>,<?= $r['site_id'] ?>)" title="Annuler la correction GP"><i class="ph ph-x" aria-hidden="true"></i></button>
+          <button class="btn-annul" onclick="annulerCorrection(<?= $r['pj_id'] ?>,<?= $r['site_id'] ?>)" title="Annuler la correction"><i class="ph ph-x" aria-hidden="true"></i></button>
           <?php endif; ?>
-        <?php else: ?>
-          <span class="no-pj">Pas de PJ</span>
         <?php endif; ?>
       </td>
       <?php endif; ?>
@@ -288,24 +333,26 @@ include __DIR__ . '/../templates/header.php';
 <?php if ($can_correct): ?>
 <div id="modalCorrection" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:16px;padding:28px 32px;width:90%;max-width:460px;box-shadow:0 8px 40px rgba(0,0,0,.18)">
-    <h3 style="margin:0 0 6px;font-size:17px"><i class="ph ph-pencil-simple" aria-hidden="true"></i> Corriger le déclaratif</h3>
+    <h3 style="margin:0 0 6px;font-size:17px"><i class="ph ph-pencil-simple" aria-hidden="true"></i> Demander une correction</h3>
     <p id="mCorrSite" style="color:var(--muted);font-size:14px;margin:0 0 20px"></p>
     <input type="hidden" id="mCorrPjId">
     <input type="hidden" id="mCorrSiteId">
 
-    <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">Valeur corrigée (plaques posées)</label>
+    <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">Valeur proposée (plaques posées)</label>
     <input type="number" id="mCorrTotal" min="0"
            style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:9px;font-size:22px;font-weight:700;text-align:center;margin-bottom:16px;box-sizing:border-box">
 
-    <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">Motif de correction <span style="color:red">*</span></label>
+    <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">Motif <span style="color:red">*</span></label>
     <textarea id="mCorrMotif" rows="3" placeholder="Ex : Le coordinateur a oublié 2 engins..."
               style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:9px;font-size:13px;resize:vertical;box-sizing:border-box"></textarea>
+
+    <p style="font-size:12px;color:var(--muted);margin:10px 0 0"><i class="ph ph-info" aria-hidden="true"></i> Le coordinateur du site sera notifié et pourra accepter cette valeur ou proposer la sienne.</p>
 
     <div id="mCorrAlert" style="margin-top:12px"></div>
 
     <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end">
       <button class="btn btn-secondary" onclick="closeCorrection()">Annuler</button>
-      <button class="btn btn-primary" onclick="submitCorrection()"><i class="ph ph-floppy-disk" aria-hidden="true"></i> Enregistrer</button>
+      <button class="btn btn-primary" onclick="submitCorrection()"><i class="ph ph-paper-plane-tilt" aria-hidden="true"></i> Envoyer la demande</button>
     </div>
   </div>
 </div>
@@ -358,7 +405,7 @@ async function submitCorrection(){
   const motif   = document.getElementById('mCorrMotif').value.trim();
   if (!motif){ document.getElementById('mCorrAlert').innerHTML='<div style="color:red;font-size:13px">Motif obligatoire.</div>'; return; }
   try {
-    const d = await ap({action:'corriger', pj_id:pjId, new_total:total, motif});
+    const d = await ap({action:'demander_correction', pj_id:pjId, new_total:total, motif});
     if(d.success){
       toast(d.message);
       closeCorrection();
@@ -375,6 +422,24 @@ async function annulerCorrection(pjId, siteId){
   if(!confirm('Annuler la correction GP pour ce site ?')) return;
   try {
     const d = await ap({action:'annuler_correction', pj_id:pjId});
+    if(d.success){ toast(d.message); setTimeout(()=>location.reload(),600); }
+    else alert(d.message);
+  } catch(e){ alert('Erreur réseau.'); }
+}
+
+async function validerContestation(corrId, siteId){
+  if(!confirm('Valider la contre-proposition du coordinateur ?')) return;
+  try {
+    const d = await ap({action:'valider_contestation', corr_id:corrId});
+    if(d.success){ toast(d.message); setTimeout(()=>location.reload(),600); }
+    else alert(d.message);
+  } catch(e){ alert('Erreur réseau.'); }
+}
+
+async function refuserContestation(corrId, siteId){
+  if(!confirm('Refuser la contre-proposition et maintenir votre valeur d\'origine ?')) return;
+  try {
+    const d = await ap({action:'refuser_contestation', corr_id:corrId});
     if(d.success){ toast(d.message); setTimeout(()=>location.reload(),600); }
     else alert(d.message);
   } catch(e){ alert('Erreur réseau.'); }

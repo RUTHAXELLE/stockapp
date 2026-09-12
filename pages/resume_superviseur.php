@@ -94,7 +94,7 @@ if (isset($_GET['export'])) {
              FROM op_points_journaliers p
              JOIN sites s ON s.id=p.site_id
              WHERE ".implode(' AND ',$where)."
-             GROUP BY p.site_id, mois ORDER BY s.nom",
+             GROUP BY p.site_id, s.nom, mois ORDER BY s.nom",
             $params
         );
         $headers = ['Site','Mois','Nb Points','Total Plaques','Total Engins','Rivets utilisés','Heures travail','Points validés'];
@@ -107,20 +107,6 @@ if (isset($_GET['export'])) {
         foreach(range('A','H') as $c) $ws->getColumnDimension($c)->setAutoSize(true);
         $filename = "Resume_Mensuel_{$f_mois}.xlsx";
 
-    } elseif ($type === 'optoplate') {
-        $ws->setTitle('OptoPlate');
-        $where = ["date_import=?"]; $params = [$f_date];
-        if ($f_site) { $where[] = "site_id=?"; $params[] = $f_site; }
-        $data = db_fetch_all("SELECT * FROM import_optoplate WHERE ".implode(' AND ',$where)." ORDER BY site_nom_emuci, statut_plaque", $params);
-        $headers = ['Date install','Immat','VIN','Type plaque','Statut','Position','N°Film','N°Bobine','Site EMUCI'];
-        foreach($headers as $i=>$h) $ws->setCellValueByColumnAndRow($i+1,1,$h);
-        $ws->getStyle('A1:I1')->applyFromArray($header_style);
-        foreach($data as $ri=>$row) {
-            $vals = [$row['date_installation'],$row['immatriculation'],$row['vin'],$row['type_plaque'],$row['statut_plaque'],$row['position'],$row['num_consommable'],$row['num_bobine'],$row['site_nom_emuci']];
-            foreach($vals as $ci=>$v) $ws->setCellValueByColumnAndRow($ci+1,$ri+2,$v);
-        }
-        foreach(range('A','I') as $c) $ws->getColumnDimension($c)->setAutoSize(true);
-        $filename = "OptoPlate_{$f_date}.xlsx";
     } else {
         die('Type export inconnu.');
     }
@@ -179,7 +165,7 @@ if ($f_vue === 'mensuel') {
          FROM op_points_journaliers p
          JOIN sites s ON s.id=p.site_id
          WHERE ".implode(' AND ',$where)."
-         GROUP BY p.site_id ORDER BY total_plaques DESC",
+         GROUP BY p.site_id, s.nom ORDER BY total_plaques DESC",
         $params
     );
     // Données graphique — plaques par jour du mois
@@ -216,7 +202,9 @@ $kpi = [
     'engins_jour'   => (int)db_fetch_value("SELECT COALESCE(SUM(total_engins),0) FROM op_points_journaliers WHERE date_point=?".($f_site?" AND site_id=$f_site":""),[$f_date]),
     'points_valides'=> (int)db_fetch_value("SELECT COUNT(*) FROM op_points_journaliers WHERE date_point=? AND statut='valide'".($f_site?" AND site_id=$f_site":""),[$f_date]),
     'points_brouillon'=>(int)db_fetch_value("SELECT COUNT(*) FROM op_points_journaliers WHERE date_point=? AND statut='en_attente_validation'".($f_site?" AND site_id=$f_site":""),[$f_date]),
-    'in_use_emuci'  => (int)db_fetch_value("SELECT COUNT(*) FROM import_optoplate WHERE date_import=? AND statut_plaque='in_use'".($f_site?" AND site_id=$f_site":""),[$f_date]),
+    // Compté sur la vraie date d'installation de chaque plaque (date_installation),
+    // pas la date saisie à l'import (date_import), qui peut couvrir un historique.
+    'in_use_emuci'  => (int)db_fetch_value("SELECT COUNT(*) FROM import_optoplate WHERE date_installation::date=? AND statut_plaque='in_use'".($f_site?" AND site_id=$f_site":""),[$f_date]),
     'ecart_jour'    => 0,
 ];
 $kpi['ecart_jour'] = $kpi['in_use_emuci'] - $kpi['plaques_jour'];

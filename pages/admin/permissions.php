@@ -22,45 +22,132 @@ $active_page = 'permissions';
 // avec inventaire/inventaire_rivets/inventaire_pmma/inventaire_equipements,
 // présents dans le tableau mais absents de la liste JS de sauvegarde —
 // remis silencieusement à zéro à chaque clic sur Sauvegarder, 2026-08-29).
-$modules = [
-    'affectations'       => ['<i class="ph ph-link" aria-hidden="true"></i>', 'Affectations'],
-    'affectations_it'    => ['<i class="ph ph-headset" aria-hidden="true"></i>', 'Affectations support IT'],
-    'agents'             => ['<i class="ph ph-users" aria-hidden="true"></i>', 'Annuaire agents'],
-    'bobines'            => ['<i class="ph ph-film-strip" aria-hidden="true"></i>', 'Bobines'],
-    'commandes'          => ['<i class="ph ph-storefront" aria-hidden="true"></i>', 'Commandes'],
-    'commandes_bobines'  => ['<i class="ph ph-shopping-cart" aria-hidden="true"></i>', 'Commandes bobines'],
-    'consommables'       => ['<i class="ph ph-flask" aria-hidden="true"></i>', 'Consommables'],
-    'delegations'        => ['<i class="ph ph-handshake" aria-hidden="true"></i>', 'Délégations'],
-    'demandes'           => ['<i class="ph ph-note-pencil" aria-hidden="true"></i>', 'Demandes internes'],
-    'departements'       => ['<i class="ph ph-buildings" aria-hidden="true"></i>', 'Départements'],
-    'ecarts_bobines'     => ['<i class="ph ph-warning-diamond" aria-hidden="true"></i>', 'Écarts bobines'],
-    'ecarts_rivets'      => ['<i class="ph ph-warning-diamond" aria-hidden="true"></i>', 'Écarts rivets'],
-    'ecarts_pmma'        => ['<i class="ph ph-warning-diamond" aria-hidden="true"></i>', 'Écarts PMMA'],
-    'ecarts_equipements' => ['<i class="ph ph-warning-diamond" aria-hidden="true"></i>', 'Écarts équipements'],
-    'equipements'        => ['<i class="ph ph-desktop" aria-hidden="true"></i>', 'Équipements'],
-    'import_emuci'       => ['<i class="ph ph-download-simple" aria-hidden="true"></i>', 'Import EMUCI'],
-    'interventions'      => ['<i class="ph ph-wrench" aria-hidden="true"></i>', 'Interventions maintenance'],
-    'inventaire'         => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Inventaire (accès module)'],
-    'inventaire_bobines' => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire bobines'],
-    'inventaire_rivets'  => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire rivets'],
-    'inventaire_pmma'    => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire PMMA'],
-    'inventaire_equipements' => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire équipements'],
-    'audit'              => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Journal d\'audit'],
-    'nomenclatures'      => ['<i class="ph ph-tag" aria-hidden="true"></i>', 'Nomenclatures'],
-    'pmma'               => ['<i class="ph ph-printer" aria-hidden="true"></i>', 'PMMA'],
-    'point_emuci'        => ['<i class="ph ph-magnifying-glass" aria-hidden="true"></i>', 'Point EMUCI'],
-    'operations'         => ['<i class="ph ph-truck" aria-hidden="true"></i>', 'Points journaliers'],
-    'rapport_journalier' => ['<i class="ph ph-file-text" aria-hidden="true"></i>', 'Rapport journalier IT'],
-    'rapports'           => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Rapports & Analyses'],
-    'rapports_gsb'       => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Rapports GSB'],
-    'receptions'         => ['<i class="ph ph-package" aria-hidden="true"></i>', 'Réceptions site'],
-    'resume_superviseur' => ['<i class="ph ph-chart-line-up" aria-hidden="true"></i>', 'Résumé superviseur'],
-    'rivets'             => ['<i class="ph ph-wrench" aria-hidden="true"></i>', 'Rivets'],
-    'sites'              => ['<i class="ph ph-buildings" aria-hidden="true"></i>', 'Sites'],
-    'users'              => ['<i class="ph ph-users" aria-hidden="true"></i>', 'Utilisateurs'],
-    'validation_stock'   => ['<i class="ph ph-check-circle" aria-hidden="true"></i>', 'Validation stock matin'],
-    'stock_bobines'      => ['<i class="ph ph-chart-line-up" aria-hidden="true"></i>', 'Vue stock bobines'],
+// Groupes d'onglets (n° 2.7 réunion PDG — la matrice de 41 modules dans un
+// seul tableau était illisible). Les clés reprennent les groupes de
+// navigation de includes/groupes_config.php plutôt que la liste du CR, qui
+// n'en cite que 6 et laisse 11 modules sans rattachement (écarts,
+// inventaires, demandes, annuaire). Même découpage partout = un seul
+// modèle mental pour l'administrateur.
+$module_groupes = [
+    // Le groupe DASHBOARD n'apparaissait pas ici tant qu'aucun module ne
+    // s'y rattachait : dashboard.php et pdg_overview.php ne passent pas
+    // par require_permission(). Sans cette entrée, le Dashboard KPI serait
+    // devenu invisible sur cet écran — donc impossible à ouvrir à un rôle —
+    // en rejoignant le groupe : l'onglet ne s'affiche que si $module_groupes
+    // le déclare.
+    'DASHBOARD'      => ['<i class="ph ph-squares-four" aria-hidden="true"></i>', 'Dashboard'],
+    'STOCK'          => ['<i class="ph ph-package" aria-hidden="true"></i>', 'Stock'],
+    'BOBINES'        => ['<i class="ph ph-film-strip" aria-hidden="true"></i>', 'Bobines'],
+    'INVENTAIRE'     => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Inventaire'],
+    'OPERATIONS'     => ['<i class="ph ph-lightning" aria-hidden="true"></i>', 'Opérations'],
+    'INFORMATIQUE'   => ['<i class="ph ph-desktop-tower" aria-hidden="true"></i>', 'Informatique'],
+    'RAPPORTS'       => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Rapports'],
+    'DEMANDES'       => ['<i class="ph ph-file-text" aria-hidden="true"></i>', 'Demandes internes'],
+    // Ajouté 2026-09-10 : le module Achats (4 droits) existe en base depuis
+    // sql/migration_achats_03_permissions.sql (2026-08) mais n'avait jamais
+    // été exposé ici — impossible d'ajuster ces droits sans repasser par une
+    // migration SQL. Même regroupement que includes/groupes_config.php.
+    'ACHATS'         => ['<i class="ph ph-shopping-cart" aria-hidden="true"></i>', 'Achats'],
+    'ADMINISTRATION' => ['<i class="ph ph-shield-check" aria-hidden="true"></i>', 'Administration'],
 ];
+
+// Source unique des modules gérés par cet écran (icône + libellé + groupe) —
+// utilisée à la fois pour générer le tableau et pour savoir quels
+// modules traiter à la sauvegarde/création de rôle (array_keys), au
+// lieu de listes recopiées à la main qui finissent par diverger (trouvé
+// avec inventaire/inventaire_rivets/inventaire_pmma/inventaire_equipements,
+// présents dans le tableau mais absents de la liste JS de sauvegarde —
+// remis silencieusement à zéro à chaque clic sur Sauvegarder, 2026-08-29).
+//
+// 3e élément = groupe d'onglet. Les déstructurations à 2 éléments
+// (foreach ... as [$mico,$mlbl]) restent valides : PHP ignore le surplus.
+$modules = [
+    // Module Achats — cf. note sur $module_groupes ci-dessus (2026-09-10).
+    'achats'             => ['<i class="ph ph-list-checks" aria-hidden="true"></i>', 'Achats (FEB)', 'ACHATS'],
+    'achats_dashboard'   => ['<i class="ph ph-gauge" aria-hidden="true"></i>', 'Dashboard Achats', 'ACHATS'],
+    'achats_param'       => ['<i class="ph ph-sliders-horizontal" aria-hidden="true"></i>', 'Paramétrage achats', 'ACHATS'],
+    'achats_suivi'       => ['<i class="ph ph-truck" aria-hidden="true"></i>', 'Suivi achats (DA/BC)', 'ACHATS'],
+    // Ordre + regroupement alignés sur le menu Informatique
+    // (includes/groupes_config.php) : Interventions, Rapport journalier,
+    // Affectations IT, Transfert équipement. 'affectations' gouverne aussi
+    // "Historique des mouvements" dans le menu Stock (can_read) : un seul
+    // onglet ne peut pas représenter les deux à la fois, priorité donnée
+    // ici à Informatique sur demande explicite.
+    'interventions'      => ['<i class="ph ph-wrench" aria-hidden="true"></i>', 'Interventions', 'INFORMATIQUE'],
+    'rapport_journalier' => ['<i class="ph ph-file-text" aria-hidden="true"></i>', 'Rapport journalier', 'INFORMATIQUE'],
+    'affectations_it'    => ['<i class="ph ph-headset" aria-hidden="true"></i>', 'Affectations IT', 'INFORMATIQUE'],
+    'affectations'       => ['<i class="ph ph-link" aria-hidden="true"></i>', 'Transfert équipement', 'INFORMATIQUE'],
+    'bobines'            => ['<i class="ph ph-film-strip" aria-hidden="true"></i>', 'Bobines', 'STOCK'],
+    'commandes'          => ['<i class="ph ph-storefront" aria-hidden="true"></i>', 'Commandes', 'STOCK'],
+    'commandes_bobines'  => ['<i class="ph ph-shopping-cart" aria-hidden="true"></i>', 'Commande bobines', 'BOBINES'],
+    'consommables'       => ['<i class="ph ph-flask" aria-hidden="true"></i>', 'Consommables', 'STOCK'],
+    'delegations'        => ['<i class="ph ph-handshake" aria-hidden="true"></i>', 'Délégations', 'ADMINISTRATION'],
+    // Scission par écran (2026-09) : "demandes" ne gouverne plus que "Mes
+    // demandes" — cf. sql/migration_split_demandes_par_ecran.sql. "Types &
+    // circuits" et "Circuits avancés" restent réservés admin/superadmin en
+    // dur, hors table permissions : pas de module pour ces deux écrans.
+    'demandes'           => ['<i class="ph ph-note-pencil" aria-hidden="true"></i>', 'Mes demandes', 'DEMANDES'],
+    'demandes_new'       => ['<i class="ph ph-plus-circle" aria-hidden="true"></i>', 'Nouvelle demande', 'DEMANDES'],
+    'demandes_valider'   => ['<i class="ph ph-seal-check" aria-hidden="true"></i>', 'À valider', 'DEMANDES'],
+    'demandes_it'        => ['<i class="ph ph-wrench" aria-hidden="true"></i>', 'Traitements IT', 'DEMANDES'],
+    'agents'             => ['<i class="ph ph-users" aria-hidden="true"></i>', 'Annuaire agents', 'DEMANDES'],
+    'departements'       => ['<i class="ph ph-buildings" aria-hidden="true"></i>', 'Départements', 'ADMINISTRATION'],
+    'ecarts_bobines'     => ['<i class="ph ph-warning-diamond" aria-hidden="true"></i>', 'Écarts bobines', 'INVENTAIRE'],
+    'ecarts_rivets'      => ['<i class="ph ph-warning-diamond" aria-hidden="true"></i>', 'Écarts rivets', 'INVENTAIRE'],
+    'ecarts_pmma'        => ['<i class="ph ph-warning-diamond" aria-hidden="true"></i>', 'Écarts PMMA', 'INVENTAIRE'],
+    'ecarts_equipements' => ['<i class="ph ph-warning-diamond" aria-hidden="true"></i>', 'Écarts équipements', 'INVENTAIRE'],
+    // Scission Informatique/Opérationnel (2026-09) : deux modules distincts
+    // au lieu d'un seul 'equipements' couvrant les deux catégories — cf.
+    // sql/migration_split_equipements_operationnel_vignette.sql.
+    'equipements'        => ['<i class="ph ph-desktop" aria-hidden="true"></i>', 'Équipements Informatique', 'STOCK'],
+    'equipements_operationnel' => ['<i class="ph ph-hard-hat" aria-hidden="true"></i>', 'Équipements Opérationnel', 'STOCK'],
+    // Ordre aligné sur le menu Opérations (includes/groupes_config.php) :
+    // Point journalier, Demande d'intervention, Suivi des observations,
+    // Point EMUCI, Import EMUCI.
+    'operations'         => ['<i class="ph ph-truck" aria-hidden="true"></i>', 'Points journaliers', 'OPERATIONS'],
+    'observations'       => ['<i class="ph ph-chat-dots" aria-hidden="true"></i>', 'Suivi des observations', 'OPERATIONS'],
+    'point_emuci'        => ['<i class="ph ph-magnifying-glass" aria-hidden="true"></i>', 'Point EMUCI', 'OPERATIONS'],
+    'import_emuci'       => ['<i class="ph ph-download-simple" aria-hidden="true"></i>', 'Import EMUCI', 'OPERATIONS'],
+    'inventaire'         => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Inventaire (accès module)', 'INVENTAIRE'],
+    'inventaire_bobines' => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire bobines', 'INVENTAIRE'],
+    'inventaire_rivets'  => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire rivets', 'INVENTAIRE'],
+    'inventaire_pmma'    => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire PMMA', 'INVENTAIRE'],
+    'inventaire_equipements' => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire équipements', 'INVENTAIRE'],
+    'audit'              => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Journal d\'audit', 'ADMINISTRATION'],
+    'kpi_dashboard'      => ['<i class="ph ph-gauge" aria-hidden="true"></i>', 'Dashboard KPI', 'DASHBOARD'],
+    'nomenclatures'      => ['<i class="ph ph-tag" aria-hidden="true"></i>', 'Nomenclatures', 'ADMINISTRATION'],
+    'pmma'               => ['<i class="ph ph-printer" aria-hidden="true"></i>', 'PMMA', 'STOCK'],
+    'rapports'           => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Rapports & Analyses', 'RAPPORTS'],
+    'rapports_gsb'       => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Rapports & Exports', 'BOBINES'],
+    'receptions'         => ['<i class="ph ph-package" aria-hidden="true"></i>', 'Réceptions site', 'STOCK'],
+    'resume_superviseur' => ['<i class="ph ph-chart-line-up" aria-hidden="true"></i>', 'Résumé superviseur', 'RAPPORTS'],
+    'rivets'             => ['<i class="ph ph-wrench" aria-hidden="true"></i>', 'Rivets', 'STOCK'],
+    'simulation_stocks'  => ['<i class="ph ph-trend-up" aria-hidden="true"></i>', 'Simulation & projection', 'RAPPORTS'],
+    'sites'              => ['<i class="ph ph-buildings" aria-hidden="true"></i>', 'Sites', 'ADMINISTRATION'],
+    'tracabilite_endommagements' => ['<i class="ph ph-first-aid-kit" aria-hidden="true"></i>', 'Traçabilité endommagements', 'BOBINES'],
+    'referentiels_operations' => ['<i class="ph ph-sliders-horizontal" aria-hidden="true"></i>', 'Référentiels & capacités', 'ADMINISTRATION'],
+    'users'              => ['<i class="ph ph-users" aria-hidden="true"></i>', 'Utilisateurs', 'ADMINISTRATION'],
+    'validation_stock'   => ['<i class="ph ph-check-circle" aria-hidden="true"></i>', 'Validation stock jour', 'BOBINES'],
+    'stock_bobines'      => ['<i class="ph ph-chart-line-up" aria-hidden="true"></i>', 'Vue stock par site', 'BOBINES'],
+    // Scission Bobines/Vignette (2026-09) : module distinct de 'bobines' —
+    // cf. sql/migration_split_equipements_operationnel_vignette.sql.
+    'vignette'           => ['<i class="ph ph-sticker" aria-hidden="true"></i>', 'Vignette', 'STOCK'],
+];
+
+// Modules indexés par groupe, pour le rendu des onglets. Construit depuis
+// $modules (et non recopié) : un module ajouté plus haut apparaît
+// forcément dans un onglet.
+$modules_par_groupe = [];
+foreach ($modules as $mk => $m) {
+    $modules_par_groupe[$m[2] ?? 'ADMINISTRATION'][$mk] = $m;
+}
+
+// Onglet ouvert par défaut : le premier groupe qui porte réellement des
+// modules, et non un nom écrit en dur. Le code fixait « STOCK », ce qui
+// laissait l'onglet actif ailleurs qu'en tête dès qu'un groupe était
+// ajouté avant lui.
+$grp_defaut = (string) array_key_first(
+    array_intersect_key($module_groupes, $modules_par_groupe));
 
 // ============================================================
 //  AJAX
@@ -201,6 +288,43 @@ include __DIR__ . '/../../templates/header.php';
 .perm-pane{display:none}
 .perm-pane.active{display:block}
 
+/* ── Onglets par groupe de modules (n° 2.7 réunion PDG) ──
+   Second niveau d'onglets, à l'intérieur du panneau d'un rôle : la
+   colonne de gauche sert déjà aux rôles. */
+.grp-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.grp-tab{display:inline-flex;align-items:center;gap:6px;
+  padding:7px 13px;font-size:12.5px;font-weight:600;
+  font-family:'Manrope',sans-serif;
+  color:var(--text,#2c3e50);background:var(--card,#fff);
+  border:1px solid var(--border);border-radius:20px;cursor:pointer;
+  transition:background .15s,color .15s,border-color .15s}
+.grp-tab:hover{background:var(--lighter,#f0f4f8)}
+.grp-tab.active{background:var(--navy,#1E2B4A);color:#fff;border-color:var(--navy,#1E2B4A)}
+.grp-count{display:inline-block;min-width:18px;padding:1px 5px;border-radius:9px;
+  font-size:10.5px;font-weight:700;background:var(--lighter,#f0f4f8);color:var(--muted)}
+.grp-tab.active .grp-count{background:rgba(255,255,255,.22);color:#fff}
+
+.grp-pane{display:none}
+.grp-pane.active{display:block}
+
+/* Bascule de colonne — même action pour tous les modules du groupe. */
+.col-toggle{margin-left:5px;padding:0 4px;font-size:12px;line-height:1.4;
+  border:1px solid var(--border);border-radius:5px;background:var(--card,#fff);
+  color:var(--muted);cursor:pointer}
+.col-toggle:hover{background:var(--navy,#1E2B4A);color:#fff;border-color:var(--navy,#1E2B4A)}
+
+/* Vue globale : lecture seule, densité augmentée pour l'impression. */
+.perm-global td{padding:7px 14px;font-size:13px}
+.perm-global .gmark{text-align:center;font-weight:700}
+.perm-global .gmark.yes{color:var(--success,#1E8449)}
+.perm-global .gmark.no{color:var(--border)}
+@media print{
+  .perm-tabs,.grp-tabs,.role-header .btn{display:none!important}
+  .grp-pane{display:none!important}
+  .grp-pane[id$="-GLOBAL"]{display:block!important}
+  .perm-table-wrap{max-height:none!important;overflow:visible!important}
+}
+
 /* Scroll interne au-delà de 8 lignes : hauteur = header (~46px) + 8 lignes (~50px/ligne).
    Classe plutôt qu'id : ce wrapper est répété une fois par rôle (foreach $roles). */
 .perm-table-wrap{max-height:446px;overflow-y:auto}
@@ -309,23 +433,52 @@ include __DIR__ . '/../../templates/header.php';
   </div>
 
   <?php else: ?>
-  <!-- TABLEAU DES PERMISSIONS -->
-  <div class="card">
+  <!-- ONGLETS PAR GROUPE DE MODULES (n° 2.7 réunion PDG)
+       Tous les groupes sont rendus dans le DOM et masqués en CSS : les
+       champs cachés existent donc quel que soit l'onglet affiché, et
+       savePerms() (qui boucle sur ALL_MODULES) continue de tout envoyer.
+       Ne jamais rendre uniquement l'onglet actif — ce serait rejouer le
+       bug de remise à zéro silencieuse documenté en tête de fichier. -->
+  <nav class="grp-tabs" aria-label="Groupes de modules">
+    <?php foreach($module_groupes as $gk=>[$gico,$glbl]):
+      if (empty($modules_par_groupe[$gk])) continue;
+      $gcount = count($modules_par_groupe[$gk]);
+    ?>
+    <button class="grp-tab <?= $gk===$grp_defaut?'active':'' ?>"
+            onclick="showGrp('<?= $r['id'] ?>','<?= $gk ?>',this)">
+      <?= $gico ?> <?= h($glbl) ?><span class="grp-count"><?= $gcount ?></span>
+    </button>
+    <?php endforeach; ?>
+    <button class="grp-tab" onclick="showGrp('<?= $r['id'] ?>','GLOBAL',this)">
+      <i class="ph ph-list" aria-hidden="true"></i> Vue globale<span class="grp-count"><?= count($modules) ?></span>
+    </button>
+  </nav>
+
+  <?php foreach($module_groupes as $gk=>[$gico,$glbl]):
+    if (empty($modules_par_groupe[$gk])) continue;
+  ?>
+  <div class="card grp-pane <?= $gk===$grp_defaut?'active':'' ?>" id="grp-<?= $r['id'] ?>-<?= $gk ?>">
     <div class="perm-table-wrap">
     <table class="perm-table">
       <thead>
         <tr>
-          <th style="width:200px">Module</th>
+          <th style="width:200px"><?= $gico ?> <?= h($glbl) ?></th>
           <?php foreach($actions as $ak=>[$aico,$albl]): ?>
-          <th class="center"><?= $aico ?> <?= $albl ?></th>
+          <th class="center">
+            <?= $aico ?> <?= $albl ?>
+            <?php if($can_edit): ?>
+            <button class="col-toggle" title="Tout activer/désactiver la colonne <?= $albl ?>"
+                    onclick="toggleCol('<?= $r['id'] ?>','<?= $gk ?>','<?= $ak ?>')">⇅</button>
+            <?php endif; ?>
+          </th>
           <?php endforeach; ?>
           <?php if($can_edit): ?>
-          <th class="center">Tout cocher</th>
+          <th class="center">Ligne</th>
           <?php endif; ?>
         </tr>
       </thead>
       <tbody>
-        <?php foreach($modules as $mk=>[$mico,$mlbl]):
+        <?php foreach($modules_par_groupe[$gk] as $mk=>[$mico,$mlbl]):
           $perms = $all_perms[$r['id']][$mk] ?? [];
         ?>
         <tr>
@@ -362,6 +515,48 @@ include __DIR__ . '/../../templates/header.php';
           <?php endif; ?>
         </tr>
         <?php endforeach; ?>
+      </tbody>
+    </table>
+    </div>
+  </div>
+  <?php endforeach; ?>
+
+  <!-- VUE GLOBALE — lecture seule, pour impression et export.
+       Volontairement sans id ni champ caché : dupliquer les identifiants
+       des bascules casserait getElementById() utilisé par toute la page. -->
+  <div class="card grp-pane" id="grp-<?= $r['id'] ?>-GLOBAL">
+    <div class="perm-table-wrap" style="max-height:none">
+    <table class="perm-table perm-global">
+      <thead>
+        <tr>
+          <th style="width:200px">Module</th>
+          <th>Groupe</th>
+          <?php foreach($actions as $ak=>[$aico,$albl]): ?>
+          <th class="center"><?= $albl ?></th>
+          <?php endforeach; ?>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach($module_groupes as $gk=>[$gico,$glbl]):
+          if (empty($modules_par_groupe[$gk])) continue;
+          foreach($modules_par_groupe[$gk] as $mk=>[$mico,$mlbl]):
+            $perms = $all_perms[$r['id']][$mk] ?? [];
+        ?>
+        <tr>
+          <td>
+            <div class="module-cell">
+              <span class="module-icon"><?= $mico ?></span>
+              <span class="module-name"><?= $mlbl ?></span>
+            </div>
+          </td>
+          <td style="font-size:12.5px;color:var(--muted)"><?= h($glbl) ?></td>
+          <?php foreach($actions as $ak=>[$aico,$albl]):
+            $val = !empty($perms[$ak]);
+          ?>
+          <td class="center gmark <?= $val?'yes':'no' ?>"><?= $val ? '✓' : '·' ?></td>
+          <?php endforeach; ?>
+        </tr>
+        <?php endforeach; endforeach; ?>
       </tbody>
     </table>
     </div>
@@ -419,10 +614,47 @@ include __DIR__ . '/../../templates/header.php';
 // FormData envoyé au serveur (2026-08-29).
 const ALL_MODULES = <?= json_encode(array_keys($modules)) ?>;
 
+// Modules par groupe — dérivé du même $modules PHP, pour que la bascule
+// de colonne ne porte que sur les modules réellement affichés dans
+// l'onglet courant.
+const MODULES_PAR_GROUPE = <?= json_encode(array_map('array_keys', $modules_par_groupe)) ?>;
+
+const PERM_ACTIONS = ['can_read','can_create','can_update','can_delete','can_export'];
+
 function showPerm(id,btn){
   document.querySelectorAll('.perm-pane').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.perm-tab').forEach(b=>b.classList.remove('active'));
   document.getElementById(id).classList.add('active'); btn.classList.add('active');
+}
+
+// Onglets de groupe — portée limitée au panneau du rôle courant, sinon
+// changer de groupe sur un rôle le changerait sur tous les autres.
+function showGrp(roleId, groupe, btn){
+  const pane = document.getElementById('role-'+roleId);
+  if(!pane) return;
+  pane.querySelectorAll('.grp-pane').forEach(p=>p.classList.remove('active'));
+  pane.querySelectorAll('.grp-tab').forEach(b=>b.classList.remove('active'));
+  const target = document.getElementById('grp-'+roleId+'-'+groupe);
+  if(target) target.classList.add('active');
+  btn.classList.add('active');
+}
+
+// Bascule d'une action pour tous les modules du groupe affiché.
+function toggleCol(roleId, groupe, action){
+  const mods = MODULES_PAR_GROUPE[groupe] || [];
+  const allOn = mods.every(m=>{
+    const b=document.getElementById(`perm_${roleId}_${m}_${action}`);
+    return b && b.dataset.val==='1';
+  });
+  const newVal = allOn ? 0 : 1;
+  mods.forEach(m=>{
+    const b=document.getElementById(`perm_${roleId}_${m}_${action}`);
+    if(!b) return;
+    b.dataset.val=String(newVal);
+    b.classList.toggle('on',newVal===1);
+    b.classList.toggle('danger-perm',newVal===1&&action==='can_delete');
+    document.getElementById('h_'+b.id).value=newVal;
+  });
 }
 
 function togglePerm(btn){

@@ -15,6 +15,7 @@ require_once __DIR__ . '/../includes/session.php';
 require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
+require_once __DIR__ . '/../includes/referentiels.php';
 
 require_auth();
 $user       = current_user();
@@ -26,6 +27,20 @@ $site_force = ($is_coord && $user['site_id']) ? (int)$user['site_id'] : 0;
 $sites_list = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
 require_permission('pmma', 'can_read');
 $can_saisie = can('pmma', 'can_create');
+
+// ── Catalogue des types de PMMA
+// Le type était saisi en texte libre, ce qui créait un type nouveau à
+// chaque variante de casse ou d'orthographe : la base porte déjà
+// « PMMA Type A » et « PMMA TYPE B ». La liste vient maintenant du
+// catalogue (op_types_pmma), et les types encore présents en stock sans
+// y figurer restent proposés pour ne pas rendre leur stock inaccessible.
+$catalogue_pmma = types_pmma_actifs();
+$types_connus   = array_keys($catalogue_pmma);
+foreach (db_fetch_all("SELECT DISTINCT TRIM(type_pmma) AS t FROM stock_pmma_site
+                        WHERE COALESCE(TRIM(type_pmma),'') <> ''") as $r) {
+    if (!in_array($r['t'], $types_connus, true)) $types_connus[] = $r['t'];
+}
+sort($types_connus);
 
 // ── AJAX (Entrée/Sortie manuelle — GSB/admin uniquement)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
@@ -39,17 +54,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $type     = trim($_POST['type_pmma'] ?? '');
         $notes    = trim($_POST['notes'] ?? '');
         if (!$site_id || $quantite <= 0) json_response(false, 'Site et quantité obligatoires.');
+        // Le contrôle serveur ne se contente pas de la liste affichée : la
+        // requête AJAX peut être forgée, et un type inventé recréerait
+        // exactement le désordre que le catalogue supprime.
+        if ($type === '' || !in_array($type, $types_connus, true))
+            json_response(false, 'Type de PMMA inconnu au catalogue.');
         db_query("INSERT INTO stock_pmma (site_id,type_pmma,quantite,type_mouvement,notes,created_by) VALUES (?,?,?,'entree',?,?)",
             [$site_id, $type, $quantite, $notes, $user['id']]);
-        db_query("UPDATE stock_pmma_site SET quantite=quantite+? WHERE site_id=? AND type_pmma=?",
-            [$quantite, $site_id, $type]);
-        $affected = (int)db_fetch_value("SELECT ROW_COUNT()");
-        if (!$affected) {
-            db_query("INSERT INTO stock_pmma_site (site_id,type_pmma,quantite,seuil_alerte) VALUES (?,?,?,10)",
-                [$site_id, $type, $quantite]);
-        }
+        // Le code d'origine faisait un UPDATE puis SELECT ROW_COUNT() pour
+        // savoir s'il fallait créer la ligne : ROW_COUNT() est du MySQL et
+        // n'existe pas sur PostgreSQL, l'entrée partait donc en erreur
+        // après avoir déjà écrit le mouvement. L'UPSERT fait les deux d'un
+        // coup, et la contrainte unique (site_id, type_pmma) le garantit.
+        db_query("INSERT INTO stock_pmma_site (site_id,type_pmma,quantite,seuil_alerte)
+                  VALUES (?,?,?,?)
+                  ON CONFLICT (site_id, type_pmma)
+                  DO UPDATE SET quantite = stock_pmma_site.quantite + EXCLUDED.quantite,
+                                updated_at = CURRENT_TIMESTAMP",
+            [$site_id, $type, $quantite,
+             $catalogue_pmma[$type]['seuil_defaut'] ?? 10]);
         audit_log($user['id'], 'CREATE', 'pmma', null, "Entrée PMMA: $quantite ($type) site:$site_id");
-        json_response(true, "Entrée de $quantite PMMA enregistrée.");
+        $cart = cartons_pour($quantite, $type);
+        json_response(true, "Entrée de $quantite PMMA enregistrée"
+            . ($cart ? " (~$cart carton(s) de " . capacite_carton_pmma($type) . ")." : '.'));
     }
 
     if ($action === 'sortie') {
@@ -58,6 +85,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $type      = trim($_POST['type_pmma'] ?? '');
         $bobine_id = (int)($_POST['bobine_id'] ?? 0);
         if (!$site_id || $quantite <= 0) json_response(false, 'Site et quantité obligatoires.');
+        if ($type === '' || !in_array($type, $types_connus, true))
+            json_response(false, 'Type de PMMA inconnu au catalogue.');
         $stock_actuel = (int)db_fetch_value(
             "SELECT quantite FROM stock_pmma_site WHERE site_id=? AND type_pmma=?", [$site_id, $type]
         );
@@ -721,7 +750,15 @@ include __DIR__ . '/../templates/header.php';
         </div>
         <?php else: ?><input type="hidden" id="eSiteId" value="<?= $site_force ?>"><?php endif; ?>
         <div class="form-group"><label>Type PMMA</label>
-          <input type="text" class="form-control" id="eTypePmma" placeholder="Standard, A4, A3…">
+          <select class="form-control" id="eTypePmma">
+            <option value="">— choisir —</option>
+            <?php foreach ($types_connus as $t): ?>
+            <option value="<?= h($t) ?>"><?= h($t) ?><?php
+              if (isset($catalogue_pmma[$t])):
+                ?> — carton de <?= (int)$catalogue_pmma[$t]['unites_par_carton'] ?><?php
+              endif; ?></option>
+            <?php endforeach; ?>
+          </select>
         </div>
       </div>
       <div class="form-group" style="margin-bottom:14px"><label>Quantité *</label>
@@ -757,7 +794,15 @@ include __DIR__ . '/../templates/header.php';
         </div>
         <?php else: ?><input type="hidden" id="sSiteId" value="<?= $site_force ?>"><?php endif; ?>
         <div class="form-group"><label>Type PMMA</label>
-          <input type="text" class="form-control" id="sTypePmma" placeholder="Standard, A4…">
+          <select class="form-control" id="sTypePmma">
+            <option value="">— choisir —</option>
+            <?php foreach ($types_connus as $t): ?>
+            <option value="<?= h($t) ?>"><?= h($t) ?><?php
+              if (isset($catalogue_pmma[$t])):
+                ?> — carton de <?= (int)$catalogue_pmma[$t]['unites_par_carton'] ?><?php
+              endif; ?></option>
+            <?php endforeach; ?>
+          </select>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">

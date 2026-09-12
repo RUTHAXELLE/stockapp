@@ -4,7 +4,6 @@ require_once __DIR__ . '/includes/session.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/notifications.php';
 
-session_start_secure();
 if (!empty($_SESSION['user_id'])) redirect_to('/pages/dashboard.php');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {

@@ -8,6 +8,7 @@ require_once __DIR__ . '/../includes/session.php';
 require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
+require_once __DIR__ . '/../includes/referentiels.php';
 
 require_auth();
 
@@ -44,6 +45,24 @@ function trouver_site_id(string $nom_emuci, array $sites): ?int {
     return null;
 }
 
+// Convertit une date au format européen (JJ/MM/AAAA, heure optionnelle) — celui des
+// exports OptoPlate/OptoTrace — vers le format ISO attendu par PostgreSQL. Sans cette
+// conversion, PostgreSQL interprète le séparateur "/" selon son propre DateStyle
+// (souvent MDY) : "13/08/2026" y devient un 13e mois invalide (erreur "field overflow"),
+// et une date comme "05/08/2026" y serait silencieusement lue comme le 8 mai au lieu
+// du 5 août — jour et mois inversés sans la moindre erreur pour tout jour ≤ 12.
+function emuci_parse_date_fr(string $v): ?string {
+    $v = trim($v);
+    if ($v === '') return null;
+    foreach (['d/m/Y H:i:s', 'd/m/Y H:i', 'd/m/Y'] as $fmt) {
+        $dt = DateTime::createFromFormat($fmt, $v);
+        if ($dt !== false) return $dt->format('Y-m-d H:i:s');
+    }
+    // Filet de secours pour un format déjà non ambigu (ISO...)
+    $ts = strtotime($v);
+    return $ts !== false ? date('Y-m-d H:i:s', $ts) : null;
+}
+
 // Enregistre un site EMUCI inconnu pour traitement ultérieur par l'admin
 function logger_site_inconnu(string $nom_emuci, string $type_import): void {
     if (!$nom_emuci) return;
@@ -70,9 +89,11 @@ function _verifier_coherence_optoplate(string $date_import, int $user_id): array
     foreach ($sites_avec_data as $s) {
         $site_id = (int)$s['site_id'];
 
-        // EMUCI : total plaques posées sur ce site = COUNT(in_use)
+        // EMUCI : total plaques posées sur ce site = COUNT(in_use), compté sur la
+        // vraie date d'installation de chaque plaque (pas la date saisie à l'import,
+        // qui peut couvrir un historique de plusieurs jours voire complet).
         $nb_inuse_emuci = (int)db_fetch_value(
-            "SELECT COUNT(*) FROM import_optoplate WHERE site_id=? AND statut_plaque='in_use' AND date_import=?",
+            "SELECT COUNT(*) FROM import_optoplate WHERE site_id=? AND statut_plaque='in_use' AND date_installation::date=?",
             [$site_id, $date_import]
         );
 
@@ -208,10 +229,19 @@ $msg_optoplate = null;
 $result_optoplate = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'import_optoplate') {
+    require_permission('import_emuci', 'can_create');
     $date_import = trim($_POST['date_import'] ?? date('Y-m-d'));
 
     if (empty($_FILES['fichier_optoplate']) || $_FILES['fichier_optoplate']['error'] !== UPLOAD_ERR_OK) {
-        $msg_optoplate = ['type'=>'danger','text'=>'Veuillez sélectionner un fichier CSV ou XLSX valide.'];
+        $err = $_FILES['fichier_optoplate']['error'] ?? null;
+        $detail = match ($err) {
+            UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'Le fichier dépasse la taille maximale autorisée par le serveur ('.ini_get('upload_max_filesize').').',
+            UPLOAD_ERR_PARTIAL => 'Le fichier n\'a été que partiellement envoyé — réessayez.',
+            UPLOAD_ERR_NO_FILE, null => 'Aucun fichier sélectionné.',
+            UPLOAD_ERR_NO_TMP_DIR, UPLOAD_ERR_CANT_WRITE, UPLOAD_ERR_EXTENSION => 'Erreur serveur lors de la réception du fichier (code '.$err.').',
+            default => 'Erreur inconnue (code '.$err.').',
+        };
+        $msg_optoplate = ['type'=>'danger','text'=>"Veuillez sélectionner un fichier CSV ou XLSX valide. — $detail"];
     } else {
         $tmp = $_FILES['fichier_optoplate']['tmp_name'];
         $ext = strtolower(pathinfo($_FILES['fichier_optoplate']['name'], PATHINFO_EXTENSION));
@@ -282,7 +312,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                         if (count($row) < 5) continue;
                         $get = fn($k) => trim((string)($row[$col[$k] ?? -1] ?? ''));
 
-                        $date_install = $get("Date d'installation") ?: null;
+                        $date_install = emuci_parse_date_fr($get("Date d'installation"));
                         $immat        = $get("Numéro d'immatriculation");
                         $vin          = $get('Vin');
                         $num_dossier  = $get('Numéro de dossier');
@@ -350,10 +380,19 @@ $msg_optotrace = null;
 $result_optotrace = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'import_optotrace') {
+    require_permission('import_emuci', 'can_create');
     $date_import = trim($_POST['date_import_trace'] ?? date('Y-m-d'));
 
     if (empty($_FILES['fichier_optotrace']) || $_FILES['fichier_optotrace']['error'] !== UPLOAD_ERR_OK) {
-        $msg_optotrace = ['type'=>'danger','text'=>'Veuillez sélectionner un fichier XLSX valide.'];
+        $err = $_FILES['fichier_optotrace']['error'] ?? null;
+        $detail = match ($err) {
+            UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'Le fichier dépasse la taille maximale autorisée par le serveur ('.ini_get('upload_max_filesize').').',
+            UPLOAD_ERR_PARTIAL => 'Le fichier n\'a été que partiellement envoyé — réessayez.',
+            UPLOAD_ERR_NO_FILE, null => 'Aucun fichier sélectionné.',
+            UPLOAD_ERR_NO_TMP_DIR, UPLOAD_ERR_CANT_WRITE, UPLOAD_ERR_EXTENSION => 'Erreur serveur lors de la réception du fichier (code '.$err.').',
+            default => 'Erreur inconnue (code '.$err.').',
+        };
+        $msg_optotrace = ['type'=>'danger','text'=>"Veuillez sélectionner un fichier XLSX valide. — $detail"];
     } else {
         $tmp = $_FILES['fichier_optotrace']['tmp_name'];
         $ext = strtolower(pathinfo($_FILES['fichier_optotrace']['name'], PATHINFO_EXTENSION));
@@ -421,7 +460,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                         $quantity   = (int)$get('quantity');  // films restants
                         $type_trace = $get('type');
                         $state      = (int)$get('state');
-                        $parse_dt   = fn($v) => ($v && strtotime($v) !== false) ? date('Y-m-d H:i:s', strtotime($v)) : null;
+                        $parse_dt   = fn($v) => emuci_parse_date_fr($v);
                         $first_use  = $parse_dt($get('first'));
                         $last_use   = $parse_dt($get('last'));
                         $site_nom   = $get('site');
@@ -460,8 +499,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                             if (str_starts_with(strtoupper($format), 'WSL')) $serie_bobine = 'W';
                             elseif (str_starts_with(strtoupper($format), 'TL')) $serie_bobine = 'T';
 
-                            $qte_init = (str_starts_with(strtoupper($format),'WSL') || str_starts_with(strtoupper($format),'TL'))
-                                ? 2000 : 500;
+                            // Capacité lue au catalogue ; l'ancienne règle
+                            // « WSL/TL = 2000, sinon 500 » reste le repli des
+                            // codes qui n'y figurent pas.
+                            $qte_init = capacite_bobine(
+                                $format,
+                                (str_starts_with(strtoupper($format),'WSL') || str_starts_with(strtoupper($format),'TL'))
+                                    ? 2000 : 500);
 
                             $tv = db_fetch_one("SELECT id FROM op_types_vehicule WHERE serie_bobine=? LIMIT 1",
                                 [$serie_bobine]);
@@ -585,7 +629,12 @@ $f_date = trim($_GET['date'] ?? date('Y-m-d'));
 $f_site = (int)($_GET['site'] ?? 0);
 $onglet = $_GET['tab'] ?? 'optoplate';
 
-// Stats OptoPlate du jour
+// Stats OptoPlate du jour — "in_use" (plaque réellement posée) compté sur sa
+// vraie date d'installation (date_installation), pas la date saisie à l'import
+// (date_import), qui peut couvrir un historique de plusieurs jours voire
+// complet. Les autres statuts (reserved, declared_broken...) n'ont pas de date
+// d'installation puisque la plaque n'est pas posée : ils restent rattachés à
+// la date de l'import qui les a rapportés.
 $stats_optoplate = db_fetch_all(
     "SELECT
         statut_plaque,
@@ -595,11 +644,12 @@ $stats_optoplate = db_fetch_all(
         COUNT(DISTINCT num_bobine) AS nb_bobines,
         COUNT(DISTINCT immatriculation) AS nb_vehicules
      FROM import_optoplate
-     WHERE date_import=?
+     WHERE ((statut_plaque='in_use' AND date_installation::date=?)
+            OR (statut_plaque!='in_use' AND date_import=?))
      " . ($f_site ? "AND site_id=$f_site" : "") . "
      GROUP BY statut_plaque, site_nom_emuci, site_id
      ORDER BY site_nom_emuci, statut_plaque",
-    [$f_date]
+    [$f_date, $f_date]
 );
 
 // Stats OptoTrace du jour (colonnes nouvelles : keyname, quantity, state, site_nom_emuci)
@@ -634,7 +684,13 @@ $detail_bobines_optotrace = db_fetch_all(
     [$f_date]
 );
 
-// Comparaison OptoPlate vs ERP EMUCI PJ par site
+// Comparaison OptoPlate vs ERP EMUCI PJ par site — "in_use" (plaque réellement
+// posée) compté sur sa vraie date d'installation (date_installation), pas la
+// date saisie à l'import (date_import), qui peut couvrir un historique de
+// plusieurs jours voire complet : compter par date_import ferait remonter
+// tout le fichier sous une seule journée. reserved/declared_broken n'ont pas
+// de date d'installation (plaque pas posée) : ils restent rattachés à la date
+// de l'import.
 $comparaison = db_fetch_all(
     "SELECT
         s.nom AS site_nom,
@@ -652,7 +708,10 @@ $comparaison = db_fetch_all(
                 SUM(CASE WHEN statut_plaque='declared_broken' THEN nb_plaques ELSE 0 END) AS nb_broken
          FROM (
              SELECT site_id, statut_plaque, COUNT(*) AS nb_plaques
-             FROM import_optoplate WHERE date_import=? GROUP BY site_id, statut_plaque
+             FROM import_optoplate
+             WHERE ((statut_plaque='in_use' AND date_installation::date=?)
+                    OR (statut_plaque!='in_use' AND date_import=?))
+             GROUP BY site_id, statut_plaque
          ) sub GROUP BY site_id
      ) op ON op.site_id=s.id
      LEFT JOIN (
@@ -663,7 +722,7 @@ $comparaison = db_fetch_all(
      WHERE s.actif=1
      " . ($f_site ? "AND s.id=$f_site" : "") . "
      ORDER BY s.nom",
-    [$f_date, $f_date]
+    [$f_date, $f_date, $f_date]
 );
 
 // Historique sessions

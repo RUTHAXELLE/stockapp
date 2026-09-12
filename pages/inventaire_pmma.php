@@ -278,9 +278,13 @@ include __DIR__ . '/../templates/header.php';
       <thead><tr>
         <th>Date</th><th>Type</th><th>Site</th>
         <th style="text-align:center">Types PMMA</th>
+        <?php if(!$is_coord): /* n 2.3 CR PDG */ ?>
         <th style="text-align:center">Stock système</th>
+        <?php endif; ?>
         <th style="text-align:center">Stock physique</th>
+        <?php if(!$is_coord): ?>
         <th style="text-align:center">Écarts</th>
+        <?php endif; ?>
         <th>Statut</th><th>Créé par</th>
         <th style="text-align:center">Actions</th>
       </tr></thead>
@@ -293,15 +297,19 @@ include __DIR__ . '/../templates/header.php';
           <td><span class="type-badge type-<?= $inv['type_inventaire'] ?>"><?= $inv['type_inventaire']==='mensuel'?'<i class="ph ph-calendar-blank" aria-hidden="true"></i> Mensuel':'<i class="ph ph-calendar" aria-hidden="true"></i> Journalier' ?></span></td>
           <td style="font-weight:600"><?= h($inv['site_nom']??'Global') ?></td>
           <td style="text-align:center;font-weight:700"><?= $inv['nb_types'] ?></td>
+          <?php if(!$is_coord): ?>
           <td style="text-align:center;font-weight:700"><?= fmt_number($inv['total_quantite_systeme']??0) ?></td>
+          <?php endif; ?>
           <td style="text-align:center;font-weight:700;color:<?= ($inv['total_quantite_physique']??0)>0?'var(--success-d)':'var(--muted)' ?>">
             <?= ($inv['total_quantite_physique']??0)>0 ? fmt_number($inv['total_quantite_physique']) : '—' ?>
           </td>
+          <?php if(!$is_coord): ?>
           <td style="text-align:center">
             <?php if($inv['nb_ecarts']>0): ?>
             <span style="font-weight:800;color:#e74c3c"><?= $inv['nb_ecarts'] ?></span>
             <?php else: ?><span style="color:var(--muted)">—</span><?php endif; ?>
           </td>
+          <?php endif; ?>
           <td><span class="statut-inv statut-<?= $inv['statut'] ?>"><?= $inv['statut']==='valide'?'<i class="ph ph-check-circle" aria-hidden="true"></i> Validé':'⏳ En cours' ?></span></td>
           <td style="font-size:12px;color:var(--muted)"><?= h($inv['createur']??'—') ?></td>
           <td style="text-align:center;white-space:nowrap;display:flex;gap:4px;justify-content:center">

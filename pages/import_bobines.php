@@ -13,6 +13,7 @@ exit;
 require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/upload.php';
+require_once __DIR__ . '/../includes/referentiels.php';
 
 require_auth();
 // Seuls admin et superadmin peuvent faire l'import
@@ -163,8 +164,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     // Série = premier char du format
                     $serie = substr($format, 0, 1);
-                    // qte_initiale : WSL et TL = 2000, sinon 500
-                    $qte_initiale = (str_starts_with($format,'WSL') || str_starts_with($format,'TL')) ? 2000 : 500;
+                    // qte_initiale : lue au catalogue des types de bobines.
+                    // L'ancienne règle « WSL/TL = 2000, sinon 500 » sert de
+                    // repli pour un code absent du catalogue, afin qu'un
+                    // import portant un type inconnu se comporte comme avant.
+                    $qte_initiale = capacite_bobine(
+                        $format,
+                        (str_starts_with($format,'WSL') || str_starts_with($format,'TL')) ? 2000 : 500);
 
                     // Chercher le type_vehicule
                     $tv = db_fetch_one("SELECT id FROM op_types_vehicule WHERE serie_bobine=?",[$serie]);

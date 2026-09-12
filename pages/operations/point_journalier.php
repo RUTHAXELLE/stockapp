@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../includes/session.php';
 require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/helpers.php';
 require_once __DIR__ . '/../../includes/notifications.php';
+require_once __DIR__ . '/../../includes/point_emuci_corrections.php';
 
 require_auth();
 require_permission('operations', 'can_read');
@@ -71,6 +72,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $obs        = trim($_POST['observations'] ?? '');
         $films_data = json_decode($_POST['films_data'] ?? '[]', true);
         $pmma_data  = json_decode($_POST['pmma_data']  ?? '[]', true);
+        // n° 2.1 CR PDG — une ligne par bobine endommagée, saisie dans le
+        // pop-up déclenché par la quantité endommagée.
+        $endo_data  = json_decode($_POST['endommagements_data'] ?? '[]', true);
+        if (!is_array($endo_data)) $endo_data = [];
 
         $types_valides = ['point_9h', 'point_13h', 'point_18h', 'final', 'intermediaire'];
         if (!$site_id)                              json_response(false, 'Veuillez sélectionner un site.');
@@ -164,6 +169,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 // Supprimer anciens films et PMMA
                 db_query("DELETE FROM op_films_utilises WHERE point_id=?", [$point_id]);
                 db_query("DELETE FROM op_pmma_utilises  WHERE point_id=?", [$point_id]);
+                // n° 2.1 CR PDG — les déclarations d'endommagement suivent le
+                // même sort que les films : sans cela, corriger un point en
+                // retirant une bobine laisserait une déclaration orpheline
+                // pointant sur une bobine absente du point.
+                db_query("DELETE FROM op_endommagements WHERE point_id=?", [$point_id]);
+                // n° 2.8 CR PDG — idem pour les observations, mais on épargne
+                // celles déjà prises en charge : les supprimer effacerait le
+                // travail du superviseur (responsable, dates, commentaire).
+                db_query("DELETE FROM op_observations WHERE point_id=? AND statut='en_attente'", [$point_id]);
             } else {
                 db_query("INSERT INTO op_points_journaliers
                     (site_id,date_point,type_point,nb_vp,nb_camion,nb_semi,nb_moto,
@@ -242,6 +256,86 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     [$f_util, $f_endomm, $new_restants, $new_statut, $date_point, $bobine_id]);
 
                 $films_detail[] = "Bobine {$bobine['numero']} : $f_util utilisés, $f_endomm endommagés";
+            }
+
+            // ── n° 2.1 CR PDG — déclarations d'endommagement
+            // On n'accepte une déclaration que pour une bobine réellement
+            // déclarée endommagée dans ce point : le pop-up est la seule
+            // porte prévue, mais la requête peut être forgée.
+            $bobines_endommagees = [];
+            foreach ($films_data as $fd) {
+                if ((int)($fd['films_endommages'] ?? 0) > 0) {
+                    $bobines_endommagees[(int)$fd['bobine_id']] = (int)$fd['films_endommages'];
+                }
+            }
+            $etapes_ok = ['pose','impression','transport','stockage','autre'];
+            $causes_ok = ['manipulation','defaut_materiel','incident_externe','autre'];
+
+            // Une déclaration par film endommagé : six films abîmés sur une
+            // bobine peuvent l'avoir été à six moments et pour six causes.
+            $rangs = [];   // bobine_id -> compteur de films déjà déclarés
+            foreach ($endo_data as $ed) {
+                $e_bobine = (int)($ed['bobine_id'] ?? 0);
+                if (!isset($bobines_endommagees[$e_bobine])) continue;
+
+                $rangs[$e_bobine] = ($rangs[$e_bobine] ?? 0) + 1;
+                if ($rangs[$e_bobine] > $bobines_endommagees[$e_bobine]) {
+                    throw new Exception("Déclarations d'endommagement plus nombreuses que les films endommagés déclarés sur une bobine.");
+                }
+
+                $e_personne = trim((string)($ed['personne'] ?? ''));
+                $e_etape    = trim((string)($ed['etape'] ?? ''));
+                $e_cause    = trim((string)($ed['cause'] ?? ''));
+                if ($e_personne === '') throw new Exception("Déclaration d'endommagement : la personne concernée est obligatoire.");
+                if (!in_array($e_etape, $etapes_ok, true)) throw new Exception("Déclaration d'endommagement : étape invalide.");
+                if (!in_array($e_cause, $causes_ok, true)) throw new Exception("Déclaration d'endommagement : cause invalide.");
+
+                $e_heure = trim((string)($ed['heure'] ?? ''));
+                if ($e_heure !== '' && !preg_match('/^\d{2}:\d{2}$/', $e_heure)) $e_heure = '';
+
+                db_query(
+                    "INSERT INTO op_endommagements
+                     (point_id,bobine_id,site_id,film_no,personne,etape,cause,heure,observations,created_by)
+                     VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    [$point_id, $e_bobine, $site_id, $rangs[$e_bobine],
+                     $e_personne, $e_etape, $e_cause, $e_heure ?: null,
+                     trim((string)($ed['observations'] ?? '')), $user['id']]
+                );
+            }
+
+            // Chaque film endommagé doit avoir sa déclaration : sans ce
+            // contrôle, un envoi partiel laisserait des films sans traçabilité,
+            // ce que le module est précisément censé empêcher.
+            foreach ($bobines_endommagees as $bid => $nb) {
+                if (($rangs[$bid] ?? 0) !== $nb) {
+                    throw new Exception("Chaque film endommagé doit être déclaré : "
+                        . ($rangs[$bid] ?? 0) . " déclaration(s) pour $nb film(s) sur une bobine.");
+                }
+            }
+
+            // ── n° 2.8 CR PDG — observations suivies
+            // La colonne JSON reste écrite (elle sert au réaffichage du
+            // formulaire et à la fiche PDF) ; ces lignes portent le workflow.
+            // Les deux restent alignés parce qu'écrits dans la même
+            // transaction. On ne recrée que les lignes encore en attente :
+            // celles déjà prises en charge ont été épargnées par le DELETE.
+            $obs_list = json_decode($obs ?: '[]', true);
+            if (is_array($obs_list)) {
+                $types_obs = ['info','alerte','relance','incident','urgence','autre'];
+                foreach (array_values($obs_list) as $i => $o) {
+                    $o_texte = trim((string)($o['texte'] ?? ''));
+                    if ($o_texte === '') continue;
+                    $o_type = (string)($o['type'] ?? 'info');
+                    if (!in_array($o_type, $types_obs, true)) $o_type = 'info';
+                    db_query(
+                        "INSERT INTO op_observations (point_id,ordre,site_id,type,texte,created_by)
+                         VALUES (?,?,?,?,?,?)
+                         ON CONFLICT (point_id,ordre) DO UPDATE
+                            SET type=EXCLUDED.type, texte=EXCLUDED.texte
+                          WHERE op_observations.statut='en_attente'",
+                        [$point_id, $i, $site_id, $o_type, $o_texte, $user['id']]
+                    );
+                }
             }
 
             audit_log($user['id'], 'CREATE', 'operations', $point_id,
@@ -584,6 +678,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         }
     }
 
+    // ── CORRECTION POINT EMUCI — réponse du coordinateur
+    if ($action === 'pec_accepter') {
+        $role_user = $user['role_slug'] ?? '';
+        if ($role_user !== 'coordinateur_site' && !in_array($role_user, ['admin','superadmin']))
+            json_response(false, 'Accès refusé.');
+        $corr_id = (int)($_POST['corr_id'] ?? 0);
+        $corr = db_fetch_one("SELECT * FROM corrections_point_emuci WHERE id=? AND statut='en_attente'", [$corr_id]);
+        if (!$corr) json_response(false, 'Demande introuvable ou déjà traitée.');
+        if ($role_user === 'coordinateur_site' && (int)$corr['site_id'] !== (int)$user['site_id']) json_response(false, 'Accès refusé.');
+        try {
+            pec_accepter($corr, $user);
+            audit_log($user['id'], 'UPDATE', 'corrections_point_emuci', $corr_id, 'Correction Point EMUCI acceptée');
+            json_response(true, 'Correction acceptée.');
+        } catch (Exception $e) { json_response(false, $e->getMessage()); }
+    }
+
+    if ($action === 'pec_contester') {
+        $role_user = $user['role_slug'] ?? '';
+        if ($role_user !== 'coordinateur_site' && !in_array($role_user, ['admin','superadmin']))
+            json_response(false, 'Accès refusé.');
+        $corr_id  = (int)($_POST['corr_id'] ?? 0);
+        $propose  = (int)($_POST['total_propose_coord'] ?? -1);
+        $reponse  = trim($_POST['reponse'] ?? '');
+        $corr = db_fetch_one("SELECT * FROM corrections_point_emuci WHERE id=? AND statut='en_attente'", [$corr_id]);
+        if (!$corr) json_response(false, 'Demande introuvable ou déjà traitée.');
+        if ($role_user === 'coordinateur_site' && (int)$corr['site_id'] !== (int)$user['site_id']) json_response(false, 'Accès refusé.');
+        if ($propose < 0) json_response(false, 'Valeur invalide.');
+        try {
+            pec_contester($corr, $user, $propose, $reponse);
+            audit_log($user['id'], 'UPDATE', 'corrections_point_emuci', $corr_id, "Correction Point EMUCI contestée → $propose");
+            json_response(true, 'Contre-proposition envoyée au GP.');
+        } catch (Exception $e) { json_response(false, $e->getMessage()); }
+    }
+
     json_response(false, 'Action inconnue.');
 }
 
@@ -668,6 +796,21 @@ if ($role_slug_pj === 'coordinateur_site' && $user['site_id']) {
         [(int)$user['site_id']]
     );
     $nb_corrections_attente = count($corrections_en_attente);
+}
+
+// Corrections Point EMUCI en attente (pour coordinateur seulement)
+$pec_en_attente = [];
+$nb_pec_attente = 0;
+if ($role_slug_pj === 'coordinateur_site' && $user['site_id']) {
+    $pec_en_attente = db_fetch_all(
+        "SELECT c.*, CONCAT(gp.prenom,' ',gp.nom) AS gp_nom
+         FROM corrections_point_emuci c
+         JOIN users gp ON gp.id = c.gp_id
+         WHERE c.site_id = ? AND c.statut = 'en_attente'
+         ORDER BY c.created_at DESC",
+        [(int)$user['site_id']]
+    );
+    $nb_pec_attente = count($pec_en_attente);
 }
 
 include __DIR__ . '/../../templates/header.php';
@@ -970,6 +1113,57 @@ $corrections_demandees = ($role_slug_pj === 'coordinateur_site' && $user['site_i
 </div>
 <?php endif; ?>
 
+<!-- CORRECTIONS POINT EMUCI EN ATTENTE — visible coordinateur uniquement -->
+<?php if($role_slug_pj === 'coordinateur_site' && $nb_pec_attente > 0): ?>
+<div id="panel-pec" style="background:white;border:2px solid #f59e0b;border-radius:14px;margin-bottom:20px;overflow:hidden">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;background:linear-gradient(90deg,#fffbeb,#fef3c7);border-bottom:1px solid #fcd34d">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:20px"><i class="ph ph-bell" aria-hidden="true"></i></span>
+      <div>
+        <div style="font-family:'Montserrat',sans-serif;font-size:14px;font-weight:800;color:#92400e">
+          <?= $nb_pec_attente ?> demande<?= $nb_pec_attente > 1 ? 's' : '' ?> de correction Point EMUCI en attente
+        </div>
+        <div style="font-size:12px;color:#a16207">Le service Gestion Production conteste votre déclaratif de plaques posées.</div>
+      </div>
+    </div>
+    <button onclick="const b=this.closest('#panel-pec').querySelector('.corr-body');b.style.display=b.style.display==='none'?'block':'none'" style="background:none;border:1px solid #fcd34d;border-radius:8px;padding:4px 12px;font-size:12px;color:#92400e;cursor:pointer">Afficher / Masquer</button>
+  </div>
+  <div class="corr-body">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:#fffbeb">
+          <th style="padding:9px 14px;text-align:left;font-size:12px;color:#78350f;font-weight:700;text-transform:uppercase;letter-spacing:.4px">Date</th>
+          <th style="padding:9px 14px;text-align:center;font-size:12px;color:#78350f;font-weight:700;text-transform:uppercase">Déclaré</th>
+          <th style="padding:9px 14px;text-align:center;font-size:12px;color:#78350f;font-weight:700;text-transform:uppercase">Proposé (GP)</th>
+          <th style="padding:9px 14px;text-align:left;font-size:12px;color:#78350f;font-weight:700;text-transform:uppercase">Motif</th>
+          <th style="padding:9px 14px;text-align:left;font-size:12px;color:#78350f;font-weight:700;text-transform:uppercase">Demandé par</th>
+          <th style="padding:9px 14px;text-align:center;font-size:12px;color:#78350f;font-weight:700;text-transform:uppercase">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+      <?php foreach($pec_en_attente as $pc): ?>
+        <tr style="border-top:1px solid #fde68a" data-pec-id="<?= $pc['id'] ?>">
+          <td style="padding:9px 14px;font-size:12px;color:#6b7280"><?= fmt_date($pc['date_point'], 'd/m/Y') ?></td>
+          <td style="padding:9px 14px;text-align:center;font-family:'Montserrat',sans-serif;font-weight:700;color:#475569"><?= (int)$pc['total_declare'] ?></td>
+          <td style="padding:9px 14px;text-align:center;font-family:'Montserrat',sans-serif;font-size:15px;font-weight:800;color:#d97706"><?= (int)$pc['total_propose'] ?></td>
+          <td style="padding:9px 14px;font-size:12px;color:#374151;max-width:220px"><?= h($pc['motif_gp']) ?></td>
+          <td style="padding:9px 14px;font-size:12px;color:#6b7280"><?= h($pc['gp_nom']) ?></td>
+          <td style="padding:9px 14px;text-align:center">
+            <div style="display:flex;gap:6px;justify-content:center">
+              <button onclick="ouvrirReponsePec(<?= $pc['id'] ?>, <?= (int)$pc['total_declare'] ?>, <?= (int)$pc['total_propose'] ?>)"
+                      style="background:#1a56a0;color:white;border:none;border-radius:7px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">
+                Répondre
+              </button>
+            </div>
+          </td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+</div>
+<?php endif; ?>
+
 <!-- STOCK RIVETS RAPIDE — visible coordinateur uniquement -->
 <?php if(!empty($stock_rivets_all) && $role_slug_pj === 'coordinateur_site'): ?>
 <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
@@ -1087,6 +1281,31 @@ foreach($points as $p):
 <?php endif; ?>
 
 <!-- ═════════ MODAL SAISIE POINT ═════════ -->
+<!-- ══════ n° 2.1 CR PDG — DÉCLARATION D'ENDOMMAGEMENT ══════
+     Une ligne indépendante par bobine endommagée. Le pop-up s'ouvre
+     automatiquement à la saisie d'une quantité endommagée, et de nouveau
+     à l'enregistrement si une bobine reste sans déclaration. -->
+<div class="modal-overlay" id="mEndommagement">
+  <div class="modal" style="width:720px">
+    <div class="mhdr">
+      <h3><i class="ph ph-first-aid-kit" aria-hidden="true"></i> Déclaration d'endommagement</h3>
+      <button class="mclose" onclick="document.getElementById('mEndommagement').classList.remove('open')"><i class="ph ph-x" aria-hidden="true"></i></button>
+    </div>
+    <div class="mbody">
+      <p style="font-size:13px;color:var(--muted);margin:0 0 16px">
+        Renseignez les circonstances pour chaque bobine endommagée. Ces informations
+        alimentent le suivi de traçabilité et ne peuvent pas être saisies plus tard.
+      </p>
+      <div id="endoAlert"></div>
+      <div id="endoLignes"></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-secondary" onclick="document.getElementById('mEndommagement').classList.remove('open')">Annuler</button>
+      <button class="btn btn-primary" onclick="validerEndommagements()"><i class="ph ph-check" aria-hidden="true"></i> Valider les déclarations</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="mPoint">
   <div class="modal" style="width:900px">
     <div class="mhdr">
@@ -1409,6 +1628,66 @@ foreach($points as $p):
     <div class="mfoot" style="display:flex;justify-content:flex-end;gap:10px">
       <button class="btn btn-secondary" onclick="fermerReponseCorrection()">Annuler</button>
       <button class="btn btn-primary" id="rc-submit-btn" onclick="submitReponseCorrection()">Envoyer ma réponse</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL REPONSE CORRECTION POINT EMUCI -->
+<div class="modal-overlay" id="mReponsePec">
+  <div class="modal" style="width:520px">
+    <div class="mhdr"><h3><i class="ph ph-bell" aria-hidden="true"></i> Répondre à la demande de correction</h3>
+      <button class="mclose" onclick="fermerReponsePec()"><i class="ph ph-x" aria-hidden="true"></i></button>
+    </div>
+    <div class="mbody">
+      <input type="hidden" id="pec-id" value="">
+      <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:13px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div style="text-align:center;background:white;border-radius:8px;padding:8px">
+            <div style="font-size:12px;color:#6b7280;text-transform:uppercase;font-weight:600;margin-bottom:4px">Déclaré (vous)</div>
+            <div id="pec-declare" style="font-family:'Montserrat',sans-serif;font-size:22px;font-weight:900;color:#0d1f35"></div>
+          </div>
+          <div style="text-align:center;background:#fef3c7;border-radius:8px;padding:8px">
+            <div style="font-size:12px;color:#92400e;text-transform:uppercase;font-weight:600;margin-bottom:4px">Proposé (GP)</div>
+            <div id="pec-propose" style="font-family:'Montserrat',sans-serif;font-size:22px;font-weight:900;color:#d97706"></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <label style="font-size:13px;font-weight:700;color:#374151;display:block;margin-bottom:8px">Votre décision :</label>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <label style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1.5px solid var(--border);border-radius:10px;cursor:pointer">
+            <input type="radio" name="pec-reponse" value="accepter" onchange="onPecReponseChange()">
+            <div>
+              <div style="font-size:13px;font-weight:700;color:#065f46"><i class="ph ph-check-circle" aria-hidden="true"></i> Accepter la valeur proposée</div>
+              <div style="font-size:12px;color:#6b7280">Votre déclaratif sera corrigé à la valeur proposée par le GP.</div>
+            </div>
+          </label>
+          <label style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1.5px solid var(--border);border-radius:10px;cursor:pointer">
+            <input type="radio" name="pec-reponse" value="contester" onchange="onPecReponseChange()">
+            <div>
+              <div style="font-size:13px;font-weight:700;color:#b45309"><i class="ph ph-arrow-clockwise" aria-hidden="true"></i> Contester avec ma propre valeur</div>
+              <div style="font-size:12px;color:#6b7280">Le GP tranchera en dernier ressort entre votre valeur et la sienne.</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div id="pec-section-valeur" style="display:none;margin-bottom:14px">
+        <label style="font-size:13px;font-weight:700;color:#374151;display:block;margin-bottom:6px">Votre valeur <span style="color:#dc2626">*</span></label>
+        <input type="number" id="pec-valeur-coord" min="0" step="1" placeholder="0"
+               style="width:100%;padding:10px 14px;border:1.5px solid var(--border);border-radius:10px;font-family:'Montserrat',sans-serif;font-size:20px;font-weight:800;text-align:center">
+      </div>
+
+      <div id="pec-section-note" style="display:none;margin-bottom:4px">
+        <label style="font-size:13px;font-weight:700;color:#374151;display:block;margin-bottom:6px">Explication <span style="color:#dc2626">*</span></label>
+        <textarea id="pec-note" rows="3" placeholder="Expliquez votre décision…"
+                  style="width:100%;padding:10px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;resize:vertical;box-sizing:border-box"></textarea>
+      </div>
+    </div>
+    <div class="mfoot" style="display:flex;justify-content:flex-end;gap:10px">
+      <button class="btn btn-secondary" onclick="fermerReponsePec()">Annuler</button>
+      <button class="btn btn-primary" id="pec-submit-btn" onclick="submitReponsePec()">Envoyer ma réponse</button>
     </div>
   </div>
 </div>
@@ -1756,7 +2035,7 @@ function buildBobineRow(selectedBobineId, idx){
       <div>
         <label style="font-size:12px;font-weight:700;color:var(--danger-d);text-transform:uppercase;letter-spacing:.5px">Endommagés</label>
         <input type="number" class="form-control" id="bendomm-${idx}" min="0" value="0"
-               oninput="updateBobineRestants(${idx})"
+               oninput="updateBobineRestants(${idx})" onchange="onEndommageChange(${idx})"
                style="margin-top:4px;text-align:center;border-color:var(--danger)">
       </div>
       <div style="text-align:center;margin-top:18px">
@@ -1809,6 +2088,168 @@ function updateBobineRestants(idx){
 
 function getSelectedBobineIds(){
   return Array.from(document.querySelectorAll('[id^="bsel-"]')).map(s=>s.value);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   n° 2.1 CR PDG — déclaration d'endommagement
+   Le pop-up s'ouvre dès qu'une quantité endommagée est saisie, et
+   affiche une ligne indépendante par bobine concernée. Les réponses
+   sont conservées ici, indexées par bobine, puis envoyées avec le
+   point : une ligne par bobine, comme demandé au compte rendu.
+   ══════════════════════════════════════════════════════════════ */
+const ETAPES_ENDO = [
+  ['pose',       'À la pose'],
+  ['impression', "À l'impression"],
+  ['transport',  'Au transport'],
+  ['stockage',   'Au stockage'],
+  ['autre',      'Autre'],
+];
+const CAUSES_ENDO = [
+  ['manipulation',     'Manipulation incorrecte'],
+  ['defaut_materiel',  'Défaut matériel'],
+  ['incident_externe', 'Incident externe'],
+  ['autre',            'Autre'],
+];
+// bobine_id -> tableau d'une entrée par film endommagé
+let endommagementsSaisis = {};
+
+// Appelé quand une quantité endommagée change : on ouvre le pop-up à la
+// première saisie, sans harceler l'agent à chaque frappe suivante.
+function onEndommageChange(idx){
+  updateBobineRestants(idx);
+  const bid    = document.getElementById('bsel-'+idx)?.value;
+  const endomm = parseInt(document.getElementById('bendomm-'+idx)?.value||0);
+  if (endomm > 0 && bid && !endommagementsSaisis[bid]) ouvrirPopupEndommagement();
+  if (endomm === 0 && bid) delete endommagementsSaisis[bid];
+}
+
+function ouvrirPopupEndommagement(){
+  const lignes = getBobinesData().filter(f => (f.films_endommages|0) > 0);
+  const box = document.getElementById('endoLignes');
+  if (!lignes.length){
+    box.innerHTML = '<div style="color:var(--muted);font-size:13px">Aucune bobine endommagée saisie.</div>';
+  } else {
+    const opt = (arr, sel) => arr.map(([v,l]) =>
+      `<option value="${v}" ${sel===v?'selected':''}>${l}</option>`).join('');
+
+    box.innerHTML = lignes.map(f => {
+      const b   = bobinesCache[f.bobine_id] || {};
+      const nb  = f.films_endommages|0;
+      const dej = endommagementsSaisis[f.bobine_id] || [];
+
+      // Un bloc par film : chacun peut avoir sa propre étape, sa cause et
+      // sa personne. Le report ci-dessous évite de tout ressaisir quand
+      // les films ont été abîmés dans les mêmes circonstances.
+      const films = Array.from({length: nb}, (_, i) => {
+        const d = dej[i] || {};
+        return `
+        <div class="endo-film" data-bobine="${f.bobine_id}" data-film="${i+1}"
+             style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-top:10px;background:white">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:9px">
+            <span style="font-size:12px;font-weight:800;color:var(--danger-d);text-transform:uppercase;letter-spacing:.4px">
+              Film ${i+1} sur ${nb}
+            </span>
+            ${i===0 && nb>1 ? `<button type="button" class="btn btn-secondary btn-sm"
+                 onclick="reporterEndommagement('${f.bobine_id}')"
+                 title="Recopier ces valeurs sur les films suivants de cette bobine">
+                 <i class="ph ph-copy" aria-hidden="true"></i> Reporter sur les ${nb-1} suivants</button>` : ''}
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div>
+              <label style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase">Personne concernée *</label>
+              <input type="text" class="form-control endo-personne" value="${(d.personne||'').replace(/"/g,'&quot;')}"
+                     placeholder="Nom de la personne" style="margin-top:4px">
+            </div>
+            <div>
+              <label style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase">Heure de l'incident</label>
+              <input type="time" class="form-control endo-heure" value="${d.heure||''}" style="margin-top:4px">
+            </div>
+            <div>
+              <label style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase">Étape *</label>
+              <select class="form-control endo-etape" style="margin-top:4px">${opt(ETAPES_ENDO, d.etape)}</select>
+            </div>
+            <div>
+              <label style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase">Cause *</label>
+              <select class="form-control endo-cause" style="margin-top:4px">${opt(CAUSES_ENDO, d.cause)}</select>
+            </div>
+          </div>
+          <div style="margin-top:9px">
+            <label style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase">Observations</label>
+            <textarea class="form-control endo-obs" rows="2" placeholder="Précisions libres…"
+                      style="margin-top:4px">${d.observations||''}</textarea>
+          </div>
+        </div>`;
+      }).join('');
+
+      return `
+      <div style="border:1.5px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px;background:var(--lighter)">
+        <div style="font-weight:800;color:var(--navy);font-size:14px">Bobine ${b.numero||f.bobine_id}</div>
+        <div style="font-size:12px;color:var(--danger-d);font-weight:700">
+          ${nb} film(s) endommagé(s) — une déclaration par film
+        </div>
+        ${films}
+      </div>`;
+    }).join('');
+  }
+  document.getElementById('endoAlert').innerHTML = '';
+  document.getElementById('mEndommagement').classList.add('open');
+}
+
+// Recopie le premier film sur les suivants de la même bobine.
+function reporterEndommagement(bobineId){
+  const blocs = document.querySelectorAll(`.endo-film[data-bobine="${bobineId}"]`);
+  if (blocs.length < 2) return;
+  const src = blocs[0];
+  const val = s => src.querySelector(s).value;
+  for (let i = 1; i < blocs.length; i++){
+    blocs[i].querySelector('.endo-personne').value = val('.endo-personne');
+    blocs[i].querySelector('.endo-heure').value    = val('.endo-heure');
+    blocs[i].querySelector('.endo-etape').value    = val('.endo-etape');
+    blocs[i].querySelector('.endo-cause').value    = val('.endo-cause');
+    blocs[i].querySelector('.endo-obs').value      = val('.endo-obs');
+  }
+  toast(`Valeurs reportées sur ${blocs.length-1} film(s).`,'success');
+}
+
+function validerEndommagements(){
+  const blocs = document.querySelectorAll('#endoLignes .endo-film');
+  const saisie = {};
+  for (const l of blocs){
+    const personne = l.querySelector('.endo-personne').value.trim();
+    if (!personne){
+      document.getElementById('endoAlert').innerHTML =
+        '<div class="alert alert-danger" style="font-size:13px">La personne concernée est obligatoire pour chaque film.</div>';
+      l.querySelector('.endo-personne').focus();
+      l.scrollIntoView({behavior:'smooth', block:'center'});
+      return;
+    }
+    const bid = l.dataset.bobine;
+    (saisie[bid] = saisie[bid] || []).push({
+      personne,
+      etape:        l.querySelector('.endo-etape').value,
+      cause:        l.querySelector('.endo-cause').value,
+      heure:        l.querySelector('.endo-heure').value,
+      observations: l.querySelector('.endo-obs').value.trim(),
+    });
+  }
+  endommagementsSaisis = saisie;
+  document.getElementById('mEndommagement').classList.remove('open');
+  toast('Déclaration(s) enregistrée(s).','success');
+}
+
+// Aplatit en une entrée par film, et n'envoie que les bobines dont le
+// nombre de déclarations correspond encore à la quantité endommagée :
+// le serveur refuse tout écart, autant ne pas l'y conduire.
+function collectEndommagements(films){
+  const sortie = [];
+  films.forEach(f => {
+    const nb = f.films_endommages|0;
+    const d  = endommagementsSaisis[f.bobine_id];
+    if (nb > 0 && d && d.length === nb){
+      d.forEach(x => sortie.push(Object.assign({bobine_id: f.bobine_id}, x)));
+    }
+  });
+  return sortie;
 }
 
 function getBobinesData(){
@@ -1894,6 +2335,22 @@ function savePoint(){
   // Collecter films depuis le nouveau sélecteur dynamique
   const films_data = getBobinesData();
 
+  // n° 2.1 CR PDG — chaque FILM endommagé doit porter sa déclaration : on
+  // compare le nombre de déclarations à la quantité saisie, un simple
+  // « la bobine a une déclaration » laisserait passer les films suivants.
+  // On bloque avant l'envoi plutôt que de laisser le serveur refuser :
+  // l'agent est déjà dans le formulaire, autant lui ouvrir le pop-up.
+  const manquantes = films_data.filter(f => {
+    const nb = f.films_endommages|0;
+    const d  = endommagementsSaisis[f.bobine_id];
+    return nb > 0 && (!d || d.length !== nb);
+  });
+  if (manquantes.length) {
+    btn.disabled = false; btn.textContent = '💾 Enregistrer le point';
+    ouvrirPopupEndommagement();
+    return;
+  }
+
   ap({
     action:'save_point', site_id,
     date_point:  document.getElementById('p-date').value,
@@ -1912,6 +2369,7 @@ function savePoint(){
     observations:JSON.stringify(collectObservations()),
     films_data:  JSON.stringify(films_data),
     pmma_data:   JSON.stringify(collectPmmaData()),
+    endommagements_data: JSON.stringify(collectEndommagements(films_data)),
   }).then(d=>{
     btn.disabled=false; btn.textContent='💾 Enregistrer le point';
     if(d.success){
@@ -2232,6 +2690,53 @@ async function submitReponseCorrection(){
   }
 }
 document.getElementById('mReponseCorr').addEventListener('click',e=>{if(e.target===e.currentTarget)fermerReponseCorrection();});
+
+function ouvrirReponsePec(id, declare, propose){
+  document.getElementById('pec-id').value = id;
+  document.getElementById('pec-declare').textContent = declare;
+  document.getElementById('pec-propose').textContent = propose;
+  document.getElementById('pec-valeur-coord').value = declare;
+  document.querySelectorAll('input[name="pec-reponse"]').forEach(r=>r.checked=false);
+  document.getElementById('pec-section-valeur').style.display = 'none';
+  document.getElementById('pec-section-note').style.display = 'none';
+  document.getElementById('pec-note').value = '';
+  document.getElementById('mReponsePec').classList.add('open');
+}
+function fermerReponsePec(){
+  document.getElementById('mReponsePec').classList.remove('open');
+}
+function onPecReponseChange(){
+  const val = document.querySelector('input[name="pec-reponse"]:checked')?.value;
+  const secValeur = document.getElementById('pec-section-valeur');
+  const secNote   = document.getElementById('pec-section-note');
+  secValeur.style.display = val === 'contester' ? 'block' : 'none';
+  secNote.style.display   = val === 'contester' ? 'block' : 'none';
+}
+async function submitReponsePec(){
+  const id      = document.getElementById('pec-id').value;
+  const reponse = document.querySelector('input[name="pec-reponse"]:checked')?.value;
+  const valeur  = document.getElementById('pec-valeur-coord').value;
+  const note    = document.getElementById('pec-note').value.trim();
+  if(!reponse){ toast('Veuillez choisir une réponse.','warning'); return; }
+  if(reponse === 'contester' && (valeur===''||isNaN(parseInt(valeur)))){ toast('Veuillez saisir votre valeur.','warning'); return; }
+  if(reponse === 'contester' && !note){ toast('Veuillez expliquer votre contestation.','warning'); return; }
+  const payload = reponse === 'accepter'
+    ? { action:'pec_accepter', corr_id:id }
+    : { action:'pec_contester', corr_id:id, total_propose_coord:valeur, reponse:note };
+  const btn = document.getElementById('pec-submit-btn');
+  btn.disabled = true; btn.textContent = 'Envoi…';
+  try {
+    const d = await ap(payload);
+    toast(d.message, d.success?'success':'danger');
+    if(d.success){
+      fermerReponsePec();
+      setTimeout(()=>location.reload(), 1200);
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = 'Envoyer ma réponse';
+  }
+}
+document.getElementById('mReponsePec').addEventListener('click',e=>{if(e.target===e.currentTarget)fermerReponsePec();});
 </script>
 <style>@media print{.sidebar,.topbar,.mhdr button,.mfoot{display:none!important}.modal{position:static;border:none;box-shadow:none}.point-preview{color:black!important;background:white!important}.point-preview *{color:black!important}}</style>
 

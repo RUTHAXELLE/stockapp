@@ -497,7 +497,63 @@ $unread = count($notifs);
       .sidebar .sidebar-footer .logout-btn { display: none; }
       .sidebar .sidebar-footer .user-card { padding: 0; justify-content: center; background: none; }
       .sidebar .sidebar-footer .user-card-link { flex: 0 0 auto; padding: 0; margin: 0; }
+      /* Le rail est deja force a 68px ici : le bouton de reduction
+         manuelle n'a rien a faire sur un ecran deja etroit. */
+      .sidebar-toggle { display: none; }
+      /* .nav-item garde son padding:10px 16px (pense pour le libelle en
+         texte) : une fois celui-ci masque ci-dessus, il ne reste que
+         16px de large pour une icone de 34px — elle deborde du bouton
+         au lieu de s'y centrer. Meme correctif que la reduction
+         manuelle ci-dessous. */
+      .sidebar .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
+      .sidebar .nav-group-label { justify-content: center; padding-left: 0; padding-right: 0; }
+      .sidebar .nav-group-label span { display: none; }
     }
+
+    /* ===== SIDEBAR — réduction manuelle =====
+       Même rail réduit qu'en dessous de 900px ci-dessus, mais choisi par
+       l'utilisateur (bouton .sidebar-toggle) et mémorisé dans
+       localStorage, indépendamment de la largeur de fenêtre. Piloté par
+       --sidebar-w plutôt que par une largeur dupliquée : .sidebar et
+       .main-wrap la consomment déjà toutes les deux. */
+    html.sidebar-collapsed { --sidebar-w: 68px; }
+    html.sidebar-collapsed .sidebar .brand-text,
+    html.sidebar-collapsed .sidebar .nav-section,
+    html.sidebar-collapsed .sidebar .nav-item span:not(.nav-icon),
+    html.sidebar-collapsed .sidebar .sidebar-footer .user-info,
+    html.sidebar-collapsed .sidebar .nav-badge { display: none; }
+    html.sidebar-collapsed .sidebar .sidebar-footer .logout-btn { display: none; }
+    html.sidebar-collapsed .sidebar .sidebar-footer .user-card { padding: 0; justify-content: center; background: none; }
+    html.sidebar-collapsed .sidebar .sidebar-footer .user-card-link { flex: 0 0 auto; padding: 0; margin: 0; }
+    /* Meme correctif que le rail force en dessous de 900px ci-dessus :
+       sans lui, l'icone (34px) deborde des 16px de contenu que laisse
+       le padding:10px 16px pense pour le libelle en texte, et se
+       retrouve decentree au lieu d'occuper le bouton. */
+    html.sidebar-collapsed .sidebar .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
+    html.sidebar-collapsed .sidebar .nav-group-label { justify-content: center; padding-left: 0; padding-right: 0; }
+    html.sidebar-collapsed .sidebar .nav-group-label span { display: none; }
+
+    /* Poignée à cheval sur la bordure du rail. En dehors de .sidebar
+       (qui a overflow-x:hidden) et positionnée en fixed sur --sidebar-w
+       pour glisser avec lui pendant la transition de largeur.
+       --text/--card plutôt que --navy/--white : ce bouton est un enfant
+       direct de <body>, hors de .main-wrap, où --navy garde toujours sa
+       valeur claire de base même en thème sombre (cf. plus bas, pensé
+       pour le fond de la sidebar) — --text/--card sont eux redéfinis au
+       niveau racine et restent lisibles dans les deux thèmes. */
+    .sidebar-toggle {
+      position: fixed; top: 26px; left: calc(var(--sidebar-w) - 13px); z-index: 101;
+      width: 26px; height: 26px; padding: 0; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--card, #fff); color: var(--text);
+      border: 1.5px solid var(--border);
+      box-shadow: 0 2px 8px rgba(30,43,74,.18);
+      cursor: pointer;
+      transition: left .25s ease, background-color .15s, border-color .15s, color .15s;
+    }
+    .sidebar-toggle:hover { background: var(--primary-l); border-color: var(--primary-d); color: var(--primary-d); }
+    .sidebar-toggle i { font-size: 12px; transition: transform .25s ease; }
+    html.sidebar-collapsed .sidebar-toggle i { transform: rotate(180deg); }
   </style>
   <script src="https://unpkg.com/@phosphor-icons/web@2.1.1/src/index.js"></script>
 
@@ -981,6 +1037,15 @@ $unread = count($notifs);
     document.documentElement.setAttribute('data-theme', t);
   })();
 
+  /* Appliquer la réduction du menu sauvegardée avant le rendu, même
+     principe que ci-dessus : sinon le rail plein s'affiche une frame
+     avant de se réduire. */
+  (function () {
+    if (localStorage.getItem('sidebar-collapsed') === '1') {
+      document.documentElement.classList.add('sidebar-collapsed');
+    }
+  })();
+
   /* Bascule rapide depuis la topbar (clair <-> sombre). Réutilise la même
      clé localStorage que le sélecteur complet de Mon Profil — les deux
      restent synchronisés, aucune préférence "auto" ici (raccourci volontairement
@@ -1001,11 +1066,33 @@ $unread = count($notifs);
     var dark = document.documentElement.getAttribute('data-theme') === 'dark';
     icon.className = dark ? 'ph ph-sun' : 'ph ph-moon';
   }
+
+  /* Réduction manuelle du menu latéral — mémorisée, indépendante de la
+     largeur de fenêtre (cf. le rail forcé à 68px en dessous de 900px). */
+  function toggleSidebar() {
+    var collapsed = document.documentElement.classList.toggle('sidebar-collapsed');
+    localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '0');
+    syncSidebarToggleLabel();
+  }
+  function syncSidebarToggleLabel() {
+    var btn = document.getElementById('sidebarToggleBtn');
+    if (!btn) return;
+    var collapsed = document.documentElement.classList.contains('sidebar-collapsed');
+    var label = collapsed ? 'Agrandir le menu' : 'Réduire le menu';
+    btn.setAttribute('title', label);
+    btn.setAttribute('aria-label', label);
+    btn.setAttribute('aria-pressed', collapsed ? 'true' : 'false');
+  }
   </script>
 </head>
 <body>
 
 <!-- ===== SIDEBAR ===== -->
+<button type="button" class="sidebar-toggle" id="sidebarToggleBtn" onclick="toggleSidebar()"
+        aria-pressed="false">
+  <i class="ph ph-caret-left" aria-hidden="true"></i>
+</button>
+<script>syncSidebarToggleLabel();</script>
 <aside class="sidebar">
   <div class="sidebar-brand">
     <div class="brand-logo">

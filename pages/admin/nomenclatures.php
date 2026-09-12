@@ -21,16 +21,18 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
     if ($action==='create') {
         require_permission('nomenclatures','can_create');
-        $code    = strtoupper(trim($_POST['code']    ?? ''));
-        $libelle = trim($_POST['libelle']  ?? '');
-        $desc    = trim($_POST['desc']     ?? '');
-        $duree   = (int)($_POST['duree']   ?? 0);
-        $seuil   = (int)($_POST['seuil']   ?? 5);
+        $code      = strtoupper(trim($_POST['code']    ?? ''));
+        $libelle   = trim($_POST['libelle']  ?? '');
+        $desc      = trim($_POST['desc']     ?? '');
+        $duree     = (int)($_POST['duree']   ?? 0);
+        $seuil     = (int)($_POST['seuil']   ?? 5);
+        $categorie = trim($_POST['categorie'] ?? 'informatique');
+        if (!in_array($categorie, ['informatique','operationnel'], true)) $categorie = 'informatique';
         if (!$code || !$libelle) json_response(false,'Code et libellé obligatoires.');
         if (db_fetch_value("SELECT COUNT(*) FROM nomenclatures WHERE code=?",[$code])>0)
             json_response(false,"Le code $code existe déjà.");
-        db_query("INSERT INTO nomenclatures (code,libelle,description,duree_vie_mois,seuil_alerte) VALUES (?,?,?,?,?)",
-            [$code,$libelle,$desc,$duree?:null,$seuil]);
+        db_query("INSERT INTO nomenclatures (code,libelle,description,duree_vie_mois,seuil_alerte,categorie) VALUES (?,?,?,?,?,?)",
+            [$code,$libelle,$desc,$duree?:null,$seuil,$categorie]);
         $id=(int)db_last_id();
         audit_log($user['id'],'CREATE','nomenclatures',$id,"Création nomenclature $code");
         json_response(true,'Nomenclature créée.',['id'=>$id]);
@@ -38,15 +40,17 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
     if ($action==='update') {
         require_permission('nomenclatures','can_update');
-        $id      = (int)($_POST['id']      ?? 0);
-        $libelle = trim($_POST['libelle']  ?? '');
-        $desc    = trim($_POST['desc']     ?? '');
-        $duree   = (int)($_POST['duree']   ?? 0);
-        $seuil   = (int)($_POST['seuil']   ?? 5);
+        $id        = (int)($_POST['id']      ?? 0);
+        $libelle   = trim($_POST['libelle']  ?? '');
+        $desc      = trim($_POST['desc']     ?? '');
+        $duree     = (int)($_POST['duree']   ?? 0);
+        $seuil     = (int)($_POST['seuil']   ?? 5);
+        $categorie = trim($_POST['categorie'] ?? 'informatique');
+        if (!in_array($categorie, ['informatique','operationnel'], true)) $categorie = 'informatique';
         if (!$libelle) json_response(false,'Libellé obligatoire.');
         $old=db_fetch_one("SELECT * FROM nomenclatures WHERE id=?",[$id]);
-        db_query("UPDATE nomenclatures SET libelle=?,description=?,duree_vie_mois=?,seuil_alerte=? WHERE id=?",
-            [$libelle,$desc,$duree?:null,$seuil,$id]);
+        db_query("UPDATE nomenclatures SET libelle=?,description=?,duree_vie_mois=?,seuil_alerte=?,categorie=? WHERE id=?",
+            [$libelle,$desc,$duree?:null,$seuil,$categorie,$id]);
         audit_log($user['id'],'UPDATE','nomenclatures',$id,"Modification {$old['code']}",$old);
         json_response(true,'Nomenclature mise à jour.');
     }
@@ -151,7 +155,11 @@ include __DIR__ . '/../../templates/header.php';
   <div class="nom-card-top">
     <div class="nom-code"><?= h($n['code']) ?></div>
     <div class="nom-info">
-      <h4><?= h($n['libelle']) ?></h4>
+      <h4><?= h($n['libelle']) ?>
+        <span style="font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:8px;margin-left:6px;vertical-align:middle;background:<?= $n['categorie']==='operationnel'?'#FEF3C7':'#DBEAFE' ?>;color:<?= $n['categorie']==='operationnel'?'#92400E':'#1D4ED8' ?>">
+          <?= $n['categorie']==='operationnel'?'Opérationnel':'Informatique' ?>
+        </span>
+      </h4>
       <span><?= $n['description'] ? h(substr($n['description'],0,55)).'…' : 'Aucune description' ?></span>
     </div>
   </div>
@@ -197,11 +205,19 @@ include __DIR__ . '/../../templates/header.php';
         </div>
       </div>
       <div class="form-row cols-2">
-        <div class="form-group"><label>Durée de vie (mois) <span style="font-size:12px;color:var(--muted)">0 = illimitée</span></label>
-          <input type="number" class="form-control" id="nDuree" min="0" placeholder="36">
+        <div class="form-group"><label>Catégorie *</label>
+          <select class="form-control" id="nCategorie">
+            <option value="informatique">Informatique</option>
+            <option value="operationnel">Opérationnel</option>
+          </select>
         </div>
         <div class="form-group"><label>Seuil d'alerte stock</label>
           <input type="number" class="form-control" id="nSeuil" min="0" value="5">
+        </div>
+      </div>
+      <div class="form-row cols-2">
+        <div class="form-group"><label>Durée de vie (mois) <span style="font-size:12px;color:var(--muted)">0 = illimitée</span></label>
+          <input type="number" class="form-control" id="nDuree" min="0" placeholder="36">
         </div>
       </div>
       <div class="form-group"><label>Description</label>
@@ -232,6 +248,7 @@ function closeMN(){ document.getElementById('mN').classList.remove('open'); }
 function resetNF(){
   ['nId','nCode','nLib','nDuree','nDesc'].forEach(i=>document.getElementById(i).value='');
   document.getElementById('nSeuil').value='5'; document.getElementById('mNAlert').innerHTML='';
+  document.getElementById('nCategorie').value='informatique';
   document.getElementById('mNT').textContent='Nouvelle nomenclature';
   document.getElementById('nCode').disabled=false;
 }
@@ -245,6 +262,7 @@ function editN(id){
     document.getElementById('nCode').disabled=true; document.getElementById('nLib').value=r.libelle;
     document.getElementById('nDuree').value=r.duree_vie_mois||''; document.getElementById('nSeuil').value=r.seuil_alerte||5;
     document.getElementById('nDesc').value=r.description||'';
+    document.getElementById('nCategorie').value=r.categorie||'informatique';
     document.getElementById('mN').classList.add('open');
   });
 }
@@ -303,7 +321,7 @@ function saveN(){
   ap({action:id?'update':'create',id,
     code:document.getElementById('nCode').value,libelle:document.getElementById('nLib').value,
     duree:document.getElementById('nDuree').value,seuil:document.getElementById('nSeuil').value,
-    desc:document.getElementById('nDesc').value,
+    desc:document.getElementById('nDesc').value,categorie:document.getElementById('nCategorie').value,
   }).then(d=>{
     btn.disabled=false; btn.textContent='💾 Enregistrer';
     if(d.success){toast(d.message,'success');closeMN();setTimeout(()=>location.reload(),800);}

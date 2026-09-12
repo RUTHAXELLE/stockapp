@@ -28,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     $action = $_POST['action'] ?? '';
 
     if ($action === 'toggle') {
+        require_permission('affectations_it', 'can_update');
         $user_id   = (int)($_POST['user_id'] ?? 0);
         $sous_role = trim($_POST['sous_role'] ?? '');
         $actif     = (int)($_POST['actif'] ?? 0);
@@ -54,6 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     }
 
     if ($action === 'promouvoir') {
+        require_permission('affectations_it', 'can_update');
         $user_id = (int)($_POST['user_id'] ?? 0);
         $target  = db_fetch_one("SELECT u.id, CONCAT(u.prenom,' ',u.nom) AS nom, r.slug AS role_slug FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=? AND u.actif=1", [$user_id]);
         if (!$target) json_response(false,'Compte introuvable.');

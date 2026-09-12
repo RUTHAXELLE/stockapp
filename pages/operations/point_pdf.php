@@ -23,9 +23,8 @@ $point = db_fetch_one(
 );
 if (!$point) { http_response_code(404); exit('Point introuvable.'); }
 
-// Restriction brouillon
-$role = $user['role_slug'] ?? '';
-if ($point['statut'] === 'brouillon' && $role !== 'coordinateur_site' && $point['created_by'] != $user['id']) {
+// Restriction brouillon : seul l'auteur peut consulter son brouillon
+if ($point['statut'] === 'brouillon' && $point['created_by'] != $user['id']) {
     http_response_code(403); exit('Accès refusé.');
 }
 

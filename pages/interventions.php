@@ -58,6 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
     // Demande d'intervention par coordinateur
     if ($action === 'demande_coordinateur') {
+        require_permission('interventions', 'can_create');
         $equipement_id = (int)($_POST['equipement_id'] ?? 0);
         $description   = trim($_POST['description'] ?? '');
         $site_id       = $site_force ?: (int)($_POST['site_id'] ?? 0);

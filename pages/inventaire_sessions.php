@@ -217,11 +217,14 @@ if ($detail_id) {
 $sessions = db_fetch_all(
     "SELECT se.*, CONCAT(u.prenom,' ',u.nom) AS ouverte_par_nom,
             COUNT(iss.site_id) AS nb_sites,
-            SUM(CASE WHEN ib.statut = 'valide' THEN 1 ELSE 0 END) AS nb_clotures
+            SUM(CASE WHEN ib.statut = 'valide' AND ir.statut = 'valide' AND ip.statut = 'valide' AND ie.statut = 'valide' THEN 1 ELSE 0 END) AS nb_clotures
      FROM inventaire_sessions se
      LEFT JOIN users u ON u.id = se.ouverte_par
      LEFT JOIN inventaire_session_sites iss ON iss.session_id = se.id
-     LEFT JOIN inventaires_bobines ib ON ib.session_id = se.id AND ib.site_id = iss.site_id AND ib.statut != 'annule'
+     LEFT JOIN inventaires_bobines      ib ON ib.session_id = se.id AND ib.site_id = iss.site_id AND ib.statut != 'annule'
+     LEFT JOIN inventaires_rivets       ir ON ir.session_id = se.id AND ir.site_id = iss.site_id AND ir.statut != 'annule'
+     LEFT JOIN inventaires_pmma         ip ON ip.session_id = se.id AND ip.site_id = iss.site_id AND ip.statut != 'annule'
+     LEFT JOIN inventaires_equipements  ie ON ie.session_id = se.id AND ie.site_id = iss.site_id AND ie.statut != 'annule'
      GROUP BY se.id, u.prenom, u.nom
      ORDER BY se.statut = 'ouverte' DESC, se.date_debut DESC
      LIMIT 100"

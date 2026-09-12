@@ -406,8 +406,12 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
 <!-- STATS -->
 <div class="stat-chips">
   <span class="chip blue"><i class="ph ph-package" aria-hidden="true"></i> Types : <strong id="statTotal"><?= count($lignes) ?></strong></span>
+  <?php if(!$is_coord): /* n° 2.3 CR PDG : ces deux compteurs comparent au
+       stock système — les afficher au coordinateur reviendrait à lui livrer
+       la valeur système qu'on masque par ailleurs. */ ?>
   <span class="chip green"><i class="ph ph-check-circle" aria-hidden="true"></i> OK : <strong id="statOk"><?= $nb_saisis - $nb_ecarts ?></strong></span>
   <span class="chip red"><i class="ph ph-warning" aria-hidden="true"></i> Écarts : <strong id="statEcarts"><?= $nb_ecarts ?></strong></span>
+  <?php endif; ?>
   <span class="chip gray">⏳ Non saisis : <strong id="statNonSaisis"><?= $nb_non_saisi ?></strong></span>
   <?php
   $nb_ecarts_connus = count($ecarts_connus_map);
@@ -479,9 +483,11 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
 <!-- LÉGENDE -->
 <div style="display:flex;gap:16px;font-size:12px;color:var(--muted);margin-bottom:12px;align-items:center">
   <span><i class="ph ph-note-pencil" aria-hidden="true"></i> <strong>Rivets comptés</strong> : stock réel compté physiquement</span>
+  <?php if(!$is_coord): /* décrit une colonne masquée au coordinateur */ ?>
   <span style="border-left:1px solid var(--border);padding-left:16px">
     <span style="border-bottom:2px dashed #f39c12;padding-bottom:1px"><strong>Écart connu</strong></span> : différence connue avant l'inventaire, renseignée automatiquement par le système
   </span>
+  <?php endif; ?>
 </div>
 
 <!-- TABLEAU PRINCIPAL -->
@@ -491,10 +497,14 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
       <thead>
         <tr style="background:#0d1f35;color:white">
           <th style="padding:10px 14px;text-align:left">Format</th>
+          <?php if(!$is_coord): ?>
           <th style="padding:10px 14px;text-align:right">Qté système <i class="ph ph-monitor" aria-hidden="true"></i></th>
+          <?php endif; ?>
           <th style="padding:10px 14px;text-align:right;border-right:1px solid rgba(255,255,255,.15)">Qté physique <i class="ph ph-push-pin" aria-hidden="true"></i></th>
+          <?php if(!$is_coord): ?>
           <th style="padding:10px 14px;text-align:center">Écart connu</th>
           <th style="padding:10px 14px;text-align:center">Écart mesuré</th>
+          <?php endif; ?>
           <?php if($can_edit): ?>
           <th style="padding:10px 14px;text-align:center">Enregistrement</th>
           <th style="padding:10px 14px;text-align:left">Demande de modification</th>
@@ -515,33 +525,44 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
         );
         $lbl = $types_rivets[$l['type_rivet']] ?? $l['type_rivet'];
 
-        $row_bg = !$saisi && $ec_connu ? '#fffbec'
+        // n° 2.3 CR PDG — pour le coordinateur, la couleur de fond ne
+        // distingue que « saisi » de « non saisi ». Le rouge de l'écart et
+        // l'ambre de l'écart connu révéleraient la comparaison au système.
+        $row_bg = $is_coord
+                ? ($saisi ? 'white' : '#fffbf0')
+                : (!$saisi && $ec_connu ? '#fffbec'
                 : (!$saisi             ? '#fffbf0'
                 : ($ecart_mes != 0     ? '#fff5f5'
-                :                        'white'));
+                :                        'white')));
       ?>
       <tr id="row-<?= $l['id'] ?>" style="border-bottom:1px solid #e2e8f0;background:<?= $row_bg ?>"
-          data-numero="<?= h($lbl) ?>" data-connu="<?= (int)($l['ecart_connu_avant'] ?? 0) ?>">
+          data-numero="<?= h($lbl) ?>"<?php if(!$is_coord): ?> data-connu="<?= (int)($l['ecart_connu_avant'] ?? 0) ?>"<?php endif; ?>>
 
         <td style="padding:9px 14px;font-weight:700;color:var(--navy);font-size:13px"><?= h($lbl) ?></td>
 
+        <?php if(!$is_coord): ?>
         <td style="padding:9px 14px;text-align:right">
           <span style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:15px;color:var(--navy)">
             <?= number_format((int)$l['stock_systeme']) ?>
           </span>
         </td>
+        <?php endif; ?>
 
         <td style="padding:9px 14px;text-align:right;border-right:1px solid #e2e8f0">
           <?php if($can_edit): ?>
+          <?php /* n° 2.3 CR PDG — pour le coordinateur, ni data-sys ni la
+             classe ok/nok : la valeur système ne doit apparaître nulle part
+             dans la page, pas même en attribut, et la coloration verte ou
+             rouge de la saisie la trahirait tout autant. */ ?>
           <input type="number" min="0"
-                 class="saisie <?= $saisi?($ecart_mes!=0?'nok':'ok'):'' ?>"
+                 class="saisie <?= (!$is_coord && $saisi) ? ($ecart_mes!=0?'nok':'ok') : '' ?>"
                  id="phy-<?= $l['id'] ?>"
                  value="<?= $saisi ? $stock_phy : '' ?>"
                  placeholder="—"
-                 data-sys="<?= (int)$l['stock_systeme'] ?>"
+                 <?php if(!$is_coord): ?>data-sys="<?= (int)$l['stock_systeme'] ?>"<?php endif; ?>
                  data-saved="<?= $saisi ? $stock_phy : '' ?>"
                  <?= ($saisi && !$deverrouille) ? 'disabled' : '' ?>
-                 oninput="onPhyInput(<?= $l['id'] ?>,<?= (int)$l['stock_systeme'] ?>)">
+                 oninput="onPhyInput(<?= $l['id'] ?>,<?= $is_coord ? 'null' : (int)$l['stock_systeme'] ?>)">
           <?php else: ?>
           <span style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:14px">
             <?= $saisi ? number_format($stock_phy) : '<span style="color:#94a3b8">—</span>' ?>
@@ -549,6 +570,7 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
           <?php endif; ?>
         </td>
 
+        <?php if(!$is_coord): ?>
         <td style="padding:9px 14px;text-align:center">
           <?php $ecart_connu_avant = (int)($l['ecart_connu_avant'] ?? 0); ?>
           <?php if ($ecart_connu_avant !== 0): ?>
@@ -566,6 +588,7 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
           </span>
           <?php else: ?><span style="color:#94a3b8">—</span><?php endif; ?>
         </td>
+        <?php endif; ?>
 
         <?php if($can_edit): ?>
         <td style="padding:9px 14px;text-align:center;white-space:nowrap">
@@ -684,12 +707,24 @@ function majEtat(id, val, saved){
   }
 }
 
+// n° 2.3 CR PDG — le coordinateur compte sans voir le stock système. Tout
+// retour visuel dérivé de l'écart (classe ok/nok, cellule écart, couleur de
+// ligne) est donc neutralisé pour lui : il révélerait la valeur masquée.
+const MASQUE_SYSTEME = <?= $is_coord ? 'true' : 'false' ?>;
+
 function onPhyInput(id, stockSys){
   const inp  = document.getElementById('phy-'+id);
   const val  = inp.value;
   const ecEl = document.getElementById('ecart-'+id);
   const row  = document.getElementById('row-'+id);
   majEtat(id, val, inp.dataset.saved||'');
+
+  if(MASQUE_SYSTEME){
+    inp.className = 'saisie';
+    row.style.background = val === '' ? '#fffbf0' : 'white';
+    updateStats();
+    return;
+  }
 
   if(val === ''){
     inp.className='saisie'; ecEl.innerHTML='<span style="color:#94a3b8">—</span>';
@@ -893,7 +928,7 @@ function updateStats(){
     const id=row.id.replace('row-','');
     const phyEl=document.getElementById('phy-'+id);
     if(!phyEl||phyEl.value===''){nonSaisis++;}
-    else{
+    else if(!MASQUE_SYSTEME){
       const phy=parseInt(phyEl.value);
       const sys=parseInt(phyEl.dataset.sys||0);
       if(phy===sys) ok++; else ecarts++;
