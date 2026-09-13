@@ -205,6 +205,7 @@ $msg_optoplate = null;
 $result_optoplate = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'import_optoplate') {
+    require_permission('import_emuci', 'can_create');
     $date_import = trim($_POST['date_import'] ?? date('Y-m-d'));
 
     if (empty($_FILES['fichier_optoplate']) || $_FILES['fichier_optoplate']['error'] !== UPLOAD_ERR_OK) {
@@ -355,6 +356,7 @@ $msg_optotrace = null;
 $result_optotrace = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'import_optotrace') {
+    require_permission('import_emuci', 'can_create');
     $date_import = trim($_POST['date_import_trace'] ?? date('Y-m-d'));
 
     if (empty($_FILES['fichier_optotrace']) || $_FILES['fichier_optotrace']['error'] !== UPLOAD_ERR_OK) {

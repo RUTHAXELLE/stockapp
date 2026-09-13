@@ -110,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
     // ── AJOUTER MESSAGE DANS LE FIL DE DISCUSSION LITIGE
     if ($action === 'add_message') {
-        require_permission('receptions', 'can_read');
+        require_permission('receptions', 'can_update');
         $id  = (int)($_POST['id'] ?? 0);
         $msg = trim($_POST['message'] ?? '');
         if (!$id || !$msg) json_response(false, 'Message vide.');
