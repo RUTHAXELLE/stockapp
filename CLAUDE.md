@@ -6,7 +6,8 @@ Application web de gestion de stock industriel (bobines, équipements, opératio
 
 **Nom interne :** ERP EMUCI / StockApp
 **GitHub :** RUTHAXELLE/stockapp, branche `main`
-**Production :** https://stockapp-p8us.onrender.com (auto-déployé depuis GitHub `main` via Render + Docker, région Frankfurt)
+**Recette :** https://stockapp-p8us.onrender.com (auto-déployé depuis GitHub `main` via Render + Docker, région Frankfurt) — sert de pré-lancement/répétition, PAS la production.
+**Production (cible) :** VPS dédié, branche `vps-mysql` (Apache + PHP 8.4 + MySQL 8) — base de production créée par le gestionnaire de BD, distincte de la base Neon ci-dessus. Voir `DEPLOY-VPS-MYSQL.md` sur cette branche.
 
 ---
 
