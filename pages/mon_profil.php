@@ -46,9 +46,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
     // ── Changer le mot de passe
     if ($action === 'change_password') {
-        $old  = $_POST['old_password']     ?? '';
-        $new  = $_POST['new_password']     ?? '';
-        $conf = $_POST['confirm_password'] ?? '';
+        // trim() comme login.php : cf. changer-mot-de-passe.php.
+        $old  = trim($_POST['old_password']     ?? '');
+        $new  = trim($_POST['new_password']     ?? '');
+        $conf = trim($_POST['confirm_password'] ?? '');
 
         if (!$old) json_response(false, 'Le mot de passe actuel est requis.');
         if ($new !== $conf) json_response(false, 'Les nouveaux mots de passe ne correspondent pas.');
@@ -71,23 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (strlen($sig) > 300000) {
             json_response(false, 'Image trop volumineuse (max ~220KB). Dessinez ou utilisez une image plus petite.');
         }
-        try {
-            db_query("UPDATE users SET signature=? WHERE id=?", [$sig, $user['id']]);
-        } catch (\Throwable $e) {
-            // Colonne absente — migration automatique
-            try {
-                $col = (int) db_fetch_value(
-                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'signature'"
-                );
-                if (!$col) {
-                    db_query("ALTER TABLE users ADD COLUMN signature LONGTEXT NULL AFTER telephone");
-                }
-                db_query("UPDATE users SET signature=? WHERE id=?", [$sig, $user['id']]);
-            } catch (\Throwable $e2) {
-                json_response(false, 'Migration requise. Exécutez migrate_signature.php.');
-            }
-        }
+        db_query("UPDATE users SET signature=? WHERE id=?", [$sig, $user['id']]);
         audit_log($user['id'], 'UPDATE', 'users', $user['id'], 'Signature électronique mise à jour');
         json_response(true, 'Signature enregistrée avec succès.');
     }
@@ -96,12 +81,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 }
 
 // Charger la signature (pas dans le cache current_user)
-try {
-    $sig_row        = db_fetch_one("SELECT signature FROM users WHERE id=?", [$user['id']]);
-    $user_signature = $sig_row['signature'] ?? '';
-} catch (\Throwable $e) {
-    $user_signature = ''; // colonne pas encore migrée
-}
+$sig_row        = db_fetch_one("SELECT signature FROM users WHERE id=?", [$user['id']]);
+$user_signature = $sig_row['signature'] ?? '';
 
 include __DIR__ . '/../templates/header.php';
 ?>

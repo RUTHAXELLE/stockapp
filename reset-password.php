@@ -17,7 +17,10 @@ $valid = db_fetch_one(
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     header('Content-Type: application/json');
-    $result = auth_reset_password($token, $_POST['new_password'] ?? '');
+    // trim() comme login.php : sinon un mot de passe avec une espace de
+    // tête/fin se sauvegarde tel quel ici mais échoue à la connexion,
+    // qui trime avant password_verify (cf. changer-mot-de-passe.php).
+    $result = auth_reset_password($token, trim($_POST['new_password'] ?? ''));
     echo json_encode($result);
     exit;
 }

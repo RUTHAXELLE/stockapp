@@ -26,10 +26,36 @@ function auth_login(string $email, string $password): array {
         [$email]
     );
 
+    // Verrouillage temporaire après 5 échecs consécutifs (cf.
+    // migration_securite_verrouillage_brute_force.sql) — même durée que le
+    // délai d'inactivité (15 min) pour une seule convention dans l'app.
+    if ($user && !empty($user['locked_until']) && strtotime($user['locked_until']) > time()) {
+        $minutes = (int) ceil((strtotime($user['locked_until']) - time()) / 60);
+        audit_log(null, 'LOGIN', 'auth', $user['id'], "Tentative sur compte verrouillé : $email");
+        return ['success' => false, 'message' => "Compte temporairement verrouillé suite à plusieurs échecs. Réessayez dans $minutes minute(s)."];
+    }
+
     if (!$user || !password_verify($password, $user['password_hash'])) {
+        if ($user) {
+            $tentatives = (int)$user['failed_login_attempts'] + 1;
+            if ($tentatives >= 5) {
+                db_query(
+                    "UPDATE users SET failed_login_attempts = 0, locked_until = NOW() + INTERVAL '15 minutes' WHERE id = ?",
+                    [$user['id']]
+                );
+                audit_log(null, 'LOGIN', 'auth', $user['id'], "Compte verrouillé 15 min après 5 échecs consécutifs : $email");
+            } else {
+                db_query("UPDATE users SET failed_login_attempts = ? WHERE id = ?", [$tentatives, $user['id']]);
+            }
+        }
         // Log tentative échouée
         audit_log(null, 'LOGIN', 'auth', null, "Tentative de connexion échouée pour : $email");
         return ['success' => false, 'message' => 'Email ou mot de passe incorrect.'];
+    }
+
+    // Connexion réussie : réinitialiser le compteur d'échecs.
+    if ((int)$user['failed_login_attempts'] > 0 || !empty($user['locked_until'])) {
+        db_query("UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?", [$user['id']]);
     }
 
     // session déjà démarrée par session.php
@@ -109,8 +135,12 @@ function auth_change_password(int $user_id, string $old_password, string $new_pa
     // un mot de passe "par défaut" tant que le titulaire ne l'a pas changé
     // lui-même — on le force donc à l'écran suivant. À l'inverse, un
     // changement volontaire (ancien mot de passe fourni) lève le drapeau.
+    // failed_login_attempts/locked_until levés ici aussi : sans ça, un admin
+    // qui réinitialise le mot de passe d'un compte verrouillé (cf.
+    // migration_securite_verrouillage_brute_force.sql) le laisserait
+    // bloqué jusqu'à l'expiration du verrou malgré le nouveau mot de passe.
     db_query(
-        "UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?",
+        "UPDATE users SET password_hash = ?, must_change_password = ?, failed_login_attempts = 0, locked_until = NULL WHERE id = ?",
         [$hash, $admin_reset ? 1 : 0, $user_id]
     );
 

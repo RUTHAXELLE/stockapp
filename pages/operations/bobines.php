@@ -16,41 +16,53 @@ require_auth();
 $user      = current_user();
 $role_slug = $user['role_slug'] ?? '';
 
-// Rôles autorisés explicitement (sans dépendre des permissions DB)
 $is_coord = ($role_slug === 'coordinateur_site');
 $is_gsb   = in_array($role_slug, ['gestionnaire_stock_bobines','admin','superadmin']);
 
-// gestionnaire_stock N'a PAS accès à cette page
-$roles_autorises = [
-    'coordinateur_site',
-    'gestionnaire_stock_bobines',
-    'superviseur_operation',
-    'superviseur_it',
-    'maintenance_info',
-    'admin',
-    'superadmin',
-];
-
-if (!in_array($role_slug, $roles_autorises)) {
-    http_response_code(403);
-    include __DIR__ . '/../../templates/403.php';
-    exit;
-}
+// Gate pilotée par la permission DB — cf. sql/migration_bobines_permission_
+// alignement.sql : cette page n'appelait jamais require_permission() pour
+// la lecture, l'accès était géré à 100% par une liste de rôles en dur qui
+// ignorait ce que Admin → Permissions affichait pourtant comme réglable.
+// gestionnaire_stock reste explicitement exclu (can_read=0 en base), et
+// support_it/gestionnaire_bobines — qui listait déjà 'bobines' dans son
+// sous-rôle sans jamais pouvoir l'atteindre — accède enfin à cette page
+// (trouvé en corrigeant, 2026-08-29).
+require_permission('bobines', 'can_read');
 
 $site_force = ($is_coord && ($user['site_id'] ?? 0)) ? (int)$user['site_id'] : 0;
 
-$page_title  = $is_coord ? 'Mes Bobines' : 'Gestion des Bobines';
-$active_page = 'bobines';
+// Bobine (plaques : Auto/Carré/Moto/MotoII) vs Vignette (Réservoir/Pare-brise) —
+// meme page, meme fonctionnement que pages/equipements.php (?categorie=), pour
+// ne pas dupliquer toute la logique (KPI, onglets, creation, import...).
+$f_categorie_bob = (($_GET['categorie'] ?? 'bobine') === 'vignette') ? 'vignette' : 'bobine';
+$series_actives  = $f_categorie_bob === 'vignette' ? ['TL','WSL'] : ['A','B','C','D'];
+$serie_ph        = implode(',', array_fill(0, count($series_actives), '?'));
+
+if ($f_categorie_bob === 'vignette') {
+    $page_title       = $is_coord ? 'Mes Vignettes' : 'Gestion des Vignettes';
+    $bob_label        = 'vignette';
+    $bob_label_pl     = 'vignettes';
+    $formats_bobines  = ['Réservoir','Pare-brise'];
+    $versions_bobines = ['Privée','Transport Publique'];
+} else {
+    $page_title       = $is_coord ? 'Mes Bobines' : 'Gestion des Bobines';
+    $bob_label        = 'bobine';
+    $bob_label_pl     = 'bobines';
+    $formats_bobines  = ['Auto','Carré','Moto','MotoII'];
+    $versions_bobines = ['Privée','Transport Publique','Institution Internationale','Diplomatique','Gouvernementale','Temporaire'];
+}
+$active_page = $f_categorie_bob === 'vignette' ? 'bobines_vignette' : 'bobines';
 
 $types_v    = db_fetch_all("SELECT * FROM op_types_vehicule ORDER BY ordre");
 $sites_list = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
 
-$types_bobines = [];
-foreach(['A','B','C','D'] as $serie) {
-    for($i=1;$i<=6;$i++) {
-        $types_bobines[] = $serie.str_pad($i,3,'0',STR_PAD_LEFT);
-    }
-}
+// Catalogue reel (op_types_bobines) plutot qu'une liste codee en dur : couvre
+// aussi bien A001-D006 (6 versions chacun) que TL001-TL002/WSL001-WSL002
+// (2 versions seulement) sans supposer un nombre fixe de variantes.
+$types_bobines = array_column(
+    db_fetch_all("SELECT code FROM op_types_bobines WHERE actif=1 AND TRIM(serie) IN ($serie_ph) ORDER BY code", $series_actives),
+    'code'
+);
 
 // ============================================================
 //  AJAX
@@ -69,7 +81,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         if (!$numero || !$type_code) json_response(false,'Numéro et type obligatoires.');
         if (db_fetch_value("SELECT COUNT(*) FROM op_bobines WHERE numero=?",[$numero])>0)
             json_response(false,"La bobine $numero existe déjà.");
-        $serie = substr($type_code,0,1);
+        // Série lue depuis le catalogue (pas les premiers caractères du code) :
+        // les préfixes TL/WSL (Vignette) font plus d'un caractère.
+        $serie = trim((string)db_fetch_value("SELECT serie FROM op_types_bobines WHERE code=? AND actif=1", [$type_code]));
+        if (!$serie) json_response(false,"Type '$type_code' inconnu au catalogue.");
+        if (!in_array($serie, $series_actives, true)) json_response(false,"Ce type n'appartient pas à la catégorie « $bob_label_pl ».");
         $tv = db_fetch_one("SELECT id FROM op_types_vehicule WHERE serie_bobine=?",[$serie]);
         db_begin();
         try {
@@ -246,10 +262,12 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         db_begin();
         try {
             foreach($items as $item){
-                $num=$item['numero']??''; $type=$item['type_code']??''; $format=$item['format']??'';
+                $num=$item['numero']??''; $type=strtoupper($item['type_code']??''); $format=$item['format']??'';
                 if(!$num||!$type){$errors[]="Ligne invalide";continue;}
                 if(db_fetch_value("SELECT COUNT(*) FROM op_bobines WHERE numero=?",[$num])>0){$errors[]="$num deja existante";continue;}
-                $serie=strtoupper($type)[0];
+                $serie = trim((string)db_fetch_value("SELECT serie FROM op_types_bobines WHERE code=? AND actif=1", [$type]));
+                if (!$serie) {$errors[]="$num : type '$type' inconnu";continue;}
+                if (!in_array($serie, $series_actives, true)) {$errors[]="$num : type '$type' hors categorie $bob_label_pl";continue;}
                 $tv=db_fetch_one("SELECT id FROM op_types_vehicule WHERE serie_bobine=?",[$serie]);
                 db_query("INSERT INTO op_bobines (numero,type_code,serie,type_vehicule_id,site_id,format,qte_initiale,stock_systeme,statut) VALUES (?,?,?,?,?,?,500,500,'en_stock')",
                     [strtoupper($num),strtoupper($type),$serie,$tv['id']??null,$site_id,$format]);
@@ -266,7 +284,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     // ── DÉTAIL BOBINE
     if ($action==='get_detail') {
         $id = (int)($_POST['id'] ?? 0);
-        $bob = db_fetch_one("SELECT b.*,s.nom AS site_nom,tv.libelle AS type_vehicule FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id LEFT JOIN op_types_vehicule tv ON tv.id=b.type_vehicule_id WHERE b.id=?",[$id]);
+        $bob = db_fetch_one("SELECT b.*,s.nom AS site_nom,tv.libelle AS type_vehicule,t.format AS tb_format,t.version AS tb_version FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id LEFT JOIN op_types_vehicule tv ON tv.id=b.type_vehicule_id LEFT JOIN op_types_bobines t ON t.code=b.type_code WHERE b.id=?",[$id]);
         if (!$bob) json_response(false,'Introuvable.');
         $conso_moy = (float)db_fetch_value("SELECT COALESCE(SUM(quantite)/GREATEST(((NOW())::date - (MIN(date_conso)::date)),1),0) FROM consommations_bobines WHERE bobine_id=? AND date_conso>=(CURRENT_DATE - INTERVAL '30 DAY')",[$id]);
         $jours_restants = $conso_moy > 0 ? (int)ceil($bob['stock_systeme']/$conso_moy) : null;
@@ -328,7 +346,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     // ── LISTE DES ÉCARTS OUVERTS (pour la section suivi)
     if ($action==='get_ecarts') {
         $f_site = $site_force ?: (int)($_POST['site_id'] ?? 0);
-        $where  = ["eb.statut='ouvert'"]; $params = [];
+        $where  = ["eb.statut='ouvert'", "b.serie IN ($serie_ph)"]; $params = [...$series_actives];
         if ($f_site) { $where[] = 'b.site_id=?'; $params[] = $f_site; }
         $ecarts = db_fetch_all(
             "SELECT eb.*, b.numero, b.type_code, b.stock_systeme AS stock_sys_actuel,
@@ -350,21 +368,26 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 // ============================================================
 //  LISTE
 // ============================================================
-$f_site   = $site_force ?: (int)($_GET['site']    ?? 0);
-$f_statut = trim($_GET['statut']  ?? '');
-$f_serie  = trim($_GET['serie']   ?? '');
-$f_type   = trim($_GET['type']    ?? '');
-$f_search = trim($_GET['q']       ?? '');
-$where=[]; $params=[];
-if($f_site)   {$where[]='b.site_id=?';    $params[]=$f_site;}
-if($f_statut) {$where[]='b.statut=?';     $params[]=$f_statut;}
-if($f_serie)  {$where[]='b.serie=?';      $params[]=$f_serie;}
-if($f_type)   {$where[]='b.type_code=?';  $params[]=$f_type;}
-if($f_search) {$where[]='b.numero ILIKE ?'; $params[]="%$f_search%";}
-$wsql = count($where)?'WHERE '.implode(' AND ',$where):'';
+$f_site    = $site_force ?: (int)($_GET['site']    ?? 0);
+$f_statut  = trim($_GET['statut']  ?? '');
+$f_serie   = trim($_GET['serie']   ?? '');
+$f_type    = trim($_GET['type']    ?? '');
+$f_format  = trim($_GET['format']  ?? '');
+$f_version = trim($_GET['version'] ?? '');
+$f_search  = trim($_GET['q']       ?? '');
+$where=['b.serie IN ('.$serie_ph.')']; $params=[...$series_actives];
+if($f_site)    {$where[]='b.site_id=?';    $params[]=$f_site;}
+if($f_statut)  {$where[]='b.statut=?';     $params[]=$f_statut;}
+if($f_serie)   {$where[]='b.serie=?';      $params[]=$f_serie;}
+if($f_type)    {$where[]='b.type_code=?';  $params[]=$f_type;}
+if($f_format)  {$where[]='t.format=?';     $params[]=$f_format;}
+if($f_version) {$where[]='t.version=?';    $params[]=$f_version;}
+if($f_search)  {$where[]='b.numero ILIKE ?'; $params[]="%$f_search%";}
+$wsql = 'WHERE '.implode(' AND ',$where);
 
 $bobines = db_fetch_all(
     "SELECT b.*, s.nom AS site_nom, tv.libelle AS type_vehicule,
+            t.format AS tb_format, t.version AS tb_version,
             -- Quantité réelle au moment de la dernière affectation (transfert)
             COALESCE(
                 (SELECT m.stock_avant FROM mouvements_bobines m
@@ -375,22 +398,23 @@ $bobines = db_fetch_all(
      FROM op_bobines b
      LEFT JOIN sites s ON s.id=b.site_id
      LEFT JOIN op_types_vehicule tv ON tv.id=b.type_vehicule_id
+     LEFT JOIN op_types_bobines t ON t.code=b.type_code
      $wsql ORDER BY b.serie ASC,b.type_code ASC,b.statut ASC,b.numero ASC",
     $params
 );
 
-$stats = db_fetch_all("SELECT statut,COUNT(*) AS n,COALESCE(SUM(stock_systeme),0) AS stock_total FROM op_bobines GROUP BY statut");
+$stats = db_fetch_all("SELECT statut,COUNT(*) AS n,COALESCE(SUM(stock_systeme),0) AS stock_total FROM op_bobines WHERE serie IN ($serie_ph) GROUP BY statut", $series_actives);
 $stats_map = array_column($stats,null,'statut');
 $total_stock = array_sum(array_column($stats,'stock_total'));
 
 $conso_today_where = $site_force ? "AND cb.site_id=$site_force" : '';
-$conso_today = (int)db_fetch_value("SELECT COALESCE(SUM(cb.quantite),0) FROM consommations_bobines cb WHERE cb.date_conso=CURRENT_DATE $conso_today_where");
-$conso_mois  = (int)db_fetch_value("SELECT COALESCE(SUM(cb.quantite),0) FROM consommations_bobines cb WHERE EXTRACT(YEAR FROM cb.date_conso)=EXTRACT(YEAR FROM CURRENT_DATE) AND EXTRACT(MONTH FROM cb.date_conso)=EXTRACT(MONTH FROM CURRENT_DATE) $conso_today_where");
+$conso_today = (int)db_fetch_value("SELECT COALESCE(SUM(cb.quantite),0) FROM consommations_bobines cb JOIN op_bobines b ON b.id=cb.bobine_id WHERE b.serie IN ($serie_ph) AND cb.date_conso=CURRENT_DATE $conso_today_where", $series_actives);
+$conso_mois  = (int)db_fetch_value("SELECT COALESCE(SUM(cb.quantite),0) FROM consommations_bobines cb JOIN op_bobines b ON b.id=cb.bobine_id WHERE b.serie IN ($serie_ph) AND EXTRACT(YEAR FROM cb.date_conso)=EXTRACT(YEAR FROM CURRENT_DATE) AND EXTRACT(MONTH FROM cb.date_conso)=EXTRACT(MONTH FROM CURRENT_DATE) $conso_today_where", $series_actives);
 
 // Écarts ouverts
 $ecart_site_where = $site_force ? "AND b.site_id=$site_force" : '';
-$nb_ecarts_ouverts = (int)db_fetch_value("SELECT COUNT(*) FROM ecarts_bobines eb JOIN op_bobines b ON b.id=eb.bobine_id WHERE eb.statut='ouvert' $ecart_site_where");
-$nb_ecarts_negatifs = (int)db_fetch_value("SELECT COUNT(*) FROM ecarts_bobines eb JOIN op_bobines b ON b.id=eb.bobine_id WHERE eb.statut='ouvert' AND eb.ecart<0 $ecart_site_where");
+$nb_ecarts_ouverts = (int)db_fetch_value("SELECT COUNT(*) FROM ecarts_bobines eb JOIN op_bobines b ON b.id=eb.bobine_id WHERE eb.statut='ouvert' AND b.serie IN ($serie_ph) $ecart_site_where", $series_actives);
+$nb_ecarts_negatifs = (int)db_fetch_value("SELECT COUNT(*) FROM ecarts_bobines eb JOIN op_bobines b ON b.id=eb.bobine_id WHERE eb.statut='ouvert' AND eb.ecart<0 AND b.serie IN ($serie_ph) $ecart_site_where", $series_actives);
 
 include __DIR__ . '/../../templates/header.php';
 
@@ -433,7 +457,7 @@ $total_films = array_sum(array_column(array_filter($bobines, fn($b) => in_array(
 </div>
 
 <?php
-$coord_types = db_fetch_all("SELECT DISTINCT type_code FROM op_bobines WHERE site_id=? AND type_code IS NOT NULL ORDER BY type_code", [$site_force]);
+$coord_types = db_fetch_all("SELECT DISTINCT type_code FROM op_bobines WHERE site_id=? AND type_code IS NOT NULL AND serie IN ($serie_ph) ORDER BY type_code", [$site_force, ...$series_actives]);
 ?>
 <!-- Filtres coordinateur -->
 <form method="GET" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
@@ -601,7 +625,7 @@ endif;
 
 <!-- TABS -->
 <div class="tab-bar">
-  <button class="tab-btn active" onclick="showTab('liste',this)"><i class="ph ph-clipboard-text" aria-hidden="true"></i> Toutes les bobines</button>
+  <button class="tab-btn active" onclick="showTab('liste',this)"><i class="ph ph-clipboard-text" aria-hidden="true"></i> Toutes les <?= $bob_label_pl ?></button>
   <button class="tab-btn" onclick="showTab('en_cours',this)">▶️ En utilisation <span style="background:var(--blue);color:white;border-radius:10px;padding:1px 7px;font-size:12px;margin-left:4px"><?= $stats_map['en_cours']['n']??0 ?></span></button>
   <button class="tab-btn" onclick="showTab('en_stock',this)"><i class="ph ph-package" aria-hidden="true"></i> En stock <span style="background:var(--success);color:white;border-radius:10px;padding:1px 7px;font-size:12px;margin-left:4px"><?= $stats_map['en_stock']['n']??0 ?></span></button>
   <button class="tab-btn" onclick="showTab('retiree',this)"><i class="ph ph-arrow-clockwise" aria-hidden="true"></i> Retirées</button>
@@ -617,7 +641,7 @@ endif;
   <button class="tab-btn" onclick="showTab('import',this)"><i class="ph ph-upload-simple" aria-hidden="true"></i> Import</button>
   <?php endif; ?>
   <?php
-  $nb_demandes_att = (int)db_fetch_value("SELECT COUNT(*) FROM demandes_bobines d JOIN op_bobines b ON b.id=d.bobine_id WHERE d.statut='en_attente'" . ($site_force?" AND b.site_id=$site_force":""));
+  $nb_demandes_att = (int)db_fetch_value("SELECT COUNT(*) FROM demandes_bobines d JOIN op_bobines b ON b.id=d.bobine_id WHERE d.statut='en_attente' AND b.serie IN ($serie_ph)" . ($site_force?" AND b.site_id=$site_force":""), $series_actives);
   if(in_array($role_slug,['gestionnaire_stock_bobines','gestionnaire_stock','superviseur_operation','admin','superadmin']) || ($is_coord && $nb_demandes_att>0)):
   ?>
   <button class="tab-btn" onclick="showTab('demandes',this)">
@@ -628,9 +652,6 @@ endif;
 
 <!-- TAB LISTE -->
 <div id="tab-liste">
-  <?php
-  $types_bobines_list = db_fetch_all("SELECT DISTINCT type_code FROM op_bobines WHERE type_code IS NOT NULL ORDER BY type_code");
-  ?>
   <form method="GET" class="filter-bar" id="bobFiltreForm">
     <?php if(!$site_force): ?>
     <select name="site" class="fsel" aria-label="Filtrer par site" onchange="bobFiltrer(this.form)">
@@ -650,10 +671,17 @@ endif;
       <option value="perdue"   <?= $f_statut==='perdue'?'selected':'' ?>>⚠️ Perdues</option>
     </select>
 
-    <select name="type" class="fsel" aria-label="Filtrer par type" onchange="bobFiltrer(this.form)">
-      <option value="">Tous les types</option>
-      <?php foreach($types_bobines_list as $t): ?>
-      <option value="<?= h($t['type_code']) ?>" <?= $f_type===$t['type_code']?'selected':'' ?>><?= h($t['type_code']) ?></option>
+    <select name="format" class="fsel" aria-label="Filtrer par format" onchange="bobFiltrer(this.form)">
+      <option value="">Tous les formats</option>
+      <?php foreach($formats_bobines as $f): ?>
+      <option value="<?= h($f) ?>" <?= $f_format===$f?'selected':'' ?>><?= h($f) ?></option>
+      <?php endforeach; ?>
+    </select>
+
+    <select name="version" class="fsel" aria-label="Filtrer par version" onchange="bobFiltrer(this.form)">
+      <option value="">Toutes les versions</option>
+      <?php foreach($versions_bobines as $v): ?>
+      <option value="<?= h($v) ?>" <?= $f_version===$v?'selected':'' ?>><?= h($v) ?></option>
       <?php endforeach; ?>
     </select>
 
@@ -665,7 +693,7 @@ endif;
     </div>
 
     <a href="bobines.php" class="btn btn-secondary btn-sm" onclick="return bobEffacer(event)"
-       style="<?= ($f_site||$f_statut||$f_serie||$f_type||$f_search) ? '' : 'display:none' ?>" id="bobEffacerBtn"><i class="ph ph-x" aria-hidden="true"></i> Effacer</a>
+       style="<?= ($f_site||$f_statut||$f_serie||$f_type||$f_format||$f_version||$f_search) ? '' : 'display:none' ?>" id="bobEffacerBtn"><i class="ph ph-x" aria-hidden="true"></i> Effacer</a>
 
     <?php if(can('inventaire_bobines','can_read')): ?>
     <a href="<?= APP_URL ?>/pages/inventaire_bobines.php" class="btn btn-primary btn-sm" style="margin-left:auto"><i class="ph ph-chart-bar" aria-hidden="true"></i> Inventaire</a>
@@ -674,23 +702,22 @@ endif;
 
   <div class="card" id="bobinesResultCard" style="padding:0;overflow:hidden">
     <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-      <h3 style="font-family:'Montserrat',sans-serif;font-size:14px;font-weight:700;color:var(--navy)"><i class="ph ph-film-strip" aria-hidden="true"></i> Bobines (<?= count($bobines) ?>)</h3>
+      <h3 style="font-family:'Montserrat',sans-serif;font-size:14px;font-weight:700;color:var(--navy)"><i class="ph ph-film-strip" aria-hidden="true"></i> <?= ucfirst($bob_label_pl) ?> (<?= count($bobines) ?>)</h3>
       <span style="font-size:12px;color:var(--muted)">Stock total système : <strong><?= number_format($total_stock) ?> films</strong></span>
     </div>
     <div class="table-wrap" id="bobinesTableWrap">
       <table>
         <thead><tr>
-          <th>Numéro</th><th>Type</th><th>Format</th><th>Site</th>
+          <th>Numéro</th><th>Format</th><th>Version</th><th>Site</th>
           <th style="text-align:center">Qté livrée</th>
           <th style="text-align:center">Consommé</th>
           <th style="text-align:center">Restants</th>
-          <th style="width:90px">Niveau</th>
           <th>Statut</th>
           <th style="text-align:center">Actions</th>
         </tr></thead>
         <tbody>
         <?php if(empty($bobines)): ?>
-          <tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">Aucune bobine trouvée.</td></tr>
+          <tr><td colspan="9" style="text-align:center;padding:40px;color:var(--muted)">Aucune bobine trouvée.</td></tr>
         <?php else: foreach($bobines as $b):
           $qte_init  = max(1,(int)($b['qte_livree'] ?? $b['qte_initiale'] ?? 500));
           $restants  = (int)$b['stock_systeme'];
@@ -701,18 +728,17 @@ endif;
         ?>
           <tr>
             <td><span style="font-family:monospace;font-weight:700;font-size:13px;color:var(--navy)"><?= h($b['numero']) ?></span></td>
-            <td><span style="font-size:12px;background:var(--lighter);padding:2px 8px;border-radius:5px;font-weight:600"><?= h($b['type_code']) ?></span></td>
-            <td style="font-size:12px;color:var(--muted)"><?= h($b['format']??'—') ?></td>
+            <td style="font-size:12.5px"><?= h($b['tb_format'] ?? '—') ?></td>
+            <td style="font-size:12.5px;color:var(--muted)"><?= h($b['tb_version'] ?? '—') ?></td>
             <td style="font-size:12.5px"><?= h($b['site_nom']??'') ?:('<span style="color:var(--muted)">Non affectée</span>') ?></td>
             <td style="text-align:center;font-size:12px;color:var(--muted);font-weight:600"><?= number_format($qte_init) ?></td>
             <td style="text-align:center">
               <span style="font-weight:700;color:#1D4ED8"><?= number_format($consomme) ?></span>
               <div style="font-size:12px;color:var(--muted)"><?= $pct_conso ?>%</div>
             </td>
-            <td style="text-align:center;font-family:'Montserrat',sans-serif;font-weight:800;font-size:15px;color:<?= $bar_color ?>"><?= number_format($restants) ?></td>
-            <td>
-              <div class="stock-bar"><div class="stock-fill" style="width:<?= min(100,$pct) ?>%;background:<?= $bar_color ?>"></div></div>
-              <div style="font-size:12px;color:var(--muted);text-align:right"><?= $pct ?>% restant</div>
+            <td style="text-align:center">
+              <span style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:15px;color:<?= $bar_color ?>"><?= number_format($restants) ?></span>
+              <div style="font-size:12px;color:var(--muted)"><?= $pct ?>%</div>
             </td>
             <td><span class="bobine-status <?= $b['statut'] ?>"><?= ['en_stock'=>'<i class="ph ph-package" aria-hidden="true"></i> En stock','en_cours'=>'<i class="ph ph-film-strip" aria-hidden="true"></i> En cours','epuisee'=>'<i class="ph ph-x-circle" aria-hidden="true"></i> Épuisée','retiree'=>'<i class="ph ph-circle" aria-hidden="true"></i> Retirée'][$b['statut']]??$b['statut'] ?></span></td>
             <td style="text-align:center;white-space:nowrap">
@@ -851,7 +877,8 @@ endif;
   <?php
   $bobines_en_cours = db_fetch_all(
     "SELECT b.*, s.nom AS site_nom FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id
-     WHERE b.statut='en_cours'" . ($site_force?" AND b.site_id=$site_force":"") . " ORDER BY b.site_id, b.numero"
+     WHERE b.statut='en_cours' AND b.serie IN ($serie_ph)" . ($site_force?" AND b.site_id=$site_force":"") . " ORDER BY b.site_id, b.numero",
+    $series_actives
   );
   ?>
   <div class="card">
@@ -904,7 +931,8 @@ endif;
   <?php
   $bobines_en_stock = db_fetch_all(
     "SELECT b.*, s.nom AS site_nom FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id
-     WHERE b.statut='en_stock'" . ($site_force?" AND b.site_id=$site_force":"") . " ORDER BY b.site_id, b.numero"
+     WHERE b.statut='en_stock' AND b.serie IN ($serie_ph)" . ($site_force?" AND b.site_id=$site_force":"") . " ORDER BY b.site_id, b.numero",
+    $series_actives
   );
   ?>
   <div class="card">
@@ -951,7 +979,8 @@ endif;
   <?php
   $bobines_retirees = db_fetch_all(
     "SELECT b.*, s.nom AS site_nom FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id
-     WHERE b.statut IN ('retiree','epuisee')" . ($site_force?" AND b.site_id=$site_force":"") . " ORDER BY b.created_at DESC LIMIT 100"
+     WHERE b.statut IN ('retiree','epuisee') AND b.serie IN ($serie_ph)" . ($site_force?" AND b.site_id=$site_force":"") . " ORDER BY b.created_at DESC LIMIT 100",
+    $series_actives
   );
   ?>
   <div class="card">
@@ -982,7 +1011,8 @@ endif;
   <?php
   $bobines_perdues = db_fetch_all(
     "SELECT b.*, s.nom AS site_nom FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id
-     WHERE b.statut='perdue'" . ($site_force?" AND b.site_id=$site_force":"") . " ORDER BY b.created_at DESC"
+     WHERE b.statut='perdue' AND b.serie IN ($serie_ph)" . ($site_force?" AND b.site_id=$site_force":"") . " ORDER BY b.created_at DESC",
+    $series_actives
   );
   ?>
   <div class="card">
@@ -1022,8 +1052,9 @@ endif;
      JOIN sites s ON s.id=d.site_id
      LEFT JOIN users u ON u.id=d.demande_par
      LEFT JOIN users t ON t.id=d.traite_par
-     WHERE 1=1 " . ($site_force?"AND d.site_id=$site_force":"") . "
-     ORDER BY array_position(ARRAY['en_attente','approuvee','refusee']::text[], (d.statut)::text), d.created_at DESC LIMIT 50"
+     WHERE b.serie IN ($serie_ph) " . ($site_force?"AND d.site_id=$site_force":"") . "
+     ORDER BY array_position(ARRAY['en_attente','approuvee','refusee']::text[], (d.statut)::text), d.created_at DESC LIMIT 50",
+    $series_actives
   );
   $is_gsb = in_array($role_slug,['gestionnaire_stock_bobines','admin','superadmin']);
   ?>
@@ -1198,7 +1229,7 @@ function bobCharger(url){
     });
 }
 function bobMajEffacer(form){
-  const actif = ['site','statut','type','q'].some(n => form.elements[n] && form.elements[n].value);
+  const actif = ['site','statut','format','version','q'].some(n => form.elements[n] && form.elements[n].value);
   const btn = document.getElementById('bobEffacerBtn');
   if(btn) btn.style.display = actif ? '' : 'none';
 }
@@ -1209,7 +1240,7 @@ function bobFiltrer(form){
 function bobEffacer(ev){
   ev.preventDefault();
   const form = document.getElementById('bobFiltreForm');
-  ['site','statut','type','q'].forEach(n => { if(form.elements[n]) form.elements[n].value = ''; });
+  ['site','statut','format','version','q'].forEach(n => { if(form.elements[n]) form.elements[n].value = ''; });
   document.getElementById('bobEffacerBtn').style.display = 'none';
   bobCharger(location.pathname);
   return false;
@@ -1347,7 +1378,7 @@ async function viewBobine(id){
   const barColor=pct>50?'#27ae60':pct>20?'#f39c12':'#e74c3c';
   let html=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;font-size:13px">
     <div><div style="font-size:12px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Numéro</div><strong style="font-family:monospace;font-size:15px">${b.numero}</strong></div>
-    <div><div style="font-size:12px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Type · Format</div><strong>${b.type_code}</strong>${b.format?' · '+b.format:''}</div>
+    <div><div style="font-size:12px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Format · Version</div><strong>${b.tb_format||b.type_code}</strong>${b.tb_version?' · '+b.tb_version:''}</div>
     <div><div style="font-size:12px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Site</div><strong>${b.site_nom||'Non affectée'}</strong></div>
     <div><div style="font-size:12px;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Statut</div>${statuts[b.statut]||b.statut}</div>
   </div>

@@ -11,6 +11,7 @@ require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/demandes.php';
 
 require_auth();
+require_permission('demandes', 'can_read');
 $user = current_user();
 $my_roles = di_user_roles((int)$user['id']);
 if (!di_user_can_traiter_it((int)$user['id'], $my_roles)) {

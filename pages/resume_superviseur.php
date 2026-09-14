@@ -17,12 +17,10 @@ $role_slug = $user['role_slug'] ?? '';
 $page_title  = 'Résumé Superviseur';
 $active_page = 'resume_superviseur';
 
-require_permission('rapports', 'can_read');
-
-$roles_autorises = ['admin', 'superadmin', 'superviseur_operation', 'gestionnaire_operation', 'lecteur'];
-if (!in_array($role_slug, $roles_autorises)) {
-    http_response_code(403); include __DIR__ . '/../templates/403.php'; exit;
-}
+// Module dédié plutôt que 'rapports' (partagé avec des écrans plus
+// larges) + liste de rôles en dur — cf. sql/migration_resume_superviseur_
+// permission_dediee.sql (audit permissions du 2026-08-29).
+require_permission('resume_superviseur', 'can_read');
 
 $sites_list = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
 

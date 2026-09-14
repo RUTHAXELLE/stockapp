@@ -22,7 +22,12 @@ $unread = count($notifs);
 // ── Sélection d'un groupe → mémorise en session et redirige
 if (!empty($_GET['set_groupe'])) {
     $slug = strtoupper(trim($_GET['set_groupe']));
-    $accessibles = get_groupes_pour_role($user['role_slug'] ?? '');
+    // get_groupes_utilisateur() plutôt que get_groupes_pour_role() : ce
+    // dernier ne connaît que les groupes en dur dans $map, pas ceux ajoutés
+    // par droit DB (ex. INVENTAIRE via can('inventaire','can_read')) —
+    // sinon le clic sur ce groupe ne redirigeait nulle part (trouvé en
+    // rendant INVENTAIRE éditable depuis Admin → Permissions, 2026-08-28).
+    $accessibles = array_keys(get_groupes_utilisateur());
     if (in_array($slug, $accessibles)) {
         $_SESSION['groupe_actif'] = $slug;
         $def = get_groupe_def($slug);
@@ -287,17 +292,6 @@ $initiales = strtoupper(substr($user['prenom']??'',0,1).substr($user['nom']??'',
       line-height: 1.4; transition: color .2s;
     }
 
-    .bloc-dashboard {
-      background: linear-gradient(135deg, #06033A 0%, #1B75BC 100%);
-      border-color: transparent;
-      box-shadow: 0 4px 18px rgba(6,3,58,.25);
-    }
-    .bloc-dashboard::after           { display: none; }
-    .bloc-dashboard .groupe-text h3  { color: #fff; }
-    .bloc-dashboard .groupe-text p   { color: rgba(255,255,255,.65); }
-    .bloc-dashboard .groupe-icon-box { background: rgba(255,255,255,.2); box-shadow: none; }
-    .bloc-dashboard:hover            { box-shadow: 0 12px 36px rgba(6,3,58,.35); transform: translateY(-4px); }
-
     @media (max-width: 700px) {
       .groupes-list { grid-template-columns: repeat(3, 1fr); gap: 10px; }
       .groupe-icon-box { width: 46px; height: 46px; border-radius: 12px; }
@@ -403,7 +397,7 @@ $initiales = strtoupper(substr($user['prenom']??'',0,1).substr($user['nom']??'',
     <div class="groupes-list">
       <?php foreach ($groupes as $slug => $groupe): ?>
       <a href="?set_groupe=<?= urlencode($slug) ?>"
-         class="groupe-bloc <?= $slug === 'DASHBOARD' ? 'bloc-dashboard' : '' ?>"
+         class="groupe-bloc"
          style="--g-gradient: <?= h($groupe['gradient']) ?>">
 
         <div class="groupe-icon-box">

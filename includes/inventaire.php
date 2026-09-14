@@ -91,3 +91,129 @@ function inv_creer_mensuel(int $site_id, string $date, ?int $session_id, int $us
 
     return ['id' => $inv_id, 'nb' => count($bobines)];
 }
+
+// ── Crée l'inventaire mensuel des rivets d'un site (+ ses lignes détail,
+//    une par type_rivet en stock) et le rattache à une session. Même
+//    logique que inv_creer_mensuel(), mais rivets = stock agrégé par
+//    (site_id,type_rivet) dans op_stock_rivets, pas d'objet individuel :
+//    le détail clé sur type_rivet plutôt que sur un id.
+function inv_creer_rivets(int $site_id, string $date, ?int $session_id, int $user_id): array {
+    $exist = db_fetch_one(
+        "SELECT id FROM inventaires_rivets WHERE site_id=? AND date_inventaire=? AND type_inventaire='mensuel' AND statut!='annule'",
+        [$site_id, $date]
+    );
+    if ($exist) throw new Exception("Un inventaire mensuel de rivets existe déjà pour ce site à cette date.");
+
+    $stocks = db_fetch_all(
+        "SELECT type_rivet, quantite FROM op_stock_rivets WHERE site_id=? ORDER BY type_rivet",
+        [$site_id]
+    );
+    if (empty($stocks)) throw new Exception('Aucun stock de rivets sur ce site.');
+
+    $total_systeme = array_sum(array_column($stocks, 'quantite'));
+
+    db_query(
+        "INSERT INTO inventaires_rivets (site_id,date_inventaire,type_inventaire,statut,nb_types,total_quantite_systeme,cree_par,session_id)
+         VALUES (?,?,'mensuel','brouillon',?,?,?,?)",
+        [$site_id, $date, count($stocks), $total_systeme, $user_id, $session_id]
+    );
+    $inv_id = (int)db_last_id();
+
+    foreach ($stocks as $s) {
+        $ecart_connu = (int)db_fetch_value(
+            "SELECT COALESCE(SUM(ecart),0) FROM ecarts_rivets WHERE site_id=? AND type_rivet=? AND statut='ouvert'",
+            [$site_id, $s['type_rivet']]
+        );
+        db_query(
+            "INSERT INTO inventaire_details_rivets (inventaire_id,type_rivet,stock_systeme,stock_physique,ecart,ecart_connu_avant)
+             VALUES (?,?,?,0,0,?)",
+            [$inv_id, $s['type_rivet'], (int)$s['quantite'], $ecart_connu]
+        );
+    }
+
+    return ['id' => $inv_id, 'nb' => count($stocks)];
+}
+
+// ── Crée l'inventaire mensuel des Équipements d'un site (+ ses lignes
+//    détail, une par équipement affecté) et le rattache à une session.
+//    Différent des trois autres : équipements = objets individuels sans
+//    quantité, donc pas de stock_systeme à figer — juste une checklist
+//    de présence à cocher (trouve NULL au départ). Périmètre calqué sur
+//    la liste principale de pages/equipements.php : tous les équipements
+//    actifs affectés au site, toutes catégories confondues.
+function inv_creer_equipements(int $site_id, string $date, ?int $session_id, int $user_id): array {
+    $exist = db_fetch_one(
+        "SELECT id FROM inventaires_equipements WHERE site_id=? AND date_inventaire=? AND type_inventaire='mensuel' AND statut!='annule'",
+        [$site_id, $date]
+    );
+    if ($exist) throw new Exception("Un inventaire mensuel d'équipements existe déjà pour ce site à cette date.");
+
+    $equipements = db_fetch_all(
+        "SELECT id FROM equipements WHERE site_id=? AND actif=1 ORDER BY numero_serie_interne",
+        [$site_id]
+    );
+    if (empty($equipements)) throw new Exception('Aucun équipement actif sur ce site.');
+
+    db_query(
+        "INSERT INTO inventaires_equipements (site_id,date_inventaire,type_inventaire,statut,nb_equipements,cree_par,session_id)
+         VALUES (?,?,'mensuel','brouillon',?,?,?)",
+        [$site_id, $date, count($equipements), $user_id, $session_id]
+    );
+    $inv_id = (int)db_last_id();
+
+    foreach ($equipements as $e) {
+        $ecart_connu = db_fetch_value(
+            "SELECT COUNT(*) FROM ecarts_equipements WHERE equipement_id=? AND statut='ouvert'",
+            [$e['id']]
+        ) ? 1 : 0;
+        db_query(
+            "INSERT INTO inventaire_details_equipements (inventaire_id,equipement_id,ecart_connu_avant)
+             VALUES (?,?,?)",
+            [$inv_id, $e['id'], $ecart_connu]
+        );
+    }
+
+    return ['id' => $inv_id, 'nb' => count($equipements)];
+}
+
+// ── Crée l'inventaire mensuel des PMMA d'un site (+ ses lignes détail,
+//    une par type_pmma en stock) et le rattache à une session. Même
+//    logique que inv_creer_rivets() — stock agrégé par (site_id,type_pmma)
+//    dans stock_pmma_site, sauf que type_pmma est un texte libre (pas un
+//    format fixe) : la liste des types dépend de ce qui existe en stock.
+function inv_creer_pmma(int $site_id, string $date, ?int $session_id, int $user_id): array {
+    $exist = db_fetch_one(
+        "SELECT id FROM inventaires_pmma WHERE site_id=? AND date_inventaire=? AND type_inventaire='mensuel' AND statut!='annule'",
+        [$site_id, $date]
+    );
+    if ($exist) throw new Exception("Un inventaire mensuel de PMMA existe déjà pour ce site à cette date.");
+
+    $stocks = db_fetch_all(
+        "SELECT type_pmma, quantite FROM stock_pmma_site WHERE site_id=? AND type_pmma <> '' ORDER BY type_pmma",
+        [$site_id]
+    );
+    if (empty($stocks)) throw new Exception('Aucun stock de PMMA sur ce site.');
+
+    $total_systeme = array_sum(array_column($stocks, 'quantite'));
+
+    db_query(
+        "INSERT INTO inventaires_pmma (site_id,date_inventaire,type_inventaire,statut,nb_types,total_quantite_systeme,cree_par,session_id)
+         VALUES (?,?,'mensuel','brouillon',?,?,?,?)",
+        [$site_id, $date, count($stocks), $total_systeme, $user_id, $session_id]
+    );
+    $inv_id = (int)db_last_id();
+
+    foreach ($stocks as $s) {
+        $ecart_connu = (int)db_fetch_value(
+            "SELECT COALESCE(SUM(ecart),0) FROM ecarts_pmma WHERE site_id=? AND type_pmma=? AND statut='ouvert'",
+            [$site_id, $s['type_pmma']]
+        );
+        db_query(
+            "INSERT INTO inventaire_details_pmma (inventaire_id,type_pmma,stock_systeme,stock_physique,ecart,ecart_connu_avant)
+             VALUES (?,?,?,0,0,?)",
+            [$inv_id, $s['type_pmma'], (int)$s['quantite'], $ecart_connu]
+        );
+    }
+
+    return ['id' => $inv_id, 'nb' => count($stocks)];
+}

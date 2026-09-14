@@ -19,9 +19,14 @@ if (empty($_SESSION['must_change_password'])) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
-    $old  = $_POST['old_password']     ?? '';
-    $new  = $_POST['new_password']     ?? '';
-    $conf = $_POST['confirm_password'] ?? '';
+    // trim() comme login.php/reset admin (pages/admin/users.php) : sans ça,
+    // un mot de passe saisi ici avec une espace de tête/fin (copié-collé
+    // depuis un email/message) se sauvegarde tel quel mais échoue ensuite à
+    // la connexion (login.php trime avant password_verify) — compte
+    // bloqué en pratique après un changement obligatoire.
+    $old  = trim($_POST['old_password']     ?? '');
+    $new  = trim($_POST['new_password']     ?? '');
+    $conf = trim($_POST['confirm_password'] ?? '');
 
     if (!$old) json_response(false, 'Le mot de passe actuel est requis.');
     if ($new !== $conf) json_response(false, 'Les nouveaux mots de passe ne correspondent pas.');

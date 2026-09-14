@@ -60,8 +60,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 $f_from = $_GET['from'] ?? date('Y-m-01');
 $f_to   = $_GET['to']   ?? date('Y-m-d');
 $f_site = $site_force_r ?: (int)($_GET['site'] ?? 0);
+$f_type = trim($_GET['type'] ?? '');
+$types_rivets = ['gonflable' => 'Gonflables', 'eclate' => 'Éclatés'];
 
 // ── STOCK ACTUEL
+$stocks_where  = ['s.actif=1'];
+$stocks_params = [];
+if ($f_site) { $stocks_where[] = 's.id=?';           $stocks_params[] = $f_site; }
+if ($f_type) { $stocks_where[] = 'sr.type_rivet=?';  $stocks_params[] = $f_type; }
+$stocks_wsql = implode(' AND ', $stocks_where);
 $stocks = db_fetch_all(
     "SELECT s.id, s.nom, s.type,
             sr.type_rivet,
@@ -71,9 +78,24 @@ $stocks = db_fetch_all(
                       WHERE p.site_id=s.id AND TO_CHAR(p.date_point,'YYYY-MM')=TO_CHAR(CURRENT_DATE,'YYYY-MM')),0) AS utilises_mois
      FROM sites s
      JOIN op_stock_rivets sr ON sr.site_id=s.id
-     WHERE s.actif=1 " . ($site_force_r ? "AND s.id=$site_force_r" : "") . "
-     ORDER BY s.nom, array_position(ARRAY['gonflable','eclate']::text[], (sr.type_rivet)::text)"
+     WHERE $stocks_wsql
+     ORDER BY s.nom, array_position(ARRAY['gonflable','eclate']::text[], (sr.type_rivet)::text)",
+    $stocks_params
 );
+
+// ── Matrice site × type (vue "tous les sites")
+$riv_types       = [];
+$riv_matrix      = [];
+$riv_site_names  = [];
+foreach ($stocks as $sp_item) {
+    $sid = $sp_item['id'];
+    if (!isset($riv_site_names[$sid])) $riv_site_names[$sid] = $sp_item['nom'];
+    $t = $sp_item['type_rivet'];
+    if (!$t) continue;
+    if (!in_array($t, $riv_types, true)) $riv_types[] = $t;
+    $riv_matrix[$sid][$t] = ['quantite' => (int)$sp_item['quantite'], 'mois' => (int)$sp_item['utilises_mois']];
+}
+usort($riv_types, fn($a, $b) => array_search($a, ['gonflable','eclate']) <=> array_search($b, ['gonflable','eclate']));
 
 // ── HISTORIQUE CONSOMMATION (points journaliers)
 $ws_r = $f_site ? "AND p.site_id = $f_site" : ($site_force_r ? "AND p.site_id = $site_force_r" : '');
@@ -259,6 +281,15 @@ include __DIR__ . '/../../templates/header.php';
 .mclose{width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:none;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center}
 .mbody{padding:24px}
 .mfoot{padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;position:sticky;bottom:0;background:white}
+.riv-tabs{display:flex;gap:6px;border-bottom:2px solid var(--border);margin-bottom:18px}
+.riv-tab-btn{background:none;border:none;padding:10px 16px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;display:flex;align-items:center;gap:6px}
+.riv-tab-btn.active{color:var(--navy);border-bottom-color:var(--blue)}
+.riv-tab-panel{display:none}
+.riv-tab-panel.active{display:block}
+.riv-matrix td,.riv-matrix th{text-align:center}
+.riv-matrix td:first-child,.riv-matrix th:first-child{text-align:left}
+#rivKpis[data-active="stock"] .kpi[data-kpi-group="conso"]{display:none}
+#rivKpis[data-active="conso"] .kpi[data-kpi-group="stock"]{display:none}
 </style>
 
 <!-- TOOLBAR -->
@@ -299,7 +330,7 @@ include __DIR__ . '/../../templates/header.php';
   <?php if (!$site_force_r): ?>
   <div>
     <label for="fSite">Site</label>
-    <select id="fSite">
+    <select id="fSite" onchange="appliquerFiltres()">
       <option value="0">Tous les sites</option>
       <?php foreach ($sites_list as $s): ?>
       <option value="<?= $s['id'] ?>" <?= $f_site == $s['id'] ? 'selected' : '' ?>><?= h($s['nom']) ?></option>
@@ -307,6 +338,15 @@ include __DIR__ . '/../../templates/header.php';
     </select>
   </div>
   <?php endif; ?>
+  <div>
+    <label for="fType">Format</label>
+    <select id="fType" onchange="appliquerFiltres()">
+      <option value="">Tous les types</option>
+      <?php foreach ($types_rivets as $val => $lbl): ?>
+      <option value="<?= h($val) ?>" <?= $f_type === $val ? 'selected' : '' ?>><?= h($lbl) ?></option>
+      <?php endforeach; ?>
+    </select>
+  </div>
   <div style="display:flex;gap:8px;align-items:flex-end">
     <button class="btn btn-primary" style="font-size:13px" onclick="appliquerFiltres()">Appliquer</button>
     <button class="btn btn-secondary" style="font-size:13px" onclick="resetFiltres()">Réinitialiser</button>
@@ -317,34 +357,68 @@ include __DIR__ . '/../../templates/header.php';
 <?php
 $kpi_gonfl  = array_sum(array_map(fn($r) => $r['type_rivet']==='gonflable' ? (int)$r['quantite'] : 0, $stocks));
 $kpi_eclat  = array_sum(array_map(fn($r) => $r['type_rivet']==='eclate'    ? (int)$r['quantite'] : 0, $stocks));
-$kpi_mois   = array_sum(array_column($stocks, 'utilises_mois'));
 $nb_bas     = count(array_filter($stocks, fn($r) => (int)$r['quantite'] < 200));
 ?>
-<div class="kpi-bar">
-  <div class="kpi">
+<div class="kpi-bar" id="rivKpis" data-active="stock">
+  <?php if (!$f_type || $f_type === 'gonflable'): ?>
+  <div class="kpi" data-kpi-group="stock">
     <div class="kpi-val" style="color:var(--blue)"><?= fmt_number($kpi_gonfl) ?></div>
     <div class="kpi-lbl">Gonflables en stock</div>
   </div>
-  <div class="kpi">
+  <?php endif; ?>
+  <?php if (!$f_type || $f_type === 'eclate'): ?>
+  <div class="kpi" data-kpi-group="stock">
     <div class="kpi-val" style="color:var(--navy)"><?= fmt_number($kpi_eclat) ?></div>
     <div class="kpi-lbl">Éclatés en stock</div>
   </div>
-  <div class="kpi">
-    <div class="kpi-val" style="color:var(--muted)"><?= fmt_number($kpi_mois) ?></div>
-    <div class="kpi-lbl">Utilisés ce mois</div>
-  </div>
+  <?php endif; ?>
   <?php if ($nb_bas > 0): ?>
-  <div class="kpi" style="border-color:#fca5a5;background:#fff5f5">
+  <div class="kpi" data-kpi-group="stock" style="border-color:#fca5a5;background:#fff5f5">
     <div class="kpi-val" style="color:var(--danger-d)"><?= $nb_bas ?></div>
     <div class="kpi-lbl">Type(s) en stock bas</div>
   </div>
   <?php endif; ?>
+  <div class="kpi" data-kpi-group="conso">
+    <div class="kpi-val" style="color:var(--navy)"><?= fmt_number($grand_total_sortis) ?></div>
+    <div class="kpi-lbl">Consommés sur la période</div>
+  </div>
+  <?php if (!$f_type || $f_type === 'gonflable'): ?>
+  <div class="kpi" data-kpi-group="conso">
+    <div class="kpi-val" style="color:var(--blue);font-size:22px"><?= fmt_number($total_gonfl) ?></div>
+    <div class="kpi-lbl">Gonflables consommés</div>
+  </div>
+  <?php endif; ?>
+  <?php if (!$f_type || $f_type === 'eclate'): ?>
+  <div class="kpi" data-kpi-group="conso">
+    <div class="kpi-val" style="color:var(--navy);font-size:22px"><?= fmt_number($total_eclat) ?></div>
+    <div class="kpi-lbl">Éclatés consommés</div>
+  </div>
+  <?php endif; ?>
+  <?php if ($total_endom > 0): ?>
+  <div class="kpi" data-kpi-group="conso" style="border-color:#fca5a5">
+    <div class="kpi-val" style="color:var(--danger-d)"><?= fmt_number($total_endom) ?></div>
+    <div class="kpi-lbl">Endommagés sur la période</div>
+  </div>
+  <?php endif; ?>
 </div>
 
-<!-- STOCK CARDS -->
+<!-- ONGLETS -->
+<div class="riv-tabs">
+  <button type="button" class="riv-tab-btn active" data-tab="stock" onclick="rivTab('stock')">
+    <i class="ph-duotone ph-package"></i> Stock actuel
+  </button>
+  <button type="button" class="riv-tab-btn" data-tab="conso" onclick="rivTab('conso')">
+    <i class="ph-duotone ph-clipboard-text"></i> Historique consommation
+  </button>
+</div>
+
+<!-- STOCK -->
+<div class="riv-tab-panel active" id="rivTabStock">
+<div id="rivStock">
 <div style="font-family:'Montserrat',sans-serif;font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">
   <i class="ph-duotone ph-package" style="vertical-align:middle"></i> Stock actuel par site
 </div>
+<?php if ($f_site): ?>
 <?php
 $rivets_grouped = [];
 foreach ($stocks as $r) {
@@ -382,9 +456,45 @@ foreach ($stocks as $r) {
 </div>
 <?php endforeach; ?>
 </div>
+<?php else: ?>
+<div class="card">
+  <?php if (empty($riv_types)): ?>
+  <div style="text-align:center;padding:30px;color:var(--muted)">Aucune donnée de stock disponible.</div>
+  <?php else: ?>
+  <div class="table-wrap">
+    <table class="riv-matrix">
+      <thead><tr>
+        <th>Site</th>
+        <?php foreach ($riv_types as $t): ?><th><?= h($types_rivets[$t] ?? $t) ?></th><?php endforeach; ?>
+        <th>Total</th>
+      </tr></thead>
+      <tbody>
+      <?php foreach ($riv_site_names as $sid => $site_nom): $site_total = 0; ?>
+        <tr>
+          <td style="font-weight:600;color:var(--navy)"><?= h($site_nom) ?></td>
+          <?php foreach ($riv_types as $t): $cell = $riv_matrix[$sid][$t] ?? null; if ($cell) $site_total += $cell['quantite']; ?>
+          <td>
+            <?php if ($cell): $bas = $cell['quantite'] < 200; ?>
+            <span style="font-weight:700;color:<?= $bas ? 'var(--danger-d)' : 'var(--navy)' ?>"><?= fmt_number($cell['quantite']) ?></span>
+            <?php if ($bas): ?><i class="ph-duotone ph-warning" style="color:var(--danger-d);margin-left:3px" title="Stock bas"></i><?php endif; ?>
+            <?php else: ?><span style="color:var(--muted)">—</span><?php endif; ?>
+          </td>
+          <?php endforeach; ?>
+          <td style="font-family:'Montserrat',sans-serif;font-weight:800;color:var(--blue)"><?= fmt_number($site_total) ?></td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
+</div>
+</div>
 
 <!-- HISTORIQUE -->
-<div class="card">
+<div class="riv-tab-panel" id="rivTabConso">
+<div class="card" id="rivResultCard">
   <div class="card-header">
     <h3><i class="ph-duotone ph-clipboard-text" style="vertical-align:middle"></i>
       Consommation rivets — Points journaliers
@@ -429,6 +539,7 @@ foreach ($stocks as $r) {
       </tbody>
     </table>
   </div>
+</div>
 </div>
 
 <!-- MODAL APPROVISIONNER -->
@@ -493,6 +604,43 @@ function saveAjust(){
   ap({action:'ajuster',site_id:document.getElementById('aj-site').value,new_qte:document.getElementById('aj-qte').value,motif:document.getElementById('aj-motif').value})
     .then(d=>{if(d.success){toast(d.message,'success');document.getElementById('mAjust').classList.remove('open');setTimeout(()=>location.reload(),800);}else document.getElementById('ajAlert').innerHTML=`<div class="alert alert-danger">${d.message}</div>`;});
 }
+// ── Filtres sans rechargement de page (meme pattern que equipements.php et
+// pages/operations/bobines.php : fetch + DOMParser remplace les zones).
+let rivEnVol = null;
+function rivCharger(url){
+  if(!window.fetch || !window.DOMParser){ location.href = url; return; }
+  if(rivEnVol) try{ rivEnVol.abort(); }catch(e){}
+  const ctrl = window.AbortController ? new AbortController() : null;
+  rivEnVol = ctrl;
+  fetch(url, {credentials:'same-origin', signal: ctrl?ctrl.signal:undefined, headers:{'X-Requested-With':'fetch'}})
+    .then(r => { if(!r.ok) throw new Error(r.status); return r.text(); })
+    .then(html => {
+      if(rivEnVol !== ctrl) return;
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      ['rivKpis','rivStock','rivResultCard'].forEach(id => {
+        const neuf = doc.getElementById(id);
+        const ancien = document.getElementById(id);
+        if(!neuf || !ancien) throw new Error('structure');
+        ancien.replaceWith(neuf);
+      });
+      const ongletActif = document.getElementById('rivTabConso').classList.contains('active') ? 'conso' : 'stock';
+      document.getElementById('rivKpis').dataset.active = ongletActif;
+      history.pushState({riv:1}, '', url);
+      rivEnVol = null;
+    })
+    .catch(e => {
+      if(e && e.name==='AbortError') return;
+      rivEnVol = null;
+      location.href = url;
+    });
+}
+window.addEventListener('popstate', function(ev){ if(ev.state && ev.state.riv) location.reload(); });
+function rivTab(name){
+  document.querySelectorAll('.riv-tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
+  document.getElementById('rivTabStock').classList.toggle('active', name==='stock');
+  document.getElementById('rivTabConso').classList.toggle('active', name==='conso');
+  document.getElementById('rivKpis').dataset.active = name;
+}
 function appliquerFiltres(){
     const p=new URLSearchParams();
     p.set('from',document.getElementById('fFrom').value);
@@ -501,11 +649,13 @@ function appliquerFiltres(){
     const site=document.getElementById('fSite').value;
     if(site!=='0') p.set('site',site);
     <?php endif; ?>
-    location.href='?'+p.toString();
+    const fType=document.getElementById('fType');
+    if(fType && fType.value!=='') p.set('type',fType.value);
+    rivCharger(location.pathname+'?'+p.toString());
 }
 function resetFiltres(){
     const today=new Date(),y=today.getFullYear(),m=String(today.getMonth()+1).padStart(2,'0'),d=String(today.getDate()).padStart(2,'0');
-    location.href='?from='+y+'-'+m+'-01&to='+y+'-'+m+'-'+d;
+    rivCharger(location.pathname+'?from='+y+'-'+m+'-01&to='+y+'-'+m+'-'+d);
 }
 ['mAppro','mAjust'].forEach(id=>document.getElementById(id).addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.classList.remove('open');}));
 </script>

@@ -15,6 +15,53 @@ $user        = current_user();
 $page_title  = 'Permissions & Rôles';
 $active_page = 'permissions';
 
+// Source unique des modules gérés par cet écran (icône + libellé) —
+// utilisée à la fois pour générer le tableau et pour savoir quels
+// modules traiter à la sauvegarde/création de rôle (array_keys), au
+// lieu de listes recopiées à la main qui finissent par diverger (trouvé
+// avec inventaire/inventaire_rivets/inventaire_pmma/inventaire_equipements,
+// présents dans le tableau mais absents de la liste JS de sauvegarde —
+// remis silencieusement à zéro à chaque clic sur Sauvegarder, 2026-08-29).
+$modules = [
+    'affectations'       => ['<i class="ph ph-link" aria-hidden="true"></i>', 'Affectations'],
+    'affectations_it'    => ['<i class="ph ph-headset" aria-hidden="true"></i>', 'Affectations support IT'],
+    'agents'             => ['<i class="ph ph-users" aria-hidden="true"></i>', 'Annuaire agents'],
+    'bobines'            => ['<i class="ph ph-film-strip" aria-hidden="true"></i>', 'Bobines'],
+    'commandes'          => ['<i class="ph ph-storefront" aria-hidden="true"></i>', 'Commandes'],
+    'commandes_bobines'  => ['<i class="ph ph-shopping-cart" aria-hidden="true"></i>', 'Commandes bobines'],
+    'consommables'       => ['<i class="ph ph-flask" aria-hidden="true"></i>', 'Consommables'],
+    'delegations'        => ['<i class="ph ph-handshake" aria-hidden="true"></i>', 'Délégations'],
+    'demandes'           => ['<i class="ph ph-note-pencil" aria-hidden="true"></i>', 'Demandes internes'],
+    'departements'       => ['<i class="ph ph-buildings" aria-hidden="true"></i>', 'Départements'],
+    'ecarts_bobines'     => ['<i class="ph ph-warning-diamond" aria-hidden="true"></i>', 'Écarts bobines'],
+    'ecarts_rivets'      => ['<i class="ph ph-warning-diamond" aria-hidden="true"></i>', 'Écarts rivets'],
+    'ecarts_pmma'        => ['<i class="ph ph-warning-diamond" aria-hidden="true"></i>', 'Écarts PMMA'],
+    'ecarts_equipements' => ['<i class="ph ph-warning-diamond" aria-hidden="true"></i>', 'Écarts équipements'],
+    'equipements'        => ['<i class="ph ph-desktop" aria-hidden="true"></i>', 'Équipements'],
+    'import_emuci'       => ['<i class="ph ph-download-simple" aria-hidden="true"></i>', 'Import EMUCI'],
+    'interventions'      => ['<i class="ph ph-wrench" aria-hidden="true"></i>', 'Interventions maintenance'],
+    'inventaire'         => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Inventaire (accès module)'],
+    'inventaire_bobines' => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire bobines'],
+    'inventaire_rivets'  => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire rivets'],
+    'inventaire_pmma'    => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire PMMA'],
+    'inventaire_equipements' => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire équipements'],
+    'audit'              => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Journal d\'audit'],
+    'nomenclatures'      => ['<i class="ph ph-tag" aria-hidden="true"></i>', 'Nomenclatures'],
+    'pmma'               => ['<i class="ph ph-printer" aria-hidden="true"></i>', 'PMMA'],
+    'point_emuci'        => ['<i class="ph ph-magnifying-glass" aria-hidden="true"></i>', 'Point EMUCI'],
+    'operations'         => ['<i class="ph ph-truck" aria-hidden="true"></i>', 'Points journaliers'],
+    'rapport_journalier' => ['<i class="ph ph-file-text" aria-hidden="true"></i>', 'Rapport journalier IT'],
+    'rapports'           => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Rapports & Analyses'],
+    'rapports_gsb'       => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Rapports GSB'],
+    'receptions'         => ['<i class="ph ph-package" aria-hidden="true"></i>', 'Réceptions site'],
+    'resume_superviseur' => ['<i class="ph ph-chart-line-up" aria-hidden="true"></i>', 'Résumé superviseur'],
+    'rivets'             => ['<i class="ph ph-wrench" aria-hidden="true"></i>', 'Rivets'],
+    'sites'              => ['<i class="ph ph-buildings" aria-hidden="true"></i>', 'Sites'],
+    'users'              => ['<i class="ph ph-users" aria-hidden="true"></i>', 'Utilisateurs'],
+    'validation_stock'   => ['<i class="ph ph-check-circle" aria-hidden="true"></i>', 'Validation stock matin'],
+    'stock_bobines'      => ['<i class="ph ph-chart-line-up" aria-hidden="true"></i>', 'Vue stock bobines'],
+];
+
 // ============================================================
 //  AJAX
 // ============================================================
@@ -34,16 +81,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if ($role && $role['slug'] === 'superadmin')
             json_response(false, 'Les permissions du Super Administrateur ne peuvent pas être modifiées.');
 
-        $modules  = ['equipements','sites','consommables','nomenclatures','affectations','receptions',
-                       'bobines','inventaire_bobines','stock_bobines','validation_stock','commandes_bobines','rapports_gsb',
-                       'operations','rivets','pmma','point_emuci','import_emuci',
-                       'interventions','rapport_journalier','affectations_it',
-                       'commandes','demandes','agents','delegations','departements','users','audit','rapports'];
+        // array_keys() du $modules défini en haut de fichier — source
+        // unique partagée avec le tableau HTML et le JS (ALL_MODULES) : une
+        // case rendue à l'écran est forcément traitée ici.
+        $modules_keys = array_keys($modules);
         $actions  = ['can_create','can_read','can_update','can_delete','can_export'];
 
         db_begin();
         try {
-            foreach ($modules as $module) {
+            foreach ($modules_keys as $module) {
                 $perms = [];
                 foreach ($actions as $a) {
                     $key = "perm_{$role_id}_{$module}_{$a}";
@@ -83,13 +129,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             json_response(false, "Le slug '$slug' existe déjà.");
         db_query("INSERT INTO roles (nom,slug,description) VALUES (?,?,?)", [$nom, $slug, $desc]);
         $id = (int)db_last_id();
-        // Initialiser avec aucune permission
-        $modules = ['equipements','sites','consommables','nomenclatures','affectations','receptions',
-                    'bobines','inventaire_bobines','stock_bobines','validation_stock','commandes_bobines','rapports_gsb',
-                    'operations','rivets','pmma','point_emuci','import_emuci',
-                    'interventions','rapport_journalier','affectations_it',
-                    'commandes','demandes','agents','delegations','departements','users','audit','rapports'];
-        foreach ($modules as $m) {
+        // Initialiser avec aucune permission — array_keys() du $modules
+        // défini en haut de fichier, cf. save_permissions ci-dessus.
+        foreach (array_keys($modules) as $m) {
             db_query("INSERT INTO permissions (role_id,module,can_read) VALUES (?,?,0)", [$id, $m]);
         }
         audit_log($user['id'], 'CREATE', 'users', $id, "Création rôle $nom");
@@ -103,36 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 //  DONNÉES
 // ============================================================
 $roles   = db_fetch_all("SELECT * FROM roles ORDER BY id");
-$modules = [
-    'affectations'       => ['<i class="ph ph-link" aria-hidden="true"></i>', 'Affectations'],
-    'affectations_it'    => ['<i class="ph ph-headset" aria-hidden="true"></i>', 'Affectations support IT'],
-    'agents'             => ['<i class="ph ph-users" aria-hidden="true"></i>', 'Annuaire agents'],
-    'bobines'            => ['<i class="ph ph-film-strip" aria-hidden="true"></i>', 'Bobines'],
-    'commandes'          => ['<i class="ph ph-storefront" aria-hidden="true"></i>', 'Commandes'],
-    'commandes_bobines'  => ['<i class="ph ph-shopping-cart" aria-hidden="true"></i>', 'Commandes bobines'],
-    'consommables'       => ['<i class="ph ph-flask" aria-hidden="true"></i>', 'Consommables'],
-    'delegations'        => ['<i class="ph ph-handshake" aria-hidden="true"></i>', 'Délégations'],
-    'demandes'           => ['<i class="ph ph-note-pencil" aria-hidden="true"></i>', 'Demandes internes'],
-    'departements'       => ['<i class="ph ph-buildings" aria-hidden="true"></i>', 'Départements'],
-    'equipements'        => ['<i class="ph ph-desktop" aria-hidden="true"></i>', 'Équipements'],
-    'import_emuci'       => ['<i class="ph ph-download-simple" aria-hidden="true"></i>', 'Import EMUCI'],
-    'interventions'      => ['<i class="ph ph-wrench" aria-hidden="true"></i>', 'Interventions maintenance'],
-    'inventaire_bobines' => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire bobines'],
-    'audit'              => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Journal d\'audit'],
-    'nomenclatures'      => ['<i class="ph ph-tag" aria-hidden="true"></i>', 'Nomenclatures'],
-    'pmma'               => ['<i class="ph ph-printer" aria-hidden="true"></i>', 'PMMA'],
-    'point_emuci'        => ['<i class="ph ph-magnifying-glass" aria-hidden="true"></i>', 'Point EMUCI'],
-    'operations'         => ['<i class="ph ph-truck" aria-hidden="true"></i>', 'Points journaliers'],
-    'rapport_journalier' => ['<i class="ph ph-file-text" aria-hidden="true"></i>', 'Rapport journalier IT'],
-    'rapports'           => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Rapports & Analyses'],
-    'rapports_gsb'       => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Rapports GSB'],
-    'receptions'         => ['<i class="ph ph-package" aria-hidden="true"></i>', 'Réceptions site'],
-    'rivets'             => ['<i class="ph ph-wrench" aria-hidden="true"></i>', 'Rivets'],
-    'sites'              => ['<i class="ph ph-buildings" aria-hidden="true"></i>', 'Sites'],
-    'users'              => ['<i class="ph ph-users" aria-hidden="true"></i>', 'Utilisateurs'],
-    'validation_stock'   => ['<i class="ph ph-check-circle" aria-hidden="true"></i>', 'Validation stock matin'],
-    'stock_bobines'      => ['<i class="ph ph-chart-line-up" aria-hidden="true"></i>', 'Vue stock bobines'],
-];
+// $modules défini plus haut (avant le bloc AJAX) — source unique.
 $actions = [
     'can_read'   => ['<i class="ph ph-eye" aria-hidden="true"></i>', 'Lire'],
     'can_create' => ['<i class="ph ph-plus" aria-hidden="true"></i>', 'Créer'],
@@ -188,6 +201,9 @@ include __DIR__ . '/../../templates/header.php';
 .perm-pane{display:none}
 .perm-pane.active{display:block}
 
+/* Scroll interne au-delà de 8 lignes : hauteur = header (~46px) + 8 lignes (~50px/ligne).
+   Classe plutôt qu'id : ce wrapper est répété une fois par rôle (foreach $roles). */
+.perm-table-wrap{max-height:446px;overflow-y:auto}
 .perm-table{width:100%;border-collapse:separate;border-spacing:0}
 .perm-table thead{position:sticky;top:0;z-index:5}
 .perm-table th{padding:10px 14px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;text-align:left;background:var(--lighter,#f0f4f8);border-bottom:1px solid var(--border)}
@@ -295,6 +311,7 @@ include __DIR__ . '/../../templates/header.php';
   <?php else: ?>
   <!-- TABLEAU DES PERMISSIONS -->
   <div class="card">
+    <div class="perm-table-wrap">
     <table class="perm-table">
       <thead>
         <tr>
@@ -347,6 +364,7 @@ include __DIR__ . '/../../templates/header.php';
         <?php endforeach; ?>
       </tbody>
     </table>
+    </div>
   </div>
 
   <?php if($can_edit): ?>
@@ -391,6 +409,16 @@ include __DIR__ . '/../../templates/header.php';
 </div>
 
 <script>
+// Dérivé du même $modules PHP qui génère les lignes du tableau (au lieu
+// d'une liste JS recopiée à la main) : une case rendue à l'écran est
+// forcément dans cette liste, donc toujours effectivement sauvegardée.
+// Trouvé en debuggant pourquoi les droits 'inventaire'/'inventaire_rivets'/
+// 'inventaire_pmma'/'inventaire_equipements' se remettaient silencieusement
+// à zéro à chaque clic sur Sauvegarder — ils avaient été ajoutés au tableau
+// PHP mais pas à l'ancienne liste JS recopiée, donc jamais inclus dans le
+// FormData envoyé au serveur (2026-08-29).
+const ALL_MODULES = <?= json_encode(array_keys($modules)) ?>;
+
 function showPerm(id,btn){
   document.querySelectorAll('.perm-pane').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.perm-tab').forEach(b=>b.classList.remove('active'));
@@ -426,11 +454,7 @@ function toggleRow(roleId, module){
 
 function allOff(roleId){
   if(!confirm('Désactiver TOUTES les permissions de ce rôle ?'))return;
-  const modules=['equipements','nomenclatures','sites','affectations','consommables','receptions',
-    'bobines','inventaire_bobines','stock_bobines','validation_stock','commandes_bobines','rapports_gsb',
-    'operations','rivets','pmma','point_emuci','import_emuci',
-    'interventions','rapport_journalier','affectations_it',
-    'commandes','demandes','agents','delegations','departements','users','audit','rapports'];
+  const modules=ALL_MODULES;
   const actions=['can_read','can_create','can_update','can_delete','can_export'];
   modules.forEach(m=>actions.forEach(a=>{
     const b=document.getElementById(`perm_${roleId}_${m}_${a}`);
@@ -439,11 +463,7 @@ function allOff(roleId){
 }
 
 function savePerms(roleId){
-  const modules=['equipements','nomenclatures','sites','affectations','consommables','receptions',
-    'bobines','inventaire_bobines','stock_bobines','validation_stock','commandes_bobines','rapports_gsb',
-    'operations','rivets','pmma','point_emuci','import_emuci',
-    'interventions','rapport_journalier','affectations_it',
-    'commandes','demandes','agents','delegations','departements','users','audit','rapports'];
+  const modules=ALL_MODULES;
   const actions=['can_read','can_create','can_update','can_delete','can_export'];
   const fd=new FormData();
   fd.append('action','save_permissions');

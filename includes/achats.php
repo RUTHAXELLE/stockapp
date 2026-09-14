@@ -183,6 +183,38 @@ function ach_numero_feb(int $exercice): string {
     return sprintf('FEB-%d-%04d', $exercice, $suivant);
 }
 
+// Même motif que ach_numero_feb() ci-dessus, compteur par jour plutôt que
+// par exercice — cf. migration_achats_24_commande_compteurs.sql. Remplace
+// le tirage aléatoire de pages/commandes.php, sujet à collision sur
+// l'index unique commandes.numero_commande.
+function ach_numero_commande(): string {
+    $pdo         = get_db();
+    $jour        = date('Y-m-d');
+    $transaction_locale = !$pdo->inTransaction();
+    if ($transaction_locale) db_begin();
+    try {
+        db_query(
+            "INSERT INTO commande_compteurs (jour, dernier_numero) VALUES (?, 0)
+             ON CONFLICT (jour) DO NOTHING",
+            [$jour]
+        );
+        $row = db_fetch_one(
+            "SELECT dernier_numero FROM commande_compteurs WHERE jour = ? FOR UPDATE",
+            [$jour]
+        );
+        $suivant = (int)($row['dernier_numero'] ?? 0) + 1;
+        db_query(
+            "UPDATE commande_compteurs SET dernier_numero = ? WHERE jour = ?",
+            [$suivant, $jour]
+        );
+        if ($transaction_locale) db_commit();
+    } catch (Exception $e) {
+        if ($transaction_locale) db_rollback();
+        throw $e;
+    }
+    return sprintf('CMD-%s-%04d', date('Ymd'), $suivant);
+}
+
 // ── Urgence FEB : priorité de traitement, pas une note — trois niveaux,
 //    jamais un entier nu exposé à l'écran. Aligné sur le DEFAULT 0 de
 //    feb.urgence (0 = Normale).
@@ -656,7 +688,7 @@ function ach_basculer_vers_commande(int $feb_id, array $user): ?int {
     $transaction_locale = !$pdo->inTransaction();
     if ($transaction_locale) db_begin();
     try {
-        $num   = 'CMD-' . date('Ymd') . '-' . str_pad((string)rand(1, 9999), 4, '0', STR_PAD_LEFT);
+        $num   = ach_numero_commande();
         $notes = "Issue de la FEB {$feb['numero']} — demandeur $nom_demandeur";
         db_query(
             "INSERT INTO commandes (numero_commande, site_id, statut, notes, created_by, feb_id) VALUES (?,?,'en_attente',?,?,?)",

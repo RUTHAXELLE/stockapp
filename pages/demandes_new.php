@@ -10,6 +10,7 @@ require_once __DIR__ . '/../includes/demandes.php';
 require_once __DIR__ . '/../includes/demandes_champs.php';
 
 require_auth();
+require_permission('demandes', 'can_create');
 $user = current_user();
 $_SESSION['groupe_actif'] = 'DEMANDES';
 $page_title  = 'Nouvelle demande';

@@ -75,27 +75,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
 // ── FILTRES
 $f_site = $site_force ?: (int)($_GET['site'] ?? 0);
+$f_type = trim($_GET['type'] ?? '');
 $f_from = $_GET['from'] ?? date('Y-m-01');
 $f_to   = $_GET['to']   ?? date('Y-m-d');
+
+// Formats PMMA disponibles (liste globale, indépendante des filtres actifs)
+$types_list = db_fetch_all(
+    "SELECT DISTINCT type_pmma FROM stock_pmma_site WHERE type_pmma <> '' ORDER BY type_pmma"
+);
 
 // ── STOCK ACTUEL
 $stock_par_site = db_fetch_all(
     "SELECT sp.*, s.nom AS site_nom
      FROM stock_pmma_site sp
      JOIN sites s ON s.id = sp.site_id
-     WHERE (? = 0 OR sp.site_id = ?)
+     WHERE (? = 0 OR sp.site_id = ?) AND (? = '' OR sp.type_pmma = ?)
      ORDER BY s.nom, sp.type_pmma",
-    [$f_site ?: 0, $f_site ?: 0]
+    [$f_site ?: 0, $f_site ?: 0, $f_type, $f_type]
 );
-if (empty($stock_par_site) && !$f_site) {
+if (empty($stock_par_site) && !$f_site && $f_type === '') {
     $stock_par_site = db_fetch_all(
         "SELECT s.id AS site_id, s.nom AS site_nom, '' AS type_pmma, 0 AS quantite, 10 AS seuil_alerte
          FROM sites s WHERE s.actif=1 ORDER BY s.nom"
     );
 }
 
+// ── Matrice site × type (vue "tous les sites")
+$pmma_types        = [];
+$pmma_matrix       = [];
+$site_names_order  = [];
+foreach ($stock_par_site as $sp_item) {
+    $sid = $sp_item['site_id'];
+    if (!isset($site_names_order[$sid])) $site_names_order[$sid] = $sp_item['site_nom'];
+    if ($sp_item['type_pmma'] === '') continue;
+    $t = $sp_item['type_pmma'];
+    if (!in_array($t, $pmma_types, true)) $pmma_types[] = $t;
+    $pmma_matrix[$sid][$t] = ['quantite' => (int)$sp_item['quantite'], 'seuil' => (int)($sp_item['seuil_alerte'] ?? 10)];
+}
+sort($pmma_types);
+
 // ── CONSOMMATION (depuis les points journaliers)
 $ws_site = $f_site ? "AND p.site_id = $f_site" : '';
+$ws_type = '';
+$conso_params = [$f_from, $f_to];
+if ($f_type !== '') {
+    $ws_type = 'AND pu.type_pmma = ?';
+    $conso_params[] = $f_type;
+}
 $conso = db_fetch_all(
     "SELECT p.date_point, p.site_id, s.nom AS site_nom, pu.type_pmma,
             SUM(pu.utilises) AS utilises,
@@ -104,10 +130,10 @@ $conso = db_fetch_all(
      FROM op_pmma_utilises pu
      JOIN op_points_journaliers p ON p.id = pu.point_id
      JOIN sites s ON s.id = p.site_id
-     WHERE p.date_point BETWEEN ? AND ? $ws_site
+     WHERE p.date_point BETWEEN ? AND ? $ws_site $ws_type
      GROUP BY p.date_point, p.site_id, s.nom, pu.type_pmma
      ORDER BY p.date_point DESC",
-    [$f_from, $f_to]
+    $conso_params
 );
 
 // Lookup stock actuel : site_id_type → quantite
@@ -159,6 +185,7 @@ if (isset($_GET['export'])) {
     $site_label = $f_site
         ? (db_fetch_value("SELECT nom FROM sites WHERE id=?", [$f_site]) ?: 'Site inconnu')
         : 'Tous les sites';
+    $type_label = $f_type !== '' ? $f_type : 'Tous les formats';
 
     if ($export === 'xlsx') {
         $spreadsheet = new Spreadsheet();
@@ -271,7 +298,7 @@ if (isset($_GET['export'])) {
             <div style="font-size:9px;color:#64748b;margin-top:2px">Express Multiservices CI</div>
           </td>
         </tr></table>
-        <div class="sub">Période : ' . h($f_from) . ' → ' . h($f_to) . ' &nbsp;|&nbsp; Site : ' . h($site_label) . ' &nbsp;|&nbsp; Généré le ' . date('d/m/Y H:i') . '</div>
+        <div class="sub">Période : ' . h($f_from) . ' → ' . h($f_to) . ' &nbsp;|&nbsp; Site : ' . h($site_label) . ' &nbsp;|&nbsp; Format : ' . h($type_label) . ' &nbsp;|&nbsp; Généré le ' . date('d/m/Y H:i') . '</div>
         <table><thead><tr>
             <th>Date</th><th>Site</th><th>Type PMMA</th><th>Utilisés</th><th>Endommagés</th><th>Total sorti</th><th>Stock restant</th>
         </tr></thead><tbody>
@@ -356,7 +383,7 @@ if (isset($_GET['export'])) {
             <div style="font-size:9px;color:#64748b;margin-top:2px">Express Multiservices CI</div>
           </td>
         </tr></table>
-        <div class="sub">Période : ' . h($f_from) . ' → ' . h($f_to) . ' &nbsp;|&nbsp; Site : ' . h($site_label) . ' &nbsp;|&nbsp; Généré le ' . date('d/m/Y H:i') . '</div>
+        <div class="sub">Période : ' . h($f_from) . ' → ' . h($f_to) . ' &nbsp;|&nbsp; Site : ' . h($site_label) . ' &nbsp;|&nbsp; Format : ' . h($type_label) . ' &nbsp;|&nbsp; Généré le ' . date('d/m/Y H:i') . '</div>
         <table><thead><tr>
             <th style="text-align:left">Mois</th><th>Type PMMA</th><th>Utilisés</th><th>Endommagés</th><th>Total sorti</th><th>Stock restant</th>
         </tr></thead><tbody>
@@ -407,6 +434,15 @@ include __DIR__ . '/../templates/header.php';
 .mclose{width:30px;height:30px;border-radius:7px;border:1px solid var(--border);background:none;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center}
 .mbody{padding:22px}
 .mfoot{padding:12px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;position:sticky;bottom:0;background:white}
+.pmma-tabs{display:flex;gap:6px;border-bottom:2px solid var(--border);margin-bottom:18px}
+.pmma-tab-btn{background:none;border:none;padding:10px 16px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;display:flex;align-items:center;gap:6px}
+.pmma-tab-btn.active{color:var(--navy);border-bottom-color:var(--blue)}
+.pmma-tab-panel{display:none}
+.pmma-tab-panel.active{display:block}
+.pmma-matrix td,.pmma-matrix th{text-align:center}
+.pmma-matrix td:first-child,.pmma-matrix th:first-child{text-align:left}
+#pmmaKpis[data-active="stock"] .kpi[data-kpi-group="conso"]{display:none}
+#pmmaKpis[data-active="conso"] .kpi[data-kpi-group="stock"]{display:none}
 </style>
 
 <!-- TOOLBAR -->
@@ -455,10 +491,21 @@ include __DIR__ . '/../templates/header.php';
   <?php if (!$site_force): ?>
   <div>
     <label for="fSite">Site</label>
-    <select id="fSite">
+    <select id="fSite" onchange="appliquerFiltres()">
       <option value="0">Tous les sites</option>
       <?php foreach ($sites_list as $s): ?>
       <option value="<?= $s['id'] ?>" <?= $f_site == $s['id'] ? 'selected' : '' ?>><?= h($s['nom']) ?></option>
+      <?php endforeach; ?>
+    </select>
+  </div>
+  <?php endif; ?>
+  <?php if (!empty($types_list)): ?>
+  <div>
+    <label for="fType">Format PMMA</label>
+    <select id="fType" onchange="appliquerFiltres()">
+      <option value="">Tous les formats</option>
+      <?php foreach ($types_list as $t): ?>
+      <option value="<?= h($t['type_pmma']) ?>" <?= $f_type === $t['type_pmma'] ? 'selected' : '' ?>><?= h($t['type_pmma']) ?></option>
       <?php endforeach; ?>
     </select>
   </div>
@@ -470,42 +517,61 @@ include __DIR__ . '/../templates/header.php';
 </div>
 
 <!-- KPI -->
-<div class="kpi-bar">
+<div class="kpi-bar" id="pmmaKpis" data-active="stock">
   <?php
   $total_stock = array_sum(array_column($stock_par_site, 'quantite'));
   ?>
-  <div class="kpi">
+  <div class="kpi" data-kpi-group="stock">
     <div class="kpi-val" style="color:var(--blue)"><?= fmt_number($total_stock) ?></div>
     <div class="kpi-lbl">Total PMMA en stock</div>
   </div>
+  <?php foreach ($pmma_types as $typ): ?>
+  <div class="kpi" data-kpi-group="stock">
+    <div class="kpi-val" style="color:var(--blue);font-size:22px"><?= fmt_number($stock_type_map[$typ] ?? 0) ?></div>
+    <div class="kpi-lbl">Total <?= h($typ) ?> en stock</div>
+  </div>
+  <?php endforeach; ?>
   <?php if ($nb_stock_bas > 0): ?>
-  <div class="kpi" style="border-color:#fca5a5;background:#fff5f5">
+  <div class="kpi" data-kpi-group="stock" style="border-color:#fca5a5;background:#fff5f5">
     <div class="kpi-val" style="color:var(--danger-d)"><?= $nb_stock_bas ?></div>
     <div class="kpi-lbl">Type(s) en stock bas</div>
   </div>
   <?php endif; ?>
-  <div class="kpi">
+  <div class="kpi" data-kpi-group="conso">
     <div class="kpi-val" style="color:var(--navy)"><?= fmt_number($grand_total['total']) ?></div>
     <div class="kpi-lbl">Consommés sur la période</div>
   </div>
+  <?php foreach ($pmma_types as $typ): ?>
+  <div class="kpi" data-kpi-group="conso">
+    <div class="kpi-val" style="color:var(--blue);font-size:22px"><?= fmt_number($totaux_type[$typ]['total'] ?? 0) ?></div>
+    <div class="kpi-lbl"><?= h($typ) ?> Consommés</div>
+  </div>
+  <?php endforeach; ?>
   <?php if ($grand_total['endommages'] > 0): ?>
-  <div class="kpi" style="border-color:#fca5a5">
+  <div class="kpi" data-kpi-group="conso" style="border-color:#fca5a5">
     <div class="kpi-val" style="color:var(--danger-d)"><?= fmt_number($grand_total['endommages']) ?></div>
     <div class="kpi-lbl">Endommagés sur la période</div>
   </div>
   <?php endif; ?>
-  <?php foreach ($totaux_type as $typ => $tot): ?>
-  <div class="kpi">
-    <div class="kpi-val" style="color:var(--blue);font-size:22px"><?= fmt_number($tot['total']) ?></div>
-    <div class="kpi-lbl">Consommés — <?= h($typ) ?></div>
-  </div>
-  <?php endforeach; ?>
+</div>
+
+<!-- ONGLETS -->
+<div class="pmma-tabs">
+  <button type="button" class="pmma-tab-btn active" data-tab="stock" onclick="pmmaTab('stock')">
+    <i class="ph-duotone ph-package"></i> Stock actuel
+  </button>
+  <button type="button" class="pmma-tab-btn" data-tab="conso" onclick="pmmaTab('conso')">
+    <i class="ph-duotone ph-clipboard-text"></i> Historique consommation
+  </button>
 </div>
 
 <!-- STOCK PAR SITE -->
+<div class="pmma-tab-panel active" id="tabPanelStock">
+<div id="pmmaStock">
 <div style="font-family:'Montserrat',sans-serif;font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px">
   <i class="ph-duotone ph-package" style="vertical-align:middle"></i> Stock actuel par site
 </div>
+<?php if ($f_site): ?>
 <div class="pmma-grid">
   <?php
   $sites_grouped = [];
@@ -539,9 +605,45 @@ include __DIR__ . '/../templates/header.php';
   </div>
   <?php endforeach; ?>
 </div>
+<?php else: ?>
+<div class="card">
+  <?php if (empty($pmma_types)): ?>
+  <div style="text-align:center;padding:30px;color:var(--muted)">Aucune donnée de stock disponible.</div>
+  <?php else: ?>
+  <div class="table-wrap">
+    <table class="pmma-matrix">
+      <thead><tr>
+        <th>Site</th>
+        <?php foreach ($pmma_types as $t): ?><th><?= h($t) ?></th><?php endforeach; ?>
+        <th>Total</th>
+      </tr></thead>
+      <tbody>
+      <?php foreach ($site_names_order as $sid => $site_nom): $site_total = 0; ?>
+        <tr>
+          <td style="font-weight:600;color:var(--navy)"><?= h($site_nom) ?></td>
+          <?php foreach ($pmma_types as $t): $cell = $pmma_matrix[$sid][$t] ?? null; if ($cell) $site_total += $cell['quantite']; ?>
+          <td>
+            <?php if ($cell): $bas = $cell['quantite'] < $cell['seuil']; ?>
+            <span style="font-weight:700;color:<?= $bas ? 'var(--danger-d)' : 'var(--navy)' ?>"><?= $cell['quantite'] ?></span>
+            <?php if ($bas): ?><i class="ph-duotone ph-warning" style="color:var(--danger-d);margin-left:3px" title="Stock bas"></i><?php endif; ?>
+            <?php else: ?><span style="color:var(--muted)">—</span><?php endif; ?>
+          </td>
+          <?php endforeach; ?>
+          <td style="font-family:'Montserrat',sans-serif;font-weight:800;color:var(--blue)"><?= $site_total ?></td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
+</div>
+</div>
 
 <!-- TABLEAU CONSOMMATION -->
-<div class="card">
+<div class="pmma-tab-panel" id="tabPanelConso">
+<div class="card" id="pmmaResultCard">
   <div class="card-header">
     <h3><i class="ph-duotone ph-clipboard-text" style="vertical-align:middle"></i>
       Consommation PMMA — Points journaliers
@@ -596,6 +698,7 @@ include __DIR__ . '/../templates/header.php';
       </tbody>
     </table>
   </div>
+</div>
 </div>
 
 <?php if ($can_saisie): ?>
@@ -684,6 +787,43 @@ function ap(d){
     for(const[k,v] of Object.entries(d)) if(v!==undefined) fd.append(k,v);
     return fetch(window.location.href,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd}).then(r=>r.json());
 }
+// ── Filtres sans rechargement de page (meme pattern que equipements.php et
+// pages/operations/bobines.php : fetch + DOMParser remplace les zones).
+let pmmaEnVol = null;
+function pmmaCharger(url){
+  if(!window.fetch || !window.DOMParser){ location.href = url; return; }
+  if(pmmaEnVol) try{ pmmaEnVol.abort(); }catch(e){}
+  const ctrl = window.AbortController ? new AbortController() : null;
+  pmmaEnVol = ctrl;
+  fetch(url, {credentials:'same-origin', signal: ctrl?ctrl.signal:undefined, headers:{'X-Requested-With':'fetch'}})
+    .then(r => { if(!r.ok) throw new Error(r.status); return r.text(); })
+    .then(html => {
+      if(pmmaEnVol !== ctrl) return;
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      ['pmmaKpis','pmmaStock','pmmaResultCard'].forEach(id => {
+        const neuf = doc.getElementById(id);
+        const ancien = document.getElementById(id);
+        if(!neuf || !ancien) throw new Error('structure');
+        ancien.replaceWith(neuf);
+      });
+      const ongletActif = document.getElementById('tabPanelConso').classList.contains('active') ? 'conso' : 'stock';
+      document.getElementById('pmmaKpis').dataset.active = ongletActif;
+      history.pushState({pmma:1}, '', url);
+      pmmaEnVol = null;
+    })
+    .catch(e => {
+      if(e && e.name==='AbortError') return;
+      pmmaEnVol = null;
+      location.href = url;
+    });
+}
+window.addEventListener('popstate', function(ev){ if(ev.state && ev.state.pmma) location.reload(); });
+function pmmaTab(name){
+    document.querySelectorAll('.pmma-tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
+    document.getElementById('tabPanelStock').classList.toggle('active', name==='stock');
+    document.getElementById('tabPanelConso').classList.toggle('active', name==='conso');
+    document.getElementById('pmmaKpis').dataset.active = name;
+}
 function appliquerFiltres(){
     const p=new URLSearchParams();
     p.set('from',document.getElementById('fFrom').value);
@@ -692,11 +832,13 @@ function appliquerFiltres(){
     const site=document.getElementById('fSite').value;
     if(site!=='0') p.set('site',site);
     <?php endif; ?>
-    location.href='?'+p.toString();
+    const fType=document.getElementById('fType');
+    if(fType && fType.value!=='') p.set('type',fType.value);
+    pmmaCharger(location.pathname+'?'+p.toString());
 }
 function resetFiltres(){
     const today=new Date(),y=today.getFullYear(),m=String(today.getMonth()+1).padStart(2,'0'),d=String(today.getDate()).padStart(2,'0');
-    location.href='?from='+y+'-'+m+'-01&to='+y+'-'+m+'-'+d;
+    pmmaCharger(location.pathname+'?from='+y+'-'+m+'-01&to='+y+'-'+m+'-'+d);
 }
 <?php if($can_saisie): ?>
 async function enregistrerEntree(){

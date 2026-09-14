@@ -9,6 +9,7 @@ require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/demandes.php';
 
 require_auth();
+require_permission('demandes', 'can_read');
 $user = current_user();
 $_SESSION['groupe_actif'] = 'DEMANDES';
 $page_title  = 'Demandes à valider';

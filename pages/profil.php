@@ -34,10 +34,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     }
 
     if ($action === 'change_password') {
+        // trim() comme login.php : cf. changer-mot-de-passe.php.
         $result = auth_change_password(
             $user['id'],
-            $_POST['old_password'] ?? '',
-            $_POST['new_password'] ?? ''
+            trim($_POST['old_password'] ?? ''),
+            trim($_POST['new_password'] ?? '')
         );
         json_response($result['success'], $result['message']);
     }
