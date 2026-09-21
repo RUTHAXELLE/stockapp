@@ -1,7 +1,7 @@
 # Spécification fonctionnelle et technique — ERP EMUCI
 
-**Version du logiciel** : branche `main`, commit `5ecb558` (29 août 2026)
-**Version de la spécification** : 2.1
+**Version du logiciel** : branche `main`, commit `437102d` (21 septembre 2026)
+**Version de la spécification** : 3.0
 **Objet** : décrire ce que le système est, comment il est construit, les
 règles qu'il applique et les limites qu'il porte.
 
@@ -68,11 +68,17 @@ client.
 | Élément | Choix | Précision |
 |---|---|---|
 | Runtime | PHP 8.2 | Image `php:8.2-cli`, serveur web intégré |
-| Base | PostgreSQL 16 | Hébergée sur Neon |
+| Base | PostgreSQL 16 | Hébergée sur Neon — **environnement de recette** (voir 6.1) |
 | Hébergement | Render | Conteneur bâti depuis le `Dockerfile` du dépôt |
 | Accès données | PDO natif | Aucun ORM |
-| PDF | Dompdf 3.1 | **Seule dépendance applicative** du `composer.json` |
+| PDF | Dompdf 3.1 | Fiches FEB, point journalier, rapports |
+| Excel | PhpSpreadsheet 5.9 | Montée depuis 1.30.5 en septembre 2026, trois CVE de gravité haute (mémoire, SSRF) |
+| PPTX | ZipArchive natif | Open XML écrit à la main, sans dépendance |
 | Extensions PHP | pdo_pgsql, gd (freetype, jpeg) | gd requis par Dompdf |
+
+Les deux seules dépendances applicatives du `composer.json` sont
+PhpSpreadsheet et Dompdf. Elles sont auditées automatiquement à chaque envoi
+sur `main` (voir 6.5).
 
 ### 2.2 Il n'y a pas de framework, et cela se paie
 
@@ -104,14 +110,14 @@ environnement les a toutes reçues, ni dans quel ordre.
 
 | Module | Fonctions | Lignes |
 |---|---|---|
-| `achats.php` | 80 | 2 762 |
+| `achats.php` | 81 | 2 794 |
 | `dashboard.php` | 25 | 2 047 |
 | `groupes_config.php` | 5 | 580 |
 | `demandes.php` | 25 | 534 |
 | `pdf_achats.php` | 4 | 458 |
-| `session.php` | 16 | 327 |
+| `session.php` | 16 | 349 |
 | `demandes_champs.php` | 7 | 318 |
-| `auth.php` | 9 | 272 |
+| `auth.php` | 9 | 302 |
 | `inventaire.php` | 7 | 219 |
 | `upload.php` | 10 | 199 |
 
@@ -158,7 +164,8 @@ La configuration est portée par des constantes (`APP_URL`, `APP_NAME`,
 
 ## 3. Modèle de données
 
-**105 tables.**
+**106 tables** — la dernière en date, `commande_compteurs`, a été ajoutée en
+septembre 2026 pour la numérotation atomique des commandes (voir 4.2).
 
 | Domaine | Tables | Principales |
 |---|---|---|
@@ -330,8 +337,9 @@ exception.
 
 ### 4.2 Verrouillage explicite
 
-**Neuf `SELECT … FOR UPDATE`** dans le code. Le cas le plus significatif est
-le débit du stock magasin lors d'une réception d'achat :
+**Dix `SELECT … FOR UPDATE`** dans le code — neuf jusqu'en septembre 2026, le
+dixième étant le compteur de commandes décrit plus bas. Le cas le plus
+significatif est le débit du stock magasin lors d'une réception d'achat :
 
 ```mermaid
 sequenceDiagram
@@ -350,6 +358,26 @@ sequenceDiagram
 
 Sans ce verrou, deux expéditions simultanées du même article liraient le même
 disponible et le débiteraient chacune de leur côté.
+
+**Le second usage est la numérotation des documents.** Deux compteurs suivent
+le même motif : `feb_compteurs` pour les expressions de besoin, par exercice,
+et `commande_compteurs` pour les commandes, par jour.
+
+```php
+INSERT INTO commande_compteurs (jour, dernier_numero) VALUES (?, 0)
+  ON CONFLICT (jour) DO NOTHING;
+SELECT dernier_numero FROM commande_compteurs WHERE jour = ? FOR UPDATE;
+UPDATE commande_compteurs SET dernier_numero = ? WHERE jour = ?;
+```
+
+> **Pourquoi ce compteur existe.** La numérotation des commandes se faisait
+> auparavant par tirage aléatoire — `CMD-Ymd-` suivi de quatre chiffres tirés
+> au hasard. Sur un index d'unicité, une collision fait échouer l'insertion
+> avec une erreur PostgreSQL brute (23505), que l'utilisateur voit comme un
+> plantage sans explication. Un compteur verrouillé ne collisionne pas.
+>
+> `ach_numero_commande()` respecte la transaction appelante : elle n'ouvre la
+> sienne que si aucune n'est déjà en cours.
 
 ### 4.3 Courses évitées par la condition de mise à jour
 
@@ -376,13 +404,41 @@ et la réouverture administrative.
 | Élément | Mise en œuvre |
 |---|---|
 | Hachage | `password_hash()` en **bcrypt, coût 12** |
+| Longueur minimale | 8 caractères |
 | Changement imposé | `must_change_password` — bloque toute page tant qu'il n'est pas fait |
 | Réinitialisation | Jeton en base avec date d'expiration (`reset_token`, `reset_token_expiry`) |
 | Nettoyage | Les espaces de bord sont retirés à la saisie **et** à la connexion |
+| Verrouillage | **Cinq échecs consécutifs → compte bloqué quinze minutes** |
 
 Le nettoyage des espaces n'est pas cosmétique : un mot de passe collé depuis
 un e-mail avec une espace de fin était enregistré tel quel puis refusé à la
 connexion, ce qui bloquait le compte.
+
+#### Verrouillage après échecs répétés
+
+Deux colonnes sur `users` portent le mécanisme : `failed_login_attempts` et
+`locked_until`.
+
+| Événement | Effet |
+|---|---|
+| Échec de connexion sur un compte existant | Incrémente le compteur |
+| Cinquième échec | `locked_until = NOW() + 15 minutes`, compteur remis à zéro, **entrée d'audit nominative** |
+| Tentative pendant le verrou | Refus, avec le nombre de minutes restantes |
+| Connexion réussie | Compteur et verrou effacés |
+| Changement ou réinitialisation du mot de passe | Compteur et verrou effacés |
+
+> **La dernière ligne n'est pas une commodité.** Sans elle, un administrateur
+> qui réinitialise le mot de passe d'un compte verrouillé le laisserait bloqué
+> jusqu'à l'expiration du verrou, malgré le nouveau mot de passe.
+
+La durée retenue — quinze minutes — est celle du délai d'inactivité de
+session, pour ne pas introduire une seconde convention de durée dans
+l'application.
+
+Le compteur est simple, sans fenêtre glissante horodatée par tentative : il
+remonte à zéro à chaque connexion réussie ou dès qu'un verrouillage est posé.
+Cela suffit à ralentir un essai automatisé, sans la complexité d'un historique
+par tentative.
 
 ### 5.2 Session
 
@@ -390,13 +446,37 @@ connexion, ce qui bloquait le compte.
 |---|---|
 | `cookie_httponly` | `true` — le cookie est hors de portée du JavaScript |
 | `cookie_samesite` | `Lax` |
-| `cookie_secure` | Activé **si** la requête arrive en HTTPS |
+| `cookie_secure` | Activé si la requête arrive en HTTPS, **`X-Forwarded-Proto` compris** |
 | Inactivité | **900 secondes**, soit quinze minutes |
 
 La déconnexion pour inactivité est un garde-fou serveur, tracé dans le
 journal d'audit.
 
-### 5.3 Injection SQL
+> **Le détail qui compte derrière un proxy.** Render termine le TLS à sa
+> frontière et transmet en HTTP simple au conteneur : `$_SERVER['HTTPS']`
+> n'est donc **jamais** posé en production. Un test limité à cette seule
+> variable laissait le cookie de session sans attribut `Secure`, malgré un
+> HTTPS réel de bout en bout côté navigateur. La détection s'appuie désormais
+> aussi sur l'en-tête `X-Forwarded-Proto` posé par le proxy.
+
+### 5.3 En-têtes de sécurité
+
+Posés dans `includes/session.php`, chargé par la quasi-totalité des écrans,
+avant toute sortie.
+
+| En-tête | Valeur | Effet |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | Interdit au navigateur de deviner le type d'une réponse |
+| `X-Frame-Options` | `SAMEORIGIN` | Empêche l'inclusion dans un cadre tiers |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Limite la fuite d'URL vers l'extérieur |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Posé **uniquement en HTTPS** |
+| `X-Powered-By` | *retiré* | Ne publie plus la version de PHP |
+
+`SAMEORIGIN` plutôt que `DENY` : l'écran de paramétrage des fournisseurs
+prévisualise les pièces jointes dans un cadre de même origine, que `DENY`
+casserait.
+
+### 5.4 Injection SQL
 
 **Aucune superglobale n'est interpolée dans une requête.** Vérifié par
 balayage de tous les fichiers PHP du dépôt : zéro occurrence de `$_GET`,
@@ -416,11 +496,11 @@ Deux mécanismes coexistent :
 > `dash_filtre_site()` montre la bonne façon de faire : elle renvoie un
 > fragment **paramétré**, `AND colonne = ?`, avec sa valeur à part.
 
-### 5.4 Injection HTML
+### 5.5 Injection HTML
 
 L'échappement passe par l'aide `h()`, appliquée à toute donnée rendue.
 
-### 5.5 Téléversements
+### 5.6 Téléversements
 
 | Contrôle | Valeur |
 |---|---|
@@ -431,7 +511,48 @@ L'échappement passe par l'aide `h()`, appliquée à toute donnée rendue.
 Vérifier le type réel plutôt que l'extension est le bon choix : un `.pdf`
 renommé ne passe pas.
 
-### 5.6 Ce qui n'est pas en place
+### 5.7 Le contrôle doit être posé à chaque action, pas à l'écran
+
+C'est la leçon structurante de l'audit de septembre 2026, et elle découle
+directement de l'absence de routeur (2.2).
+
+Un fichier de page porte souvent **plusieurs actions** : l'affichage, et une
+série d'actions AJAX traitées en tête du même fichier. Une barrière posée une
+fois en haut du fichier protège l'ouverture de l'écran — elle ne dit rien du
+droit requis par chaque action.
+
+Le motif défaillant :
+
+```php
+require_permission('affectations_it', 'can_read');   // barrière d'écran
+…
+if ($action === 'promouvoir') {                       // action de modification
+    // … aucun contrôle ici : can_read suffisait
+}
+```
+
+Cinq occurrences ont été corrigées, dont deux permettaient une élévation de
+privilège réelle :
+
+| Écran | Action | Droit exigé auparavant | Droit exigé désormais |
+|---|---|---|---|
+| `affectations_it.php` | `toggle`, `promouvoir` | `can_read` sur l'écran | `can_update` |
+| `import_emuci.php` | Import OptoPlate, OptoTrace | `can_read` sur l'écran | `can_create` |
+| `interventions.php` | `demande_coordinateur` | `can_read` sur l'écran | `can_create` |
+| `reception_site.php` | `add_message` | `can_read` | `can_update` |
+| `operations/point_pdf.php` | Consultation d'un brouillon | Tout coordinateur de site | **Son auteur seul** |
+
+> **Le cas `affectations_it` mérite d'être compris.** Un compte
+> `maintenance_info` disposait de `can_read` sur cet écran mais pas de
+> `can_update`. L'action `promouvoir` ne vérifiant rien, il pouvait basculer
+> un compte — le sien compris — vers le profil `support_it` et s'ouvrir de
+> nouveaux modules. La faille n'était visible ni à l'écran ni dans la matrice
+> des droits : seule la lecture du code la révélait.
+
+**Règle à appliquer** : toute action qui écrit vérifie son propre droit, sur
+la même ligne que le premier accès aux données qu'elle modifie.
+
+### 5.8 Ce qui n'est pas en place
 
 > **Aucune protection CSRF.** Aucun jeton anti-rejeu n'est émis ni vérifié.
 > Le cookie de session étant en `SameSite=Lax`, les requêtes intersites en
@@ -445,12 +566,52 @@ C'est la dette de sécurité la plus nette du produit.
 
 ## 6. Exploitation
 
-### 6.1 Déploiement
+### 6.1 Deux environnements, deux moteurs
 
-Le conteneur est bâti depuis le `Dockerfile` du dépôt et déployé sur Render.
-La base est un service Neon distinct, joint par `DATABASE_URL`.
+> **Point de cadrage, corrigé le 21 septembre 2026.** L'installation Render +
+> Neon a longtemps été documentée comme « la production ». Elle ne l'est pas :
+> c'est l'**environnement de recette**. La production visée est un serveur
+> dédié, avec une base créée séparément.
 
-### 6.2 Évolutions de schéma
+| | Recette | Production (cible) |
+|---|---|---|
+| Branche | `main` | `vps-mysql` |
+| Serveur | Render, conteneur `php:8.2-cli` | VPS dédié, Apache + PHP 8.4 |
+| Base | PostgreSQL 16 (Neon), `DATABASE_URL` | MySQL 8, `.env` local |
+| Déploiement | Automatique à chaque envoi sur `main` | `deploy.sh`, idempotent, avec sauvegarde préalable |
+| Dépendances | `composer install` à la construction de l'image | `vendor/` **commité dans la branche** — aucune installation sur le serveur |
+
+**Conséquence sur l'écriture des requêtes.** Les deux branches portent le
+même produit sur deux moteurs. `includes/db.php` diffère (`pdo_pgsql` contre
+`pdo_mysql`), et toute requête employant une syntaxe propre à PostgreSQL —
+`INTERVAL '15 minutes'`, `ON CONFLICT`, `::date` — doit être traduite lors du
+report sur `vps-mysql`. Les migrations de droits existent donc en deux
+versions, `ON CONFLICT DO UPDATE` d'un côté, `ON DUPLICATE KEY UPDATE` de
+l'autre.
+
+**La migration des données** de la recette vers la production est un travail
+distinct du portage du code : un script dédié copie table par table, ignore
+les tables absentes de la cible plutôt que d'échouer, isole les lignes
+refusées par une contrainte, et réaligne les auto-incréments sur le dernier
+identifiant migré.
+
+### 6.2 Limites de téléversement du serveur
+
+L'image PHP officielle n'embarque pas de `php.ini`. PHP retombe alors sur ses
+valeurs compilées : **2 Mo par fichier, 8 Mo par requête**. Les exports
+OptoPlate et OptoTrace les dépassent, et étaient **rejetés avant même
+d'atteindre le code applicatif** (`UPLOAD_ERR_INI_SIZE`), sans message
+exploitable.
+
+Le `Dockerfile` pose désormais `upload_max_filesize = 50M`,
+`post_max_size = 55M` et `memory_limit = 256M` — ce dernier parce que
+PhpSpreadsheet charge le classeur entier en mémoire pour le lire.
+
+Le contrôle applicatif de 10 Mo (5.6) reste la limite effective pour les
+pièces jointes ; ces réglages ne font que laisser la requête arriver jusqu'à
+lui.
+
+### 6.3 Évolutions de schéma
 
 Fichiers `sql/`, appliqués à la main. **Trois d'entre eux sont écrits en
 syntaxe MySQL** (accents graves, `AUTO_INCREMENT`, `ENGINE=`) et sont
@@ -464,14 +625,29 @@ PostgreSQL, mais leur présence induit en erreur.
 > erreur » alors que rien n'est passé. Le script de chargement local cherche
 > désormais `error` sans distinction de casse.
 
-### 6.3 Journalisation
+### 6.4 Journalisation
 
 - **Audit métier** : table `audit_log`, alimentée par `audit_log()`.
 - **Erreurs applicatives** : `error_log()`, visible dans les journaux du
   conteneur. Le registre du tableau de bord s'en sert pour signaler un bloc
   en échec sans casser la page.
 
-### 6.4 Environnement de développement
+### 6.5 Intégration continue de sécurité
+
+Un workflow GitHub Actions (`.github/workflows/security-ci.yml`) s'exécute à
+chaque envoi et à chaque demande de fusion sur `main` :
+
+| Étape | Outil | Bloquant |
+|---|---|---|
+| Analyse statique | Semgrep, règles OWASP Top Ten + PHP | **Non** — le volume de signalements sur un dépôt existant n'a pas encore été trié |
+| Vulnérabilités des dépendances | `composer audit` | **Oui** — peu de bruit attendu sur deux dépendances |
+| Publication des résultats | SARIF vers l'onglet Security du dépôt | — |
+
+Aucune étape de déploiement n'y figure : Render redéploie déjà
+automatiquement depuis `main`. Un second déclencheur serait redondant, pas
+une sécurité supplémentaire.
+
+### 6.6 Environnement de développement
 
 Docker Compose fournit PostgreSQL 16 et PHP 8.2, avec chargement automatique
 du schéma. C'est ce qui permet de vérifier une page en l'exécutant plutôt
@@ -485,25 +661,93 @@ qu'en la relisant.
 
 ### 7.1 Le modèle
 
-**Seize rôles**, **trente-sept modules**, **cinq droits** par module :
+**Seize rôles**, **quarante-deux modules**, **cinq droits** par module :
 `can_read`, `can_create`, `can_update`, `can_delete`, `can_export`.
 
 La table `permissions` porte une ligne par couple (rôle, module).
 
-### 7.2 La règle de repli, à connaître
+Quarante-deux identifiants de module sont contrôlés dans le code. Ils ne se
+résolvent pas tous de la même façon :
 
-> Un rôle dont **aucune** permission n'est renseignée n'est pas traité comme
-> interdit : il voit le profil par défaut.
+| Catégorie | Nombre | Résolution |
+|---|---|---|
+| Exposés dans la matrice Admin → Permissions | 37 | Table `permissions`, administrables depuis l'interface |
+| Contrôlés mais absents de la matrice | 4 | Table `permissions`, **modifiables uniquement par migration SQL** |
+| Hors table par conception | 1 | `inventaire_sessions`, par délégation nominative (7.3) |
 
-C'est délibéré — une configuration oubliée ne doit pas ressembler à un refus.
-Vérifié en base le 2026-07-30 : cinq rôles étaient dans ce cas, dont
-`lecteur`, `gestionnaire_stock_bobines` et `maintenance_info`.
+> **Les quatre modules Achats** — `achats`, `achats_dashboard`,
+> `achats_param`, `achats_suivi` — protègent des écrans réels et lisent bien
+> la table des permissions, mais n'apparaissent pas dans la matrice. Un
+> administrateur ne peut pas ajuster les droits du module Achats depuis
+> l'interface. La branche `vps-mysql` porte un correctif sur ce point ;
+> `main` ne l'a pas encore.
 
-**Conséquence de sécurité** : tant qu'un rôle n'a aucune permission, le
-paramétrage ne le restreint pas. Le repli doit être vu comme une phase de
-transition, pas comme un état stable.
+L'inverse n'existe pas : aucun module affiché dans la matrice n'est inutilisé
+dans le code.
 
-### 7.3 Portées implicites
+#### Le piège de la liste recopiée
+
+L'écran de permissions construit ses lignes depuis un tableau PHP, mais
+envoyait autrefois au serveur une **liste de modules recopiée à la main en
+JavaScript**. Les deux listes ont divergé : les modules ajoutés côté PHP
+n'étaient pas inclus dans les données transmises, donc **remis silencieusement
+à zéro à chaque enregistrement**. Les droits d'inventaire en ont fait les
+frais.
+
+La liste JavaScript est désormais dérivée du même tableau PHP
+(`json_encode(array_keys($modules))`) : une case rendue à l'écran est
+nécessairement sauvegardée.
+
+### 7.2 La règle de repli, et son périmètre exact
+
+> Un rôle dont **aucune** permission n'est renseignée voit **tous les blocs du
+> tableau de bord**. Ce repli ne s'applique qu'au tableau de bord.
+
+La distinction est essentielle et a longtemps été énoncée trop largement.
+
+| Mécanisme | Rôle sans aucune permission | Rôle avec permissions, module absent |
+|---|---|---|
+| Accès à une page (`require_permission`) | **Refusé** — 403 | **Refusé** — 403 |
+| Bloc du tableau de bord (`dash_bloc_visible`) | **Affiché** — repli | Masqué |
+
+`_check_permission_db()` interroge la table et renvoie faux si aucune ligne
+n'existe : il n'y a **aucun repli sur l'accès aux pages**. Le repli est porté
+par `dash_role_a_des_permissions()`, consultée uniquement par la visibilité
+des blocs.
+
+**Conséquence pratique** : un rôle non paramétré n'a accès à rien, mais son
+tableau de bord paraît complet. L'écart entre les deux impressions est un
+piège de diagnostic — c'est la page qui dit la vérité, pas l'accueil.
+
+**Conséquence de sécurité** : livrer un écran sans livrer sa ligne de
+permission le rend invisible à tous sauf `admin` et `superadmin`, et aucune
+erreur ne le signale. C'est arrivé sur six écrans en septembre 2026 (9.4).
+
+### 7.3 Trois accès qui ne passent pas par la table
+
+`can()` traite trois cas avant de consulter les permissions. Chacun répond à
+un besoin que la matrice rôle × module ne sait pas exprimer.
+
+**Les sessions d'inventaire sont nominatives.** Le module
+`inventaire_sessions` **n'existe jamais dans la table `permissions`** :
+l'accès est réservé à `admin`/`superadmin`, sauf délégation explicite à une
+personne précise via la table `delegations`. Le code refuse délibérément de
+retomber sur la table — s'il le faisait, l'ajout accidentel d'une ligne
+donnerait un accès que personne n'a voulu, et masquerait le diagnostic.
+
+**Le N+1 d'un gestionnaire de stock lit les commandes de son périmètre**,
+même si son rôle ne porte pas le droit. La règle est ciblée sur la
+**personne** réellement N+1 (`user_departements.is_n1`), pas sur un rôle :
+accordé par rôle dans la matrice, l'accès s'étendrait à tous les porteurs de
+ce rôle. La lecture seule est volontaire — le visa reste au superviseur
+opération.
+
+**Le gestionnaire opération est en lecture seule hors délégation.** Sur un
+module qui lui est délégué, ses droits sont ceux de la table. Sur tout autre
+module, **seul `can_read` peut passer** : les droits d'écriture sont refusés
+sans consulter la table.
+
+### 7.4 Portées implicites
 
 Deux restrictions ne passent pas par la table des permissions :
 
@@ -512,7 +756,32 @@ Deux restrictions ne passent pas par la table des permissions :
 - **`maintenance_info`** est restreint à la catégorie d'équipements
   `informatique`.
 
-### 7.4 Délégation
+### 7.5 Les sous-rôles Support IT
+
+Le rôle `support_it` n'ouvre **rien** par lui-même. Ses droits viennent des
+sous-rôles actifs portés par `support_it_roles`, résolus à chaque requête par
+`_support_it_can()`.
+
+| Sous-rôle | Modules ouverts |
+|---|---|
+| `maintenance` | `interventions`, `equipements`, `sites` |
+| `controleur_production` | `import_emuci`, `point_emuci`, `equipements`, `sites` |
+| `gestionnaire_bobines` | `bobines`, `inventaire_bobines`, `equipements`, `sites` |
+
+**Une exception, et elle est nécessaire.** Le module `demandes` est transverse
+— il concerne tous les employés, quel que soit leur métier. S'il était filtré
+par sous-rôle IT, aucun compte `support_it` n'y accéderait jamais, quoi que
+porte la table `permissions`. Il est donc évalué directement sur
+`permissions`, sans passer par la grille ci-dessus.
+
+> **Le risque de bascule.** Un compte migré vers `support_it` sans qu'un
+> sous-rôle soit activé dans le même mouvement perd tout accès, sans message
+> explicite — l'inverse d'un compte resté sur son ancien rôle, qui
+> fonctionne. La migration qui a fusionné `maintenance_info` dans `support_it`
+> pose donc le sous-rôle **avant** de changer le rôle, pour qu'une
+> interruption laisse le compte fonctionnel plutôt que muet.
+
+### 7.6 Délégation
 
 Un utilisateur peut déléguer ses visas à un autre pour une période donnée
 (`delegations`). Sans cela, une demande reste bloquée à l'étape d'une
@@ -627,15 +896,89 @@ dessous, le site remonte dans les alertes.
 
 ### 9.4 Inventaires
 
-Quatre inventaires indépendants — bobines, rivets, PMMA, équipements — bâtis
-sur le même modèle : une table de session, une table de détail, une table
-d'écarts.
+Quatre natures de stock sont inventoriées — bobines, rivets, PMMA,
+équipements — sur le même modèle en trois tables : l'inventaire
+(`inventaires_*`), son détail ligne à ligne (`inventaire_details_*`), et les
+écarts constatés (`ecarts_*`). Une quatrième table par nature
+(`inventaire_corrections_*`) porte les demandes de correction.
 
-Une session est en `brouillon` tant qu'elle n'est pas clôturée. L'écran
-d'écarts compare le comptage physique au stock théorique.
+#### La session, et ce qu'elle déclenche
 
-`includes/inventaire.php` porte la création des sessions, avec un libellé de
-période automatique.
+La session (`inventaire_sessions`) est l'objet d'administration : elle porte
+une périodicité, une date de début, et la liste des sites concernés
+(`inventaire_session_sites`). Elle passe de `ouverte` à `cloturee`.
+
+| Périodicité | Durée |
+|---|---|
+| `mensuel` | 1 mois |
+| `trimestriel` | 3 mois |
+| `semestriel` | 6 mois |
+| `annuel` | 12 mois |
+
+**La date de fin n'est jamais saisie** : elle est déduite de la périodicité
+(`inv_date_fin()` — début + N mois − 1 jour). Le libellé l'est aussi quand
+l'administrateur n'en fournit pas : « Inventaire mensuel — mars 2026 »,
+« Inventaire trimestriel — T2 2026 ».
+
+> **L'ouverture d'une session provisionne les inventaires.** Pour chaque site
+> rattaché, l'application crée l'inventaire de chaque nature et **génère
+> toutes ses lignes de détail** à partir du stock du moment. L'inventaire naît
+> donc rempli du théorique, prêt à recevoir le physique.
+
+#### Ce qui distingue les quatre natures
+
+| Nature | Unité de comptage | Source du théorique | Particularité |
+|---|---|---|---|
+| Bobines | La bobine, objet individuel | `op_bobines.stock_systeme` | Seule nature à calculer aussi la consommation quotidienne moyenne sur 30 jours et l'écart entre saisie terrain et données EMUCI du jour |
+| Rivets | Le **type** de rivet, quantité agrégée par site | `op_stock_rivets` | Le détail est clé sur `type_rivet`, pas sur un identifiant d'objet |
+| PMMA | Le **type** de PMMA, quantité agrégée | `stock_pmma_site` | Le type est un texte libre : la liste dépend de ce qui existe en stock |
+| Équipements | L'équipement, objet individuel | `equipements` actifs du site | **Pas de quantité** — c'est une checklist de présence : trouvé / manquant |
+
+L'inventaire des équipements est le seul à ne figer aucun stock système : un
+équipement est présent ou absent, il n'a pas de quantité à comparer.
+
+#### L'écart déjà connu ne se recompte pas
+
+Chaque ligne de détail porte `ecart_connu_avant` : la somme des écarts
+**déjà ouverts** sur cet objet au moment où l'inventaire est créé.
+
+C'est ce qui évite de compter deux fois le même manquant — une fois au
+constat initial, une fois à l'inventaire suivant tant que le traitement n'est
+pas terminé. Le compteur lit les écarts au statut `ouvert` uniquement.
+
+#### Les refus, et pourquoi ils sont explicites
+
+Deux cas refusent la création plutôt que de produire un inventaire vide ou
+doublon :
+
+- un inventaire de même nature existe déjà pour ce site, cette date et cette
+  périodicité, sans être annulé ;
+- le site n'a rien à compter — aucune bobine active, aucun stock de rivets ou
+  de PMMA, aucun équipement affecté.
+
+Le second cas mérite le message explicite qu'il reçoit : un inventaire vide
+serait indiscernable d'un inventaire non saisi.
+
+#### Cycles de vie
+
+| Objet | États |
+|---|---|
+| Session | `ouverte` → `cloturee` (ou `annule`) |
+| Inventaire | `brouillon` → `valide` (ou `annule`) |
+| Écart | `ouvert` → `resolu` |
+| Demande de correction | `en_attente` → `autorise` ou `refuse` → `traite` |
+
+**La création d'un inventaire journalier par un coordinateur de site n'est
+plus possible** : elle dépend désormais de la session ouverte par
+l'administration.
+
+#### Les six écrans ont failli être invisibles
+
+Les écrans Inventaire et Écarts pour les équipements, le PMMA et les rivets
+ont été livrés et déployés **sans les lignes de permission correspondantes**.
+Conséquence de la règle 7.1 — module absent vaut refus — ils étaient
+invisibles pour tous les rôles sauf `admin` et `superadmin`, sans qu'aucune
+erreur ne le signale. Corrigé en septembre 2026, sur les deux branches.
 
 ---
 
@@ -1060,12 +1403,23 @@ validation, bon de commande — et l'impression du point journalier.
    PostgreSQL, mais leur présence est trompeuse.
 4. **Deux pages de profil** coexistent, `mon_profil.php` et `profil.php`, la
    seconde n'étant presque plus référencée.
+5. **Quatre modules Achats hors matrice** (7.1). Leurs droits ne se changent
+   que par migration SQL sur `main`, alors que `vps-mysql` les expose déjà :
+   les deux branches divergent sur ce point.
+6. **Aucun suivi des migrations appliquées.** L'état d'une base ne se déduit
+   que par inspection de sa structure. Un outil d'inventaire existe
+   (`tools/inventaire_migrations.php`), la table de suivi reste à créer.
+7. **Deux moteurs à maintenir en parallèle.** PostgreSQL en recette, MySQL en
+   production : chaque requête à syntaxe propriétaire existe en deux versions,
+   et rien n'empêche mécaniquement les deux branches de diverger.
 
 ### 14.3 Ce que cette spécification n'établit pas
 
 - **Les volumes cibles et la performance attendue.** Aucun objectif chiffré
   n'est inscrit dans le code.
-- **La politique de sauvegarde et de restauration.**
+- **La politique de sauvegarde et de restauration.** Un protocole
+  export/restauration a été rédigé et éprouvé hors de ce document ; il
+  s'appliquera à la base de production lors de sa création.
 - **Les exigences de conformité** applicables aux données personnelles des
   agents.
 - **Le comportement voulu** là où il diffère du comportement implémenté.
@@ -1081,3 +1435,4 @@ validation, bon de commande — et l'impression du point journalier.
 | 1.1 | 2026-08-29 | `5ecb558` | Workflows ajoutés ; deux statuts manquants corrigés (`en_attente_validation`, `en_attente_n1`) |
 | 2.0 | 2026-08-30 | `5ecb558` | Partie technique réelle : exécution, transactions et concurrence, sécurité, exploitation |
 | 2.1 | 2026-08-30 | `5ecb558` | Dictionnaire des tables centrales ; schémas en SVG plutôt qu'en mermaid sur la page publiée |
+| 3.0 | 2026-09-21 | `437102d` | Remise à niveau sur 29 commits. **Corrigé** : Render/Neon est la recette et non la production (6.1) ; Dompdf n'est plus la seule dépendance (2.1) ; 106 tables ; compteurs de lignes du métier ; statuts d'inventaire et de session (9.4). **Ajouté** : verrouillage après cinq échecs (5.1), en-têtes de sécurité et cookie `Secure` derrière proxy (5.2, 5.3), contrôle d'accès à l'action et les cinq failles corrigées (5.7), numérotation atomique des documents (4.2), limites de téléversement du serveur (6.2), intégration continue de sécurité (6.5), sous-rôles Support IT et exception `demandes` (7.4), cinq modules hors matrice et piège de la liste recopiée (7.1), réécriture complète des inventaires (9.4) |

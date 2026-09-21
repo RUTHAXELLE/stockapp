@@ -1,9 +1,9 @@
 # Manuel d'utilisation — ERP EMUCI
 
-**Version du logiciel** : branche `main`, commit `5ecb558` (29 août 2026)
-**Version du manuel** : 2.4
-**Périmètre couvert** : 61 entrées de menu et les écrans hors menu,
-10 modules, 16 rôles, 21 sites actifs
+**Version du logiciel** : branche `main`, commit `437102d` (21 septembre 2026)
+**Version du manuel** : 3.0
+**Périmètre couvert** : 65 entrées de menu réparties sur 10 modules, les
+écrans hors menu, 16 rôles, 21 sites actifs
 
 > **Provenance de ce document.** Il est établi à partir du code source, pas
 > d'une session d'utilisation. La structure des menus, les rôles, les
@@ -78,23 +78,41 @@ La contrainte est alors levée et vous arrivez sur l'accueil.
 
 Une fois la contrainte levée, cet écran n'est plus accessible : il vous
 renverrait à l'accueil. Pour changer votre mot de passe **de votre propre
-initiative**, voyez la section 2.3.
+initiative**, voyez la section 2.4.
 
-### 2.2 Mot de passe oublié
+### 2.2 Cinq erreurs de mot de passe bloquent le compte
+
+Depuis septembre 2026, **cinq tentatives de connexion infructueuses d'affilée
+verrouillent le compte pendant quinze minutes.**
+
+Le message vous indique le nombre de minutes restantes. Pendant ce délai, même
+le bon mot de passe est refusé : il n'y a rien à faire d'autre qu'attendre, ou
+demander à un administrateur de réinitialiser votre mot de passe — une
+réinitialisation lève le verrou immédiatement.
+
+Le compteur repart à zéro dès qu'une connexion réussit. Trois erreurs
+aujourd'hui et deux demain ne bloquent donc pas le compte si une connexion
+correcte s'est intercalée.
+
+> **Si vous êtes bloqué sans avoir fait cinq erreurs**, signalez-le : cela
+> peut vouloir dire que quelqu'un d'autre essaie votre adresse. Chaque
+> verrouillage est inscrit au journal d'audit avec l'heure.
+
+### 2.3 Mot de passe oublié
 
 Cliquez sur « Mot de passe oublié ? » sous le formulaire de connexion,
 saisissez votre adresse, et un lien de réinitialisation vous est envoyé par
 e-mail. Le mot de passe que vous définissez par ce lien est définitif : il
 ne déclenche pas de changement imposé.
 
-**Compte bloqué, ou e-mail qui n'arrive pas** : contactez un administrateur.
+**E-mail qui n'arrive pas** : contactez un administrateur.
 
-### 2.3 Changer son mot de passe volontairement
+### 2.4 Changer son mot de passe volontairement
 
 Écran **Mon Profil**, section « Changer le mot de passe ». C'est le seul
 endroit pour le faire hors contrainte.
 
-### 2.4 Et ensuite
+### 2.5 Et ensuite
 
 Vous arrivez sur l'**accueil**, qui est le point de départ de toute la
 navigation : voir la section 3.
@@ -244,6 +262,17 @@ plateforme nationale, qui donne le nombre de plaques par site et par
 Si des colonnes attendues manquent, l'import est refusé avec la liste des
 colonnes absentes : corrigez le fichier plutôt que de forcer.
 
+> **Le droit requis a changé.** Lancer un import demande désormais le droit
+> de **création** sur le module Import EMUCI, et non plus le simple droit de
+> lecture. Si vous ouvrez l'écran mais que l'import est refusé, c'est ce
+> droit-là qu'il manque — à demander à un administrateur.
+
+> **Les gros fichiers passent maintenant.** Les exports nationaux dépassaient
+> la limite de téléversement du serveur et étaient rejetés sans message
+> exploitable. La limite a été relevée à 50 Mo en septembre 2026. Si un
+> fichier est encore refusé pour sa taille, c'est qu'il dépasse réellement
+> cette limite.
+
 ### 5.5 Point EMUCI
 
 **Module Opérations → Point EMUCI.** Compare ce que la plateforme nationale
@@ -361,34 +390,83 @@ sur les tableaux de bord.
 
 ### 7.5 Les quatre inventaires
 
-Le principe est le même pour les quatre : on ouvre une session d'inventaire,
-on saisit le comptage physique, puis l'écran d'écarts compare au stock
-théorique.
-
 | Inventaire | Écran d'écarts | Ce qu'on compte |
 |---|---|---|
-| **Inventaire bobines** | Écarts bobines | Bobines et films restants |
-| **Inventaire rivets** | Écarts rivets | Quantités de rivets par site |
-| **Inventaire PMMA** | Écarts PMMA | PMMA par site et par type |
-| **Inventaire équipements** | Écarts équipements | Présence physique du matériel |
+| **Inventaire bobines** | Écarts bobines | Chaque bobine, et ses films restants |
+| **Inventaire rivets** | Écarts rivets | Les quantités, **par type de rivet** |
+| **Inventaire PMMA** | Écarts PMMA | Les quantités, **par type de PMMA** |
+| **Inventaire équipements** | Écarts équipements | La **présence** du matériel — trouvé ou manquant |
 
-**Déroulé type :**
+L'inventaire des équipements se distingue : un équipement n'a pas de
+quantité. On ne compare pas deux chiffres, on coche une liste de présence.
 
-1. Ouvrir une session d'inventaire sur l'écran correspondant.
-2. Saisir le comptage physique, site par site.
-3. Clôturer la session.
-4. Ouvrir l'écran **Écarts** correspondant : il liste les différences entre
-   le physique et le théorique.
-5. Justifier chaque écart.
+#### La session d'inventaire, et qui l'ouvre
+
+**Vous n'ouvrez pas vous-même un inventaire.** C'est l'administration qui
+ouvre une **session** depuis l'écran *Sessions d'inventaire*, et cette session
+crée automatiquement, pour chaque site concerné, les inventaires des quatre
+natures — déjà remplis du stock théorique du moment.
+
+> **Ce qui a changé.** Un coordinateur de site pouvait auparavant créer son
+> inventaire journalier lui-même. Ce n'est plus possible : tout dépend
+> désormais de la session ouverte par l'administration. Si vous ne voyez pas
+> d'inventaire à saisir, c'est qu'aucune session n'est ouverte pour votre
+> site — c'est à signaler, pas à contourner.
+
+L'administrateur choisit une **périodicité** — mensuelle, trimestrielle,
+semestrielle ou annuelle — et une date de début. **La date de fin n'est pas
+saisie** : elle se déduit de la périodicité. Le libellé aussi, si on n'en
+donne pas : « Inventaire mensuel — mars 2026 ».
+
+L'accès aux sessions est réservé à l'administration. Il peut être ouvert
+**nominativement** à une personne précise, via les délégations — pas à un rôle
+entier.
+
+#### Déroulé type
+
+1. L'administration ouvre la session, qui provisionne les inventaires.
+2. Vous saisissez le **comptage physique**, site par site, sur l'écran de
+   l'inventaire concerné.
+3. L'inventaire est validé.
+4. L'écran **Écarts** correspondant liste les différences entre le physique
+   et le théorique.
+5. Vous justifiez chaque écart, puis la session est clôturée.
 
 > **Un écart non justifié reste ouvert.** C'est voulu : la trace de
 > l'explication vaut autant que la correction du chiffre.
+
+> **Un écart déjà ouvert n'est pas recompté.** Si un manquant a été constaté
+> au dernier inventaire et n'est pas encore traité, il apparaît sur la
+> nouvelle ligne comme **écart connu** plutôt que d'être compté une seconde
+> fois. Vous ne payez pas deux fois le même trou.
+
+**Deux refus que vous pouvez rencontrer**, et qui ne sont pas des pannes :
+
+| Message | Ce qu'il veut dire |
+|---|---|
+| « Un inventaire existe déjà pour ce site à cette date » | La session a déjà provisionné cet inventaire — cherchez-le plutôt que d'en créer un |
+| « Aucune bobine active / aucun stock / aucun équipement sur ce site » | Il n'y a rien à compter. Mieux vaut ce message qu'un inventaire vide, impossible à distinguer d'un inventaire non saisi |
 
 ---
 
 ## 8. Les demandes internes
 
 Neuf types de demandes administratives, chacune avec son circuit de visas.
+
+> **Les quatre écrans du module sont désormais filtrés par vos droits.**
+> Jusqu'en septembre 2026, désactiver « Demandes internes » pour un rôle
+> n'avait aucun effet : le menu disparaissait, mais les écrans restaient
+> accessibles par leur adresse. Le contrôle est maintenant réellement posé —
+> lecture pour consulter, **création pour déposer une demande**.
+>
+> Conséquence : un compte qui accédait aux demandes par habitude peut
+> découvrir un refus. Ce n'est pas une panne, c'est le droit qui manque. Les
+> profils RAF, DAF et Direction générale, qui n'avaient jamais eu de ligne de
+> droits sur ce module, en ont reçu une à cette occasion.
+>
+> Le filtrage fin par circuit continue de s'appliquer **en plus** : avoir le
+> droit de lecture ne montre pas les demandes des autres, cela ouvre
+> seulement l'écran.
 
 ### 8.1 Les types disponibles
 
@@ -711,6 +789,13 @@ puis les travaux effectués et les pièces remplacées.
 Une intervention porte aussi sa durée en minutes et peut recevoir un
 rapport en pièce jointe.
 
+> **Signaler une panne demande le droit de création.** L'entrée *Opérations →
+> Demande d'intervention* permet à un coordinateur de signaler une panne, ce
+> qui notifie les profils de maintenance. Depuis septembre 2026, cette action
+> exige le droit de **création** sur le module Interventions : ouvrir l'écran
+> ne suffit plus. Si le signalement est refusé alors que l'écran s'ouvre,
+> c'est ce droit qu'il faut demander.
+
 ### 10.2 Rapport journalier
 
 **Module Informatique → Rapport journalier.** Le compte rendu quotidien de
@@ -721,9 +806,24 @@ Droit requis : lecture sur `rapport_journalier`.
 ### 10.3 Affectations IT
 
 **Module Informatique → Affectations IT.** Gestion du support informatique :
-qui prend en charge quoi.
+qui prend en charge quoi, en affectant à un compte un ou plusieurs
+**sous-rôles** — Maintenance, Contrôleur Production, Gestionnaire Bobines.
 
-Droit requis : lecture sur `affectations_it`.
+| Action | Droit requis sur `affectations_it` |
+|---|---|
+| Consulter l'écran | Lecture |
+| Activer ou retirer un sous-rôle, promouvoir un compte en Support IT | **Modification** |
+
+> **Ce qui a changé en septembre 2026.** Consulter l'écran suffisait
+> auparavant pour y agir : un compte en lecture seule pouvait activer un
+> sous-rôle, voire se promouvoir lui-même en Support IT et s'ouvrir ainsi de
+> nouveaux écrans. Les deux actions exigent désormais le droit de
+> modification.
+
+> **Un compte Support IT sans sous-rôle actif n'a accès à rien.** C'est le
+> piège de ce profil : promouvoir quelqu'un sans lui activer un sous-rôle
+> dans la foulée lui retire tout accès, sans message d'explication. Faites
+> toujours les deux gestes ensemble.
 
 ### 10.4 Transfert d'équipement
 
@@ -923,6 +1023,12 @@ si l'une manque.
 
 Un point journalier s'exporte en PDF depuis sa fiche.
 
+> **Un brouillon ne s'imprime que par son auteur.** Auparavant, n'importe
+> quel coordinateur de site pouvait ouvrir le PDF du brouillon d'un autre
+> site. Ce n'est plus le cas depuis septembre 2026 : tant qu'un point est en
+> brouillon, seul celui qui l'a saisi peut l'imprimer. Une fois le point
+> soumis puis validé, il redevient consultable selon les droits habituels.
+
 > **Un raccourci à connaître.** L'ancienne adresse `consommables.php` renvoie
 > désormais vers **Articles** : le module a été renommé, les anciens liens et
 > favoris continuent de fonctionner.
@@ -1022,6 +1128,7 @@ sensible des trois.
 | 2.2 | 2026-08-29 | `5ecb558` | Navigation corrigée : l'accueil est le point de départ, la barre latérale ne montre que le module en cours ; tableau de bord v2 |
 | 2.3 | 2026-08-29 | `5ecb558` | Règles de visa, paliers et plan comptable documentés : ils étaient dans le code, non « à préciser » |
 | 2.4 | 2026-08-29 | `5ecb558` | Point journalier : quatre statuts, non deux — « en attente de validation » et « rejeté » manquaient |
+| 3.0 | 2026-09-21 | `437102d` | Verrouillage du compte après cinq erreurs (2.2) ; inventaires réécrits — la session est ouverte par l'administration, un coordinateur ne crée plus son inventaire (7.5) ; conséquences visibles des correctifs de droits : brouillon imprimable par son seul auteur, import EMUCI et signalement de panne en droit de création, affectations IT en droit de modification, écrans Demandes réellement filtrés ; limite de téléversement portée à 50 Mo |
 
 > **Tenir ce manuel à jour.** Il décrit l'état du logiciel au commit
 > indiqué. À chaque évolution fonctionnelle notable, mettez à jour la
