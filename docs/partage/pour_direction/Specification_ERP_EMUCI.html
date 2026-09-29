@@ -1,0 +1,2916 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spécification fonctionnelle et technique — ERP EMUCI</title>
+<meta name="description" content="Spécification fonctionnelle et technique de l'ERP EMUCI, arrêté au commit ff9fc2c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
+<style>
+
+
+
+
+
+
+
+
+
+
+
+/* ── Mise en page pour l'impression et l'export PDF.
+   Le sommaire latéral n'a pas de sens sur papier : il devient un bloc en
+   tête. Les cadres qui défilent à l'écran doivent au contraire tout montrer,
+   puisqu'on ne peut pas faire défiler une feuille. */
+@media print{
+  @page{margin:14mm 12mm}
+  :root{--bg:#fff !important}
+  body{background:#fff !important;font-size:10.5pt;line-height:1.5}
+  .shell{display:block !important;max-width:none;padding:0}
+  .toc{position:static !important;max-height:none !important;overflow:visible !important;
+    margin:0 0 14mm;padding:0;border:none;box-shadow:none;
+    break-after:page;page-break-after:always}
+  .toc a{color:#000 !important;padding:2px 0;margin:0}
+  /* Aucune ombre a l'impression : Chrome les rastérise, ce qui alourdit
+     le fichier et salit les bords sur papier. */
+  *{box-shadow:none !important}
+  .tw,figure{overflow:visible !important;break-inside:avoid;page-break-inside:avoid}
+  table{min-width:0 !important;font-size:9pt}
+  th{background:#eef2fb !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .note{break-inside:avoid;page-break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  section{break-before:auto;margin-top:10mm}
+  h2{break-after:avoid;page-break-after:avoid}
+  h3,h4{break-after:avoid;page-break-after:avoid}
+  figure svg{max-width:100% !important}
+  a{text-decoration:none;color:inherit}
+  .impr-pied{display:block !important}
+}
+.impr-pied{display:none}
+
+*{box-sizing:border-box}html,body{margin:0}
+
+/* Même palette que le manuel : les deux documents décrivent le même produit
+   et doivent se reconnaître comme une paire. */
+:root{
+  --bg:#eef2fb; --surface:#fff; --surface-2:#f5f8fe;
+  --ink:#06033A; --body:#232c47; --muted:#4d5876;
+  --rule:#c3ccdf; --rule-soft:#dfe5f1;
+  --accent:#1B75BC; --accent-ink:#12547f; --accent-soft:#e6f0f9;
+  --warn:#8a5a00; --warn-soft:#fdf3e0; --warn-rule:#e5c58a;
+  --stop:#8a1c13; --stop-soft:#fdf1f0; --stop-rule:#e8b7b1;
+  --rg:#1f5c4a; --rg-soft:#e8f4ef; --rg-rule:#a6cdbe;
+  --shadow:0 1px 2px rgba(6,3,58,.05), 0 8px 28px -14px rgba(6,3,58,.22);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0c1020; --surface:#151b31; --surface-2:#1b2340;
+    --ink:#e8ecf8; --body:#c6cee4; --muted:#98a3c0;
+    --rule:#39445f; --rule-soft:#2a3350;
+    --accent:#6fb2e8; --accent-ink:#a9d2f4; --accent-soft:#17273a;
+    --warn:#f0c473; --warn-soft:#2c2312; --warn-rule:#5c4a24;
+    --stop:#f0a9a1; --stop-soft:#2e1715; --stop-rule:#5e2f2a;
+    --rg:#8fd3ba; --rg-soft:#12261f; --rg-rule:#2f5347;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -16px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0c1020; --surface:#151b31; --surface-2:#1b2340;
+  --ink:#e8ecf8; --body:#c6cee4; --muted:#98a3c0;
+  --rule:#39445f; --rule-soft:#2a3350;
+  --accent:#6fb2e8; --accent-ink:#a9d2f4; --accent-soft:#17273a;
+  --warn:#f0c473; --warn-soft:#2c2312; --warn-rule:#5c4a24;
+  --stop:#f0a9a1; --stop-soft:#2e1715; --stop-rule:#5e2f2a;
+  --rg:#8fd3ba; --rg-soft:#12261f; --rg-rule:#2f5347;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -16px rgba(0,0,0,.7);
+}
+:root[data-theme="light"]{
+  --bg:#eef2fb; --surface:#fff; --surface-2:#f5f8fe;
+  --ink:#06033A; --body:#232c47; --muted:#4d5876;
+  --rule:#c3ccdf; --rule-soft:#dfe5f1;
+  --accent:#1B75BC; --accent-ink:#12547f; --accent-soft:#e6f0f9;
+  --warn:#8a5a00; --warn-soft:#fdf3e0; --warn-rule:#e5c58a;
+  --stop:#8a1c13; --stop-soft:#fdf1f0; --stop-rule:#e8b7b1;
+  --rg:#1f5c4a; --rg-soft:#e8f4ef; --rg-rule:#a6cdbe;
+  --shadow:0 1px 2px rgba(6,3,58,.05), 0 8px 28px -14px rgba(6,3,58,.22);
+}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--body);margin:0;
+  font-family:'DM Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased}
+
+.shell{max-width:1220px;margin:0 auto;padding:40px 24px 96px;
+  display:grid;grid-template-columns:246px minmax(0,1fr);gap:52px;align-items:start}
+@media(max-width:960px){.shell{grid-template-columns:minmax(0,1fr);gap:0;padding:26px 18px 72px}}
+
+.toc{position:sticky;top:28px;font-size:13.5px;max-height:calc(100vh - 56px);overflow-y:auto}
+@media(max-width:960px){.toc{position:static;max-height:none;margin-bottom:34px;background:var(--surface);
+  border:1px solid var(--rule);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}}
+.toc-t{font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--muted);margin:0 0 12px}
+.toc ol{list-style:none;margin:0;padding:0}
+.toc a{display:flex;gap:9px;padding:5px 10px;margin-left:-10px;border-radius:8px;color:var(--body);
+  text-decoration:none;line-height:1.34;transition:background-color .14s,color .14s}
+.toc a:hover{background:var(--surface-2);color:var(--accent-ink)}
+.toc a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.toc .part{font-family:'Montserrat',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent-ink);margin:14px 0 4px;padding-left:0}
+.toc li:first-child.part{margin-top:0}
+.toc .n{color:var(--muted);font-variant-numeric:tabular-nums;flex-shrink:0;font-weight:500;min-width:16px}
+
+.head{margin-bottom:32px}
+.eyebrow{font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--accent-ink);margin:0 0 10px}
+h1{font-family:'Montserrat',sans-serif;font-size:clamp(28px,4.2vw,40px);line-height:1.1;font-weight:800;
+  letter-spacing:-.022em;color:var(--ink);margin:0 0 14px;text-wrap:balance}
+.lede{font-size:18px;color:var(--muted);margin:0;max-width:62ch;text-wrap:pretty}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.chip{display:inline-flex;align-items:baseline;gap:7px;background:var(--surface);border:1px solid var(--rule);
+  border-radius:999px;padding:6px 14px;font-size:13px}
+.chip b{font-family:'Montserrat',sans-serif;font-weight:700;color:var(--ink);font-size:11.5px;
+  letter-spacing:.05em;text-transform:uppercase}
+
+section{margin-top:50px;scroll-margin-top:20px}
+h2{font-family:'Montserrat',sans-serif;font-size:23px;font-weight:700;letter-spacing:-.014em;color:var(--ink);
+  margin:0 0 14px;line-height:1.25;display:flex;gap:12px;align-items:baseline;text-wrap:balance}
+h2 .n{color:var(--accent-ink);font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;flex-shrink:0}
+h4{font-family:'Montserrat',sans-serif;font-size:13.5px;font-weight:700;color:var(--ink);margin:22px 0 7px;letter-spacing:-.004em}
+h3{font-family:'Montserrat',sans-serif;font-size:16px;font-weight:700;color:var(--ink);
+  margin:28px 0 8px;letter-spacing:-.008em}
+p{margin:0 0 13px;max-width:70ch}
+ul,ol{margin:0 0 13px;padding-left:22px;max-width:70ch}
+li{margin-bottom:5px}
+li::marker{color:var(--muted)}
+strong{color:var(--ink);font-weight:700}
+code{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:.87em;background:var(--surface-2);
+  border:1px solid var(--rule-soft);border-radius:5px;padding:1px 5px;color:var(--accent-ink)}
+
+.tw{overflow-x:auto;margin:0 0 18px;background:var(--surface);border:1px solid var(--rule);
+  border-radius:12px;box-shadow:var(--shadow)}
+table{width:100%;border-collapse:collapse;font-size:14.5px;min-width:440px}
+th{font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--muted);text-align:left;padding:11px 16px;border-bottom:1px solid var(--rule);
+  background:var(--surface-2);white-space:nowrap}
+td{padding:11px 16px;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td:first-child{color:var(--ink);font-weight:500}
+td code{white-space:nowrap}
+.rg td:first-child{white-space:nowrap;font-family:'Montserrat',sans-serif;font-weight:700;color:var(--rg)}
+
+.note{border-radius:12px;padding:14px 18px;margin:0 0 18px;font-size:15px;max-width:72ch}
+.note p{margin:0}
+.note p + p{margin-top:8px}
+.note-t{font-family:'Montserrat',sans-serif;font-size:11.5px;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;margin:0 0 5px;display:block}
+.note-warn{background:var(--warn-soft);border:1px solid var(--warn-rule);color:var(--warn)}
+.note-warn .note-t,.note-warn strong{color:var(--warn)}
+.note-info{background:var(--accent-soft);border:1px solid var(--rule);color:var(--body)}
+.note-info .note-t{color:var(--accent-ink)}
+.note-stop{background:var(--stop-soft);border:1px solid var(--stop-rule);color:var(--stop)}
+.note-stop .note-t,.note-stop strong{color:var(--stop)}
+
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 18px}
+.flow-s{background:var(--surface);border:1px solid var(--rule);border-radius:9px;padding:8px 14px;
+  font-size:14px;font-weight:500;color:var(--ink);box-shadow:var(--shadow)}
+.flow-a{color:var(--muted)}
+
+footer{margin-top:50px;padding-top:22px;border-top:1px solid var(--rule);font-size:14px;color:var(--muted)}
+footer p{max-width:72ch}
+
+figure{margin:0 0 20px;background:var(--surface);border:1px solid var(--rule);
+  border-radius:12px;padding:18px 16px 12px;box-shadow:var(--shadow);overflow-x:auto}
+figure .mermaid{display:flex;justify-content:center;min-width:0}
+figcaption{margin-top:10px;font-size:13.5px;color:var(--muted);text-align:center;
+  max-width:64ch;margin-left:auto;margin-right:auto}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+</style>
+</head>
+<body>
+<div class="shell">
+<nav class="toc" aria-label="Sommaire">
+<p class="toc-t">Sommaire</p>
+<ol>
+<li class="part">Partie I — Technique</li>
+<li><a href="#s1"><span class="n">1</span><span>Objet et périmètre</span></a></li>
+<li><a href="#s2"><span class="n">2</span><span>Architecture d&#x27;exécution</span></a></li>
+<li><a href="#s3"><span class="n">3</span><span>Modèle de données</span></a></li>
+<li><a href="#s4"><span class="n">4</span><span>Transactions et concurrence</span></a></li>
+<li><a href="#s5"><span class="n">5</span><span>Sécurité</span></a></li>
+<li><a href="#s6"><span class="n">6</span><span>Exploitation</span></a></li>
+<li class="part">Partie II — Fonctionnel</li>
+<li><a href="#s7"><span class="n">7</span><span>Habilitations</span></a></li>
+<li><a href="#s8"><span class="n">8</span><span>Domaine Opérations</span></a></li>
+<li><a href="#s9"><span class="n">9</span><span>Domaine Stock, bobines et inventaires</span></a></li>
+<li><a href="#s10"><span class="n">10</span><span>Domaine Demandes internes</span></a></li>
+<li><a href="#s11"><span class="n">11</span><span>Domaine Achats</span></a></li>
+<li><a href="#s12"><span class="n">12</span><span>Domaine Informatique</span></a></li>
+<li><a href="#s13"><span class="n">13</span><span>Services transverses</span></a></li>
+<li><a href="#s14"><span class="n">14</span><span>Contraintes et points ouverts</span></a></li>
+<li><a href="#s15"><span>Suivi des versions</span></a></li>
+</ol>
+</nav>
+<main>
+<header class="head">
+<p class="eyebrow">ERP EMUCI</p>
+<h1>Spécification fonctionnelle et technique — ERP EMUCI</h1>
+<p class="lede">Ce que le système est, les règles qu&#x27;il applique, et les limites qu&#x27;il porte.</p>
+<div class="meta"><span class="chip"><b>Version du logiciel</b> 24 septembre 2026</span><span class="chip"><b>Version de la spécification</b> 4.3</span><span class="chip"><b>Objet</b> décrire ce que le système est, comment il est construit, les</span></div>
+</header>
+<div class="note note-info"><span class="note-t">Provenance</span><p> Établie par lecture du code source et interrogation de la
+base. Chaque chiffre et chaque règle cités sont vérifiables à l'endroit
+indiqué.</p>
+<p>Ce document décrit le <strong>comportement implémenté</strong>, qui n'est pas
+nécessairement le comportement voulu. Là où le code signale lui-même une
+valeur provisoire, la spécification le répercute.</p></div>
+<h1 class="partie">Partie I — Technique</h1>
+<section id="s1"><h2><span class="n">1</span> Objet et périmètre</h2>
+<p>ERP EMUCI couvre la production de plaques d'immatriculation et la chaîne
+logistique qui l'alimente, sur <strong>vingt et un sites actifs</strong>.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Domaine</th>
+<th>Objet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Opérations</td>
+<td>Relevé quotidien de production, rapprochement avec la plateforme nationale, suivi des observations</td>
+</tr>
+<tr>
+<td>Stock et bobines</td>
+<td>Bobines de film, rivets, PMMA, consommables, équipements, traçabilité des endommagements</td>
+</tr>
+<tr>
+<td>Inventaires</td>
+<td>Comptages physiques et traitement des écarts</td>
+</tr>
+<tr>
+<td>Demandes internes</td>
+<td>Demandes administratives et circuits de visa</td>
+</tr>
+<tr>
+<td>Achats</td>
+<td>De l'expression de besoin à la réception, avec contrôle budgétaire</td>
+</tr>
+<tr>
+<td>Informatique</td>
+<td>Interventions de maintenance et affectation du matériel</td>
+</tr>
+<tr>
+<td>Pilotage</td>
+<td>Tableau de bord KPI et simulation de projection de stock</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Hors périmètre</strong> : la paie, la comptabilité générale — l'ERP produit une
+imputation analytique, il ne tient pas les comptes — et la facturation
+client.</p>
+<hr>
+</section>
+<section id="s2"><h2><span class="n">2</span> Architecture d&#x27;exécution</h2>
+<h3>2.1 Pile technique</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Élément</th>
+<th>Choix</th>
+<th>Précision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Runtime</td>
+<td>PHP 8.2</td>
+<td>Image <code>php:8.2-cli</code>, serveur web intégré</td>
+</tr>
+<tr>
+<td>Base</td>
+<td>PostgreSQL 16</td>
+<td>Hébergée sur Neon — <strong>environnement de recette</strong> (voir 6.1)</td>
+</tr>
+<tr>
+<td>Hébergement</td>
+<td>Render</td>
+<td>Conteneur bâti depuis le <code>Dockerfile</code> du dépôt</td>
+</tr>
+<tr>
+<td>Accès données</td>
+<td>PDO natif</td>
+<td>Aucun ORM</td>
+</tr>
+<tr>
+<td>PDF</td>
+<td>Dompdf 3.1</td>
+<td>Fiches FEB, point journalier, rapports</td>
+</tr>
+<tr>
+<td>Excel</td>
+<td>PhpSpreadsheet 5.9</td>
+<td>Montée depuis 1.30.5 en septembre 2026, trois CVE de gravité haute (mémoire, SSRF)</td>
+</tr>
+<tr>
+<td>PPTX</td>
+<td>ZipArchive natif</td>
+<td>Open XML écrit à la main, sans dépendance</td>
+</tr>
+<tr>
+<td>Extensions PHP</td>
+<td>pdo_pgsql, gd (freetype, jpeg)</td>
+<td>gd requis par Dompdf</td>
+</tr>
+</tbody>
+</table></div>
+<p>Les deux seules dépendances applicatives du <code>composer.json</code> sont
+PhpSpreadsheet et Dompdf. Elles sont auditées automatiquement à chaque envoi
+sur <code>main</code> (voir 6.5).</p>
+<h3>2.2 Il n'y a pas de framework, et cela se paie</h3>
+<p>C'est le choix structurant. Quatre conséquences directes :</p>
+<p><strong>1. Pas de routeur, donc pas de point de contrôle unique.</strong> Chaque page est
+un point d'entrée autonome qui pose lui-même sa barrière :</p>
+<pre><code class="language-php">require_auth();                              // session valide
+require_permission('bobines', 'can_read');   // droit sur le module
+</code></pre>
+<p>Une page qui omet le second appel est ouverte à tout compte authentifié. Ce
+n'est pas théorique : deux campagnes de reprise ont été nécessaires,
+<code>43b1d1e</code> sur dix-sept pages puis <code>ed37027</code> sur sept de plus, dont certaines
+ignoraient jusque-là totalement la table des permissions.</p>
+<p><strong>2. Pas d'ORM.</strong> Les requêtes sont écrites à la main, via douze fonctions
+utilitaires dans <code>includes/db.php</code> (<code>db_query</code>, <code>db_fetch_all</code>,
+<code>db_fetch_one</code>, <code>db_fetch_value</code>, <code>db_begin</code>, <code>db_commit</code>, <code>db_rollback</code>…).</p>
+<p><strong>3. Pas de migrations versionnées.</strong> Les évolutions de schéma sont des
+fichiers dans <code>sql/</code> (78 fichiers), appliqués manuellement. Un outil
+d'inventaire détecte désormais leur état réel sur une base donnée (6.3), mais
+rien ne garantit qu'un environnement les a toutes reçues, ni dans quel ordre.</p>
+<p><strong>4. La logique métier vit dans <code>includes/</code></strong>, pas dans des modèles.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Domaine</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>achats.php</code></td>
+<td>Circuit FEB : le plus volumineux, un tiers de la logique métier</td>
+</tr>
+<tr>
+<td><code>dashboard.php</code></td>
+<td>Tableau de bord opérationnel</td>
+</tr>
+<tr>
+<td><code>groupes_config.php</code></td>
+<td>Navigation, dix groupes de menu</td>
+</tr>
+<tr>
+<td><code>demandes.php</code></td>
+<td>Circuit des demandes internes</td>
+</tr>
+<tr>
+<td><code>pdf_achats.php</code></td>
+<td>Génération PDF du domaine Achats</td>
+</tr>
+<tr>
+<td><code>session.php</code></td>
+<td>Authentification, permissions, session</td>
+</tr>
+<tr>
+<td><code>demandes_champs.php</code></td>
+<td>Formulaires dynamiques des demandes</td>
+</tr>
+<tr>
+<td><code>auth.php</code></td>
+<td>Connexion, verrouillage, réinitialisation</td>
+</tr>
+<tr>
+<td><code>inventaire.php</code></td>
+<td>Provisionnement des sessions d'inventaire</td>
+</tr>
+<tr>
+<td><code>periode.php</code></td>
+<td>Granularité temporelle, partagée entre la vue exécutive et le tableau de bord KPI</td>
+</tr>
+<tr>
+<td><code>referentiels.php</code></td>
+<td>Capacités de conditionnement (bobines, PMMA)</td>
+</tr>
+<tr>
+<td><code>upload.php</code></td>
+<td>Téléversements contrôlés</td>
+</tr>
+</tbody>
+</table></div>
+<h3>2.3 Connexion à la base</h3>
+<p>PDO est configuré en <strong>exceptions</strong> (<code>PDO::ERRMODE_EXCEPTION</code>) et en tableaux
+associatifs (<code>PDO::FETCH_ASSOC</code>).</p>
+<p>Une exception PDO non rattrapée produit donc une erreur fatale et une page
+blanche. C'est ce qui s'est produit sur la vue exécutive quand un filtre par
+site référençait une colonne inexistante : la page entière tombait.</p>
+<p><strong>Corollaire de conception</strong> : tout appel de données dans un contexte
+composite — un tableau de bord fait de blocs — doit être enveloppé. Le
+registre du tableau de bord le fait, et journalise l'échec plutôt que de le
+laisser remonter. Le tableau de bord KPI applique le même principe : chaque
+panneau (§13.5) calcule ses propres indicateurs indépendamment des six autres.</p>
+<h3>2.4 Contrat des échanges dynamiques</h3>
+<p>Toutes les réponses AJAX ont la même forme, produite par <code>json_response()</code> :</p>
+<pre><code class="language-json">{ &quot;success&quot;: true, &quot;message&quot;: &quot;…&quot;, &quot;data&quot;: { } }
+</code></pre>
+<p><code>success</code> porte le résultat, <code>message</code> est destiné à l'affichage,
+<code>data</code> transporte la charge utile. Une requête AJAX est reconnue par
+<code>is_ajax()</code>, et les pages servent alors du JSON là où elles rendraient du
+HTML.</p>
+<p><strong>Conséquence sur le contrôle d'accès</strong> : une barrière qui redirige convient
+à une navigation, pas à une requête AJAX — le client recevrait du HTML là où
+il attend du JSON. <code>require_auth()</code> traite les deux cas séparément.</p>
+<h3>2.5 Configuration</h3>
+<p>La configuration est portée par des constantes (<code>APP_URL</code>, <code>APP_NAME</code>,
+<code>APP_TIMEZONE</code>, <code>APP_VERSION</code>, <code>DB_HOST</code>, <code>DB_NAME</code>, <code>DB_PASS</code>…), avec
+<code>DATABASE_URL</code> pour la connexion hébergée.</p>
+<hr>
+</section>
+<section id="s3"><h2><span class="n">3</span> Modèle de données</h2>
+<p><strong>114 tables.</strong></p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Domaine</th>
+<th>Tables (approx.)</th>
+<th>Principales</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Bobines et films</td>
+<td>19</td>
+<td><code>op_bobines</code>, <code>mouvements_bobines</code>, <code>bilans_mensuels_bobines</code></td>
+</tr>
+<tr>
+<td>Achats</td>
+<td>17</td>
+<td><code>feb</code>, <code>feb_lignes</code>, <code>feb_offres</code>, <code>feb_suivi</code>, <code>achat_paliers</code>, <code>familles_achat</code></td>
+</tr>
+<tr>
+<td>Demandes internes</td>
+<td>6</td>
+<td><code>di_demandes</code>, <code>di_types</code>, <code>di_etapes</code>, <code>di_roles</code></td>
+</tr>
+<tr>
+<td>Opérations</td>
+<td>13</td>
+<td><code>op_points_journaliers</code>, <code>op_stock_rivets</code>, <code>points_emuci</code>, <code>op_observations</code>, <code>op_observation_relances</code>, <code>op_endommagements</code></td>
+</tr>
+<tr>
+<td>Inventaires</td>
+<td>22</td>
+<td>Session, détail et écarts, pour chacun des quatre inventaires</td>
+</tr>
+<tr>
+<td>Parc</td>
+<td>7</td>
+<td><code>equipements</code>, <code>nomenclatures</code>, <code>interventions_maintenance</code></td>
+</tr>
+<tr>
+<td>Référentiel</td>
+<td>8</td>
+<td><code>users</code>, <code>roles</code>, <code>permissions</code>, <code>sites</code>, <code>departements</code>, <code>agents</code></td>
+</tr>
+<tr>
+<td>Pilotage</td>
+<td>3</td>
+<td><code>vues_enregistrees</code> (vues KPI), <code>preferences_utilisateur</code>, <code>defauts_affichage</code></td>
+</tr>
+<tr>
+<td>Autres</td>
+<td>19</td>
+<td><code>articles</code>, <code>stock_site</code>, <code>stock_departement</code>, <code>notifications</code>, <code>audit_log</code></td>
+</tr>
+</tbody>
+</table></div>
+<h3>3.1 Indexation</h3>
+<p>Le dump principal et les migrations portent l'indexation courante des
+colonnes de recherche et des clés étrangères ; les migrations du module
+Achats en ont ajouté une quinzaine à elles seules.</p>
+<h3>3.2 Le circuit stocké sur la demande</h3>
+<p>Le circuit de validation ne se stocke pas en lignes : il vit sur la demande
+elle-même, sérialisé en JSON. Trois colonnes, présentes à l'identique dans
+les demandes internes, les FEB et les affectations d'équipement.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Colonne</th>
+<th>Contenu</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>workflow_snapshot</code></td>
+<td>Le circuit <strong>figé</strong> au lancement de la validation</td>
+</tr>
+<tr>
+<td><code>signatures</code></td>
+<td>La liste des visas donnés, avec auteur, date et commentaire</td>
+</tr>
+<tr>
+<td><code>historique</code></td>
+<td>La trace des actions</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>C'est un choix délibéré, avec une raison précise</strong> : une demande transporte
+sa propre copie du circuit. Modifier un type de demande ne réécrit donc pas
+l'histoire des demandes en cours. Le prix à payer est qu'on ne peut pas
+interroger les visas en SQL aussi simplement qu'une table de jointure.</p>
+<p>Le <strong>type de colonne diffère selon le module</strong> : voir 3.5.</p>
+<h3>3.3 Trois notions de stock, à ne pas confondre</h3>
+<p>C'est la source d'erreur la plus probable pour qui découvre le modèle.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Notion</th>
+<th>Table</th>
+<th>Portée</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Stock global d'un article</td>
+<td><code>articles.stock_global</code></td>
+<td>Aucune ventilation par site</td>
+</tr>
+<tr>
+<td>Stock magasin</td>
+<td><code>stock_site</code>, sites de type <code>magasin</code></td>
+<td>Stock central, source des livraisons d'achats</td>
+</tr>
+<tr>
+<td>Stock d'un département</td>
+<td><code>stock_departement</code></td>
+<td>Ce qu'un service détient après réception</td>
+</tr>
+</tbody>
+</table></div>
+<p>Une réception d'achat <strong>débite le magasin et crédite le département</strong>. Le
+stock global des articles n'est pas ventilé : c'est pourquoi un filtre par
+site ne change pas le compte des alertes de stock.</p>
+<p>L'outil de simulation (§9.6) introduit une <strong>quatrième notion, hors base</strong> :
+le stock <strong>projeté</strong>, un calcul en mémoire qui ne modifie jamais aucune des
+trois tables ci-dessus.</p>
+<h3>3.4 Dictionnaire des tables centrales</h3>
+<p>Sept tables portent l'essentiel du produit. Leurs colonnes structurantes,
+leurs clés et leurs contraintes.</p>
+<h4><code>users</code> — comptes</h4>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Colonne</th>
+<th>Type</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>integer</td>
+<td>Clé primaire</td>
+</tr>
+<tr>
+<td><code>nom</code>, <code>prenom</code>, <code>email</code></td>
+<td>varchar</td>
+<td><code>email</code> sert d'identifiant de connexion</td>
+</tr>
+<tr>
+<td><code>password_hash</code></td>
+<td>varchar</td>
+<td>bcrypt, coût 12</td>
+</tr>
+<tr>
+<td><code>role_id</code></td>
+<td>integer</td>
+<td>→ <code>roles.id</code></td>
+</tr>
+<tr>
+<td><code>site_id</code></td>
+<td>integer</td>
+<td>Site de rattachement, verrouille le coordinateur</td>
+</tr>
+<tr>
+<td><code>actif</code></td>
+<td>smallint</td>
+<td>Un compte désactivé n'est jamais supprimé</td>
+</tr>
+<tr>
+<td><code>must_change_password</code></td>
+<td>smallint</td>
+<td>Bloque toute page tant qu'il vaut 1</td>
+</tr>
+<tr>
+<td><code>reset_token</code>, <code>reset_token_expiry</code></td>
+<td>varchar, timestamp</td>
+<td>Réinitialisation en libre-service</td>
+</tr>
+</tbody>
+</table></div>
+<h4><code>permissions</code> — habilitations</h4>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Colonne</th>
+<th>Type</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>role_id</code></td>
+<td>integer</td>
+<td>→ <code>roles.id</code></td>
+</tr>
+<tr>
+<td><code>module</code></td>
+<td>varchar</td>
+<td>Un des cinquante-six modules administrables</td>
+</tr>
+<tr>
+<td><code>can_create</code>, <code>can_read</code>, <code>can_update</code>, <code>can_delete</code>, <code>can_export</code></td>
+<td>smallint</td>
+<td>0 ou 1</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Unicité sur <code>(role_id, module)</code></strong> : un rôle a au plus une ligne par module.
+C'est ce qui rend <code>ON CONFLICT</code> utilisable dans les migrations de droits.</p>
+<h4><code>op_points_journaliers</code> — le relevé quotidien</h4>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Colonne</th>
+<th>Type</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>site_id</code></td>
+<td>integer</td>
+<td>→ <code>sites.id</code></td>
+</tr>
+<tr>
+<td><code>date_point</code></td>
+<td>date</td>
+<td>Avec <code>site_id</code> et <code>type_point</code>, identifie le relevé</td>
+</tr>
+<tr>
+<td><code>type_point</code>, <code>statut</code></td>
+<td>text</td>
+<td><code>brouillon</code>, <code>en_attente_validation</code>, <code>valide</code>, <code>rejete</code></td>
+</tr>
+<tr>
+<td><code>nb_vp</code>, <code>nb_camion</code>, <code>nb_semi</code>, <code>nb_moto</code></td>
+<td>integer</td>
+<td>Détail par catégorie</td>
+</tr>
+<tr>
+<td><code>total_engins</code>, <code>total_plaques</code></td>
+<td>integer</td>
+<td>Agrégats saisis</td>
+</tr>
+<tr>
+<td><code>rivets_utilises</code>, <code>rivets_endommages</code></td>
+<td>integer</td>
+<td></td>
+</tr>
+<tr>
+<td><code>created_by</code>, <code>validated_by</code></td>
+<td>integer</td>
+<td>→ <code>users.id</code></td>
+</tr>
+<tr>
+<td><code>motif_rejet</code></td>
+<td>text</td>
+<td>Obligatoire au rejet</td>
+</tr>
+</tbody>
+</table></div>
+<h4><code>op_bobines</code> — bobines de film</h4>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Colonne</th>
+<th>Type</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>numero</code></td>
+<td>varchar</td>
+<td><strong>Unique</strong></td>
+</tr>
+<tr>
+<td><code>type_code</code>, <code>serie</code></td>
+<td>varchar</td>
+<td></td>
+</tr>
+<tr>
+<td><code>type_vehicule_id</code></td>
+<td>integer</td>
+<td>→ <code>op_types_vehicule.id</code></td>
+</tr>
+<tr>
+<td><code>films_total</code>, <code>films_utilises</code>, <code>films_endommages</code>, <code>films_restants</code></td>
+<td>integer</td>
+<td><code>films_restants</code> est stocké, pas calculé à la volée</td>
+</tr>
+<tr>
+<td><code>site_id</code></td>
+<td>integer</td>
+<td>→ <code>sites.id</code></td>
+</tr>
+<tr>
+<td><code>statut</code></td>
+<td>text</td>
+<td><code>en_stock</code>, <code>en_cours</code>, <code>epuisee</code>, <code>retiree</code></td>
+</tr>
+</tbody>
+</table></div>
+<h4><code>di_demandes</code> — demandes internes</h4>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Colonne</th>
+<th>Type</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>numero</code></td>
+<td>varchar</td>
+<td><strong>Unique</strong></td>
+</tr>
+<tr>
+<td><code>type_code</code></td>
+<td>varchar</td>
+<td>→ <code>di_types.code</code></td>
+</tr>
+<tr>
+<td><code>statut</code>, <code>etape_actuelle</code>, <code>etape_rejet</code></td>
+<td>varchar, integer</td>
+<td>Position dans le circuit</td>
+</tr>
+<tr>
+<td><code>demandeur_id</code>, <code>n1_user_id</code>, <code>traite_par</code></td>
+<td>integer</td>
+<td>→ <code>users.id</code></td>
+</tr>
+<tr>
+<td><code>site_id</code></td>
+<td>integer</td>
+<td>→ <code>sites.id</code></td>
+</tr>
+<tr>
+<td><code>champs</code></td>
+<td><strong>text</strong></td>
+<td>Les valeurs du formulaire, en JSON</td>
+</tr>
+<tr>
+<td><code>workflow_snapshot</code>, <code>signatures</code>, <code>historique</code></td>
+<td><strong>text</strong></td>
+<td>Le circuit figé, les visas, la trace</td>
+</tr>
+<tr>
+<td><code>traite_it</code></td>
+<td>smallint</td>
+<td>Exécution informatique effectuée</td>
+</tr>
+</tbody>
+</table></div>
+<h4><code>feb</code> — expression de besoin</h4>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Colonne</th>
+<th>Type</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>numero</code></td>
+<td>varchar</td>
+<td><strong>Unique</strong>, attribué par exercice</td>
+</tr>
+<tr>
+<td><code>exercice</code></td>
+<td>integer</td>
+<td></td>
+</tr>
+<tr>
+<td><code>demandeur_id</code>, <code>acheteur_id</code>, <code>n1_user_id</code></td>
+<td>integer</td>
+<td>→ <code>users.id</code></td>
+</tr>
+<tr>
+<td><code>site_id</code>, <code>departement_id</code></td>
+<td>integer</td>
+<td>Constants sur toute la FEB (RG-06)</td>
+</tr>
+<tr>
+<td><code>urgence</code></td>
+<td>smallint</td>
+<td>0 normale, 1 urgente, 2 critique</td>
+</tr>
+<tr>
+<td><code>statut</code></td>
+<td>varchar</td>
+<td>Les huit statuts</td>
+</tr>
+<tr>
+<td><code>montant_total</code></td>
+<td><strong>bigint</strong></td>
+<td>En XOF, entier — pas de flottant</td>
+</tr>
+<tr>
+<td><code>workflow_snapshot</code>, <code>signatures</code>, <code>historique</code></td>
+<td><strong>jsonb</strong></td>
+<td></td>
+</tr>
+</tbody>
+</table></div>
+<h4><code>feb_lignes</code> — lignes d'une FEB</h4>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Colonne</th>
+<th>Type</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>feb_id</code></td>
+<td>integer</td>
+<td>→ <code>feb.id</code></td>
+</tr>
+<tr>
+<td><code>numero_ligne</code></td>
+<td>integer</td>
+<td></td>
+</tr>
+<tr>
+<td><code>designation</code></td>
+<td>varchar</td>
+<td></td>
+</tr>
+<tr>
+<td><code>article_id</code>, <code>famille_id</code>, <code>fournisseur_id</code>, <code>nomenclature_id</code></td>
+<td>integer</td>
+<td>Références au référentiel</td>
+</tr>
+<tr>
+<td><code>type_achat</code></td>
+<td>varchar</td>
+<td>→ <code>achat_types.code</code></td>
+</tr>
+<tr>
+<td><code>code_analytique</code></td>
+<td>varchar</td>
+<td>Dérivé, jamais saisi (RG-05)</td>
+</tr>
+<tr>
+<td><code>lot</code></td>
+<td>varchar</td>
+<td>Égal au code analytique (RG-08)</td>
+</tr>
+<tr>
+<td><code>montant_ttc</code></td>
+<td><strong>bigint</strong></td>
+<td>En XOF</td>
+</tr>
+</tbody>
+</table></div>
+<h3>3.5 Deux observations sur les types</h3>
+<p><strong>Les montants sont des entiers (<code>bigint</code>), jamais des flottants.</strong> Un
+montant en XOF n'a pas de sous-unité : le stocker en entier évite les erreurs
+d'arrondi qu'un <code>float</code> introduirait sur les cumuls et les comparaisons de
+paliers.</p>
+<div class="note note-info"><span class="note-t">Incohérence entre deux modules</span><p> <code>feb</code> et <code>equipement_affectations</code>
+stockent leurs circuits en <strong><code>jsonb</code></strong> ; <code>di_demandes</code>, plus ancien, les
+stocke en <strong><code>text</code></strong>. Même structure, deux types. Le module des demandes
+internes se prive donc des opérateurs JSON de PostgreSQL : on ne peut pas y
+interroger un visa directement en SQL, il faut décoder côté PHP.</p>
+</div>
+<hr>
+</section>
+<section id="s4"><h2><span class="n">4</span> Transactions et concurrence</h2>
+<h3>4.1 Où les transactions sont posées</h3>
+<p><code>db_begin()</code> / <code>db_commit()</code> / <code>db_rollback()</code> sont appelées dans une
+trentaine de fichiers, principalement là où plusieurs tables changent
+ensemble : création d'une FEB (en-tête, lignes, pièces jointes), saisie d'un
+inventaire, mouvements de bobines, réceptions, validation du stock du matin.</p>
+<p>Le motif est constant : une seule transaction, et <code>db_rollback()</code> sur
+exception.</p>
+<h3>4.2 Verrouillage explicite</h3>
+<p>Le code pose plusieurs <code>SELECT … FOR UPDATE</code>. Le cas le plus significatif est
+le débit du stock magasin lors d'une réception d'achat :</p>
+<figure><pre class="mermaid">sequenceDiagram
+    autonumber
+    participant E1 as Expédition A
+    participant E2 as Expédition B
+    participant DB as stock_site
+    E1-&gt;&gt;DB: SELECT … FOR UPDATE (article X)
+    Note over DB: lignes verrouillées
+    E2-&gt;&gt;DB: SELECT … FOR UPDATE (article X)
+    Note over E2: attend
+    E1-&gt;&gt;DB: débite, COMMIT
+    DB--&gt;&gt;E2: verrou libéré
+    E2-&gt;&gt;DB: relit le disponible réel</pre></figure>
+<p>Sans ce verrou, deux expéditions simultanées du même article liraient le même
+disponible et le débiteraient chacune de leur côté.</p>
+<p><strong>Le second usage est la numérotation des documents.</strong> Deux compteurs suivent
+le même motif : <code>feb_compteurs</code> pour les expressions de besoin, par exercice,
+et <code>commande_compteurs</code> pour les commandes, par jour.</p>
+<pre><code class="language-php">INSERT INTO commande_compteurs (jour, dernier_numero) VALUES (?, 0)
+  ON CONFLICT (jour) DO NOTHING;
+SELECT dernier_numero FROM commande_compteurs WHERE jour = ? FOR UPDATE;
+UPDATE commande_compteurs SET dernier_numero = ? WHERE jour = ?;
+</code></pre>
+<div class="note note-warn"><span class="note-t">Pourquoi ce compteur existe</span><p> La numérotation des commandes se faisait
+auparavant par tirage aléatoire — <code>CMD-Ymd-</code> suivi de quatre chiffres tirés
+au hasard. Sur un index d'unicité, une collision fait échouer l'insertion
+avec une erreur PostgreSQL brute (23505), que l'utilisateur voit comme un
+plantage sans explication. Un compteur verrouillé ne collisionne pas.</p>
+<p><code>ach_numero_commande()</code> respecte la transaction appelante : elle n'ouvre la
+sienne que si aucune n'est déjà en cours.</p>
+</div>
+<h3>4.3 Courses évitées par la condition de mise à jour</h3>
+<p>Plusieurs transitions ne se contentent pas de vérifier avant d'écrire : elles
+<strong>portent la condition dans le <code>WHERE</code></strong>, ce qui rend la course impossible
+plutôt que peu probable.</p>
+<pre><code class="language-sql">UPDATE feb SET acheteur_id = ?, statut = 'prise_en_charge'
+ WHERE id = ? AND acheteur_id IS NULL AND statut = 'soumise'
+</code></pre>
+<p>Deux acheteurs cliquant en même temps : le second ne met à jour aucune ligne
+et reçoit un échec, plutôt que d'écraser l'attribution du premier. Le même
+motif protège la restitution (<code>AND acheteur_id = ?</code>), la reprise après rejet
+et la réouverture administrative.</p>
+<hr>
+</section>
+<section id="s5"><h2><span class="n">5</span> Sécurité</h2>
+<h3>5.1 Authentification</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Élément</th>
+<th>Mise en œuvre</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hachage</td>
+<td><code>password_hash()</code> en <strong>bcrypt, coût 12</strong></td>
+</tr>
+<tr>
+<td>Longueur minimale</td>
+<td>8 caractères</td>
+</tr>
+<tr>
+<td>Changement imposé</td>
+<td><code>must_change_password</code> — bloque toute page tant qu'il n'est pas fait</td>
+</tr>
+<tr>
+<td>Réinitialisation</td>
+<td>Jeton en base avec date d'expiration (<code>reset_token</code>, <code>reset_token_expiry</code>)</td>
+</tr>
+<tr>
+<td>Nettoyage</td>
+<td>Les espaces de bord sont retirés à la saisie <strong>et</strong> à la connexion</td>
+</tr>
+<tr>
+<td>Verrouillage</td>
+<td><strong>Cinq échecs consécutifs → compte bloqué quinze minutes</strong></td>
+</tr>
+</tbody>
+</table></div>
+<p>Le nettoyage des espaces n'est pas cosmétique : un mot de passe collé depuis
+un e-mail avec une espace de fin était enregistré tel quel puis refusé à la
+connexion, ce qui bloquait le compte.</p>
+<h4>Verrouillage après échecs répétés</h4>
+<p>Deux colonnes sur <code>users</code> portent le mécanisme : <code>failed_login_attempts</code> et
+<code>locked_until</code>.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Événement</th>
+<th>Effet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Échec de connexion sur un compte existant</td>
+<td>Incrémente le compteur</td>
+</tr>
+<tr>
+<td>Cinquième échec</td>
+<td><code>locked_until = NOW() + 15 minutes</code>, compteur remis à zéro, <strong>entrée d'audit nominative</strong></td>
+</tr>
+<tr>
+<td>Tentative pendant le verrou</td>
+<td>Refus, avec le nombre de minutes restantes</td>
+</tr>
+<tr>
+<td>Connexion réussie</td>
+<td>Compteur et verrou effacés</td>
+</tr>
+<tr>
+<td>Changement ou réinitialisation du mot de passe</td>
+<td>Compteur et verrou effacés</td>
+</tr>
+</tbody>
+</table></div>
+<div class="note note-info"><span class="note-t">La dernière ligne n'est pas une commodité</span><p> Sans elle, un administrateur
+qui réinitialise le mot de passe d'un compte verrouillé le laisserait bloqué
+jusqu'à l'expiration du verrou, malgré le nouveau mot de passe.</p>
+</div>
+<p>La durée retenue — quinze minutes — est celle du délai d'inactivité de
+session, pour ne pas introduire une seconde convention de durée dans
+l'application.</p>
+<h3>5.2 Session</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Paramètre</th>
+<th>Valeur</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cookie_httponly</code></td>
+<td><code>true</code> — le cookie est hors de portée du JavaScript</td>
+</tr>
+<tr>
+<td><code>cookie_samesite</code></td>
+<td><code>Lax</code></td>
+</tr>
+<tr>
+<td><code>cookie_secure</code></td>
+<td>Activé si la requête arrive en HTTPS, <strong><code>X-Forwarded-Proto</code> compris</strong></td>
+</tr>
+<tr>
+<td>Inactivité</td>
+<td><strong>900 secondes</strong>, soit quinze minutes</td>
+</tr>
+</tbody>
+</table></div>
+<p>La déconnexion pour inactivité est un garde-fou serveur, tracé dans le
+journal d'audit.</p>
+<div class="note note-warn"><span class="note-t">Le détail qui compte derrière un proxy</span><p> Render termine le TLS à sa
+frontière et transmet en HTTP simple au conteneur : <code>$_SERVER['HTTPS']</code>
+n'est donc <strong>jamais</strong> posé en production. Un test limité à cette seule
+variable laissait le cookie de session sans attribut <code>Secure</code>, malgré un
+HTTPS réel de bout en bout côté navigateur. La détection s'appuie désormais
+aussi sur l'en-tête <code>X-Forwarded-Proto</code> posé par le proxy.</p>
+</div>
+<h3>5.3 En-têtes de sécurité</h3>
+<p>Posés dans <code>includes/session.php</code>, chargé par la quasi-totalité des écrans,
+avant toute sortie.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>En-tête</th>
+<th>Valeur</th>
+<th>Effet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>X-Content-Type-Options</code></td>
+<td><code>nosniff</code></td>
+<td>Interdit au navigateur de deviner le type d'une réponse</td>
+</tr>
+<tr>
+<td><code>X-Frame-Options</code></td>
+<td><code>SAMEORIGIN</code></td>
+<td>Empêche l'inclusion dans un cadre tiers</td>
+</tr>
+<tr>
+<td><code>Referrer-Policy</code></td>
+<td><code>strict-origin-when-cross-origin</code></td>
+<td>Limite la fuite d'URL vers l'extérieur</td>
+</tr>
+<tr>
+<td><code>Strict-Transport-Security</code></td>
+<td><code>max-age=31536000; includeSubDomains</code></td>
+<td>Posé <strong>uniquement en HTTPS</strong></td>
+</tr>
+<tr>
+<td><code>X-Powered-By</code></td>
+<td><em>retiré</em></td>
+<td>Ne publie plus la version de PHP</td>
+</tr>
+</tbody>
+</table></div>
+<p><code>SAMEORIGIN</code> plutôt que <code>DENY</code> : l'écran de paramétrage des fournisseurs
+prévisualise les pièces jointes dans un cadre de même origine, que <code>DENY</code>
+casserait.</p>
+<h3>5.4 Injection SQL</h3>
+<p><strong>Aucune superglobale n'est interpolée dans une requête.</strong> Vérifié par
+balayage de tous les fichiers PHP du dépôt : zéro occurrence de <code>$_GET</code>,
+<code>$_POST</code> ou <code>$_REQUEST</code> à l'intérieur d'une chaîne SQL.</p>
+<p>Deux mécanismes coexistent :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Mécanisme</th>
+<th>Usage</th>
+<th>Sûreté</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Paramètres liés</td>
+<td>Très largement majoritaire</td>
+<td>Sûr par construction</td>
+</tr>
+<tr>
+<td>Fragment <code>AND colonne = valeur</code></td>
+<td>Filtres de portée</td>
+<td><strong>Sûr uniquement parce que la valeur est castée en entier</strong> à la lecture</td>
+</tr>
+</tbody>
+</table></div>
+<div class="note note-info"><span class="note-t">Le point de fragilité est le second mécanisme</span><p> Sa sûreté ne tient pas à
+la requête mais à un <code>(int)</code> posé plus haut, souvent dans un autre fichier.
+Le jour où un filtre portera une chaîne — un code de site, un statut — le
+motif se retournera silencieusement. L'aide partagée
+<code>dash_filtre_site()</code> montre la bonne façon de faire : elle renvoie un
+fragment <strong>paramétré</strong>, <code>AND colonne = ?</code>, avec sa valeur à part. Le
+tableau de bord KPI reprend le même motif (<code>pref_clause_in()</code>), pour les
+mêmes raisons.</p>
+</div>
+<h3>5.5 Injection HTML</h3>
+<p>L'échappement passe par l'aide <code>h()</code>, appliquée à toute donnée rendue.</p>
+<h3>5.6 Téléversements</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Contrôle</th>
+<th>Valeur</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Taille maximale</td>
+<td>10 Mo</td>
+</tr>
+<tr>
+<td>Types admis</td>
+<td><code>application/pdf</code>, <code>image/jpeg</code>, <code>image/png</code>, <code>image/webp</code></td>
+</tr>
+<tr>
+<td>Vérification</td>
+<td><strong><code>finfo</code> sur le contenu</strong>, pas l'extension du nom</td>
+</tr>
+</tbody>
+</table></div>
+<p>Vérifier le type réel plutôt que l'extension est le bon choix : un <code>.pdf</code>
+renommé ne passe pas.</p>
+<h3>5.7 Le contrôle doit être posé à chaque action, pas à l'écran</h3>
+<p>C'est la leçon structurante de l'audit de septembre 2026, et elle découle
+directement de l'absence de routeur (2.2).</p>
+<p>Un fichier de page porte souvent <strong>plusieurs actions</strong> : l'affichage, et une
+série d'actions AJAX traitées en tête du même fichier. Une barrière posée une
+fois en haut du fichier protège l'ouverture de l'écran — elle ne dit rien du
+droit requis par chaque action.</p>
+<p>Le motif défaillant :</p>
+<pre><code class="language-php">require_permission('affectations_it', 'can_read');   // barrière d'écran
+…
+if ($action === 'promouvoir') {                       // action de modification
+    // … aucun contrôle ici : can_read suffisait
+}
+</code></pre>
+<p>Cinq occurrences ont été corrigées, dont deux permettaient une élévation de
+privilège réelle :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Écran</th>
+<th>Action</th>
+<th>Droit exigé auparavant</th>
+<th>Droit exigé désormais</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>affectations_it.php</code></td>
+<td><code>toggle</code>, <code>promouvoir</code></td>
+<td><code>can_read</code> sur l'écran</td>
+<td><code>can_update</code></td>
+</tr>
+<tr>
+<td><code>import_emuci.php</code></td>
+<td>Import OptoPlate, OptoTrace</td>
+<td><code>can_read</code> sur l'écran</td>
+<td><code>can_create</code></td>
+</tr>
+<tr>
+<td><code>interventions.php</code></td>
+<td><code>demande_coordinateur</code></td>
+<td><code>can_read</code> sur l'écran</td>
+<td><code>can_create</code></td>
+</tr>
+<tr>
+<td><code>reception_site.php</code></td>
+<td><code>add_message</code></td>
+<td><code>can_read</code></td>
+<td><code>can_update</code></td>
+</tr>
+<tr>
+<td><code>operations/point_pdf.php</code></td>
+<td>Consultation d'un brouillon</td>
+<td>Tout coordinateur de site</td>
+<td><strong>Son auteur seul</strong></td>
+</tr>
+</tbody>
+</table></div>
+<div class="note note-stop"><span class="note-t">Le cas <code>affectations_it</code> mérite d'être compris</span><p> Un compte
+<code>maintenance_info</code> disposait de <code>can_read</code> sur cet écran mais pas de
+<code>can_update</code>. L'action <code>promouvoir</code> ne vérifiant rien, il pouvait basculer
+un compte — le sien compris — vers le profil <code>support_it</code> et s'ouvrir de
+nouveaux modules. La faille n'était visible ni à l'écran ni dans la matrice
+des droits : seule la lecture du code la révélait.</p>
+</div>
+<p><strong>Règle à appliquer</strong> : toute action qui écrit vérifie son propre droit, sur
+la même ligne que le premier accès aux données qu'elle modifie.</p>
+<h3>5.8 Ce qui n'est pas en place</h3>
+<div class="note note-stop"><span class="note-t">Aucune protection CSRF</span><p> Aucun jeton anti-rejeu n'est émis ni vérifié.
+Le cookie de session étant en <code>SameSite=Lax</code>, les requêtes intersites en
+<code>POST</code> ne l'emportent pas, ce qui couvre le cas ordinaire. Mais la
+protection repose entièrement sur ce comportement du navigateur, et non sur
+une vérification applicative.</p>
+</div>
+<p>C'est la dette de sécurité la plus nette du produit.</p>
+<hr>
+</section>
+<section id="s6"><h2><span class="n">6</span> Exploitation</h2>
+<h3>6.1 Deux environnements, deux moteurs</h3>
+<div class="note note-info"><span class="note-t">Point de cadrage</span><p> L'installation Render + Neon est l'<strong>environnement de
+recette</strong>, pas la production. La production visée est un serveur dédié,
+avec une base créée séparément par le gestionnaire de base de données.</p>
+</div>
+<div class="tw"><table>
+<thead>
+<tr>
+<th></th>
+<th>Recette</th>
+<th>Production (cible)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Branche</td>
+<td><code>main</code></td>
+<td><code>vps-mysql</code></td>
+</tr>
+<tr>
+<td>Serveur</td>
+<td>Render, conteneur <code>php:8.2-cli</code></td>
+<td>VPS dédié, Apache + PHP 8.4</td>
+</tr>
+<tr>
+<td>Base</td>
+<td>PostgreSQL 16 (Neon), <code>DATABASE_URL</code></td>
+<td>MySQL 8, <code>.env</code> local</td>
+</tr>
+<tr>
+<td>Déploiement</td>
+<td>Automatique à chaque envoi sur <code>main</code></td>
+<td><code>deploy.sh</code>, idempotent, avec sauvegarde préalable</td>
+</tr>
+<tr>
+<td>Dépendances</td>
+<td><code>composer install</code> à la construction de l'image</td>
+<td><code>vendor/</code> <strong>commité dans la branche</strong> — aucune installation sur le serveur</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Conséquence sur l'écriture des requêtes.</strong> Les deux branches portent le
+même produit sur deux moteurs. <code>includes/db.php</code> diffère (<code>pdo_pgsql</code> contre
+<code>pdo_mysql</code>), et toute requête employant une syntaxe propre à PostgreSQL —
+<code>INTERVAL '15 minutes'</code>, <code>ON CONFLICT</code>, <code>::date</code> — doit être traduite lors du
+report sur <code>vps-mysql</code>. Les migrations de droits existent donc en deux
+versions, <code>ON CONFLICT DO UPDATE</code> d'un côté, <code>ON DUPLICATE KEY UPDATE</code> de
+l'autre.</p>
+<p><strong>La migration des données</strong> de la recette vers la production est un travail
+distinct du portage du code : un script dédié copie table par table, ignore
+les tables absentes de la cible plutôt que d'échouer, isole les lignes
+refusées par une contrainte, et réaligne les auto-incréments sur le dernier
+identifiant migré.</p>
+<h3>6.2 Limites de téléversement du serveur</h3>
+<p>L'image PHP officielle n'embarque pas de <code>php.ini</code>. PHP retombe alors sur ses
+valeurs compilées : <strong>2 Mo par fichier, 8 Mo par requête</strong>. Les exports
+OptoPlate et OptoTrace les dépassent, et étaient <strong>rejetés avant même
+d'atteindre le code applicatif</strong> (<code>UPLOAD_ERR_INI_SIZE</code>), sans message
+exploitable.</p>
+<p>Le <code>Dockerfile</code> pose désormais <code>upload_max_filesize = 50M</code>,
+<code>post_max_size = 55M</code> et <code>memory_limit = 256M</code> — ce dernier parce que
+PhpSpreadsheet charge le classeur entier en mémoire pour le lire.</p>
+<p>Le contrôle applicatif de 10 Mo (5.6) reste la limite effective pour les
+pièces jointes ; ces réglages ne font que laisser la requête arriver jusqu'à
+lui.</p>
+<h3>6.3 Évolutions de schéma</h3>
+<p>Fichiers <code>sql/</code> (78 au total), appliqués à la main. Certains sont écrits en
+syntaxe MySQL (accents graves, <code>AUTO_INCREMENT</code>, <code>ENGINE=</code>) et sont
+intégralement rejetés par PostgreSQL. Leur contenu est couvert par le dump
+PostgreSQL, mais leur présence peut induire en erreur.</p>
+<p><strong>Un outil d'inventaire</strong> (<code>tools/inventaire_migrations.php</code>, ajouté le
+11 septembre 2026) répond à un besoin précis : « pour chacune des
+migrations, sait-on dire si elle a été appliquée ? ». Sans lui, l'état d'une
+base ne se déduisait que par inspection manuelle de sa structure — et une
+migration s'est révélée le 8 septembre 2026 n'avoir jamais été exécutée en
+production (<code>commande_compteurs</code> absente), découverte par hasard.</p>
+<p>Le script ne rejoue aucune migration : il extrait de chaque fichier les
+objets structurels qu'il déclare créer (tables, colonnes, index,
+contraintes) et vérifie leur présence réelle via <code>information_schema</code> /
+<code>pg_indexes</code> sur la base ciblée. Une migration dont une partie seulement des
+objets existe est classée <strong>partielle</strong> — le cas d'une migration interrompue
+en cours de route.</p>
+<div class="note note-warn"><span class="note-t">Piège de vérification, rencontré deux fois</span><p> <code>psql</code> préfixe ses erreurs
+SQL par le nom du fichier (<code>psql:/sql/x.sql:12: ERROR:</code>) et ses propres
+erreurs — dont « fichier introuvable » — par <code>psql: error:</code> en minuscules.
+Un compteur ancré sur <code>^ERROR</code> ou sensible à la casse annonce « zéro
+erreur » alors que rien n'est passé. Le script de chargement local cherche
+désormais <code>error</code> sans distinction de casse.</p>
+</div>
+<h3>6.4 Journalisation</h3>
+<ul>
+<li><strong>Audit métier</strong> : table <code>audit_log</code>, alimentée par <code>audit_log()</code>.</li>
+<li><strong>Erreurs applicatives</strong> : <code>error_log()</code>, visible dans les journaux du
+  conteneur. Le registre du tableau de bord s'en sert pour signaler un bloc
+  en échec sans casser la page.</li>
+</ul>
+<h3>6.5 Intégration continue de sécurité</h3>
+<p>Un workflow GitHub Actions (<code>.github/workflows/security-ci.yml</code>) s'exécute à
+chaque envoi et à chaque demande de fusion sur <code>main</code> :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Étape</th>
+<th>Outil</th>
+<th>Bloquant</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Analyse statique</td>
+<td>Semgrep, règles OWASP Top Ten + PHP</td>
+<td><strong>Non</strong> — le volume de signalements sur un dépôt existant n'a pas encore été trié</td>
+</tr>
+<tr>
+<td>Vulnérabilités des dépendances</td>
+<td><code>composer audit</code></td>
+<td><strong>Oui</strong> — peu de bruit attendu sur deux dépendances</td>
+</tr>
+<tr>
+<td>Publication des résultats</td>
+<td>SARIF vers l'onglet Security du dépôt</td>
+<td>—</td>
+</tr>
+</tbody>
+</table></div>
+<p>Aucune étape de déploiement n'y figure : Render redéploie déjà
+automatiquement depuis <code>main</code>. Un second déclencheur serait redondant, pas
+une sécurité supplémentaire.</p>
+<h3>6.6 Environnement de développement</h3>
+<p>Docker Compose fournit PostgreSQL 16 et PHP 8.2, avec chargement automatique
+du schéma. C'est ce qui permet de vérifier une page en l'exécutant plutôt
+qu'en la relisant.</p>
+<hr>
+<h1 class="partie">Partie II — Fonctionnel</h1>
+</section>
+<section id="s7"><h2><span class="n">7</span> Habilitations</h2>
+<h3>7.1 Le modèle</h3>
+<p><strong>Seize rôles</strong>, <strong>cinquante-sept identifiants de module</strong>, <strong>cinq droits</strong>
+par module : <code>can_read</code>, <code>can_create</code>, <code>can_update</code>, <code>can_delete</code>,
+<code>can_export</code>.</p>
+<p>La table <code>permissions</code> porte une ligne par couple (rôle, module).</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Catégorie</th>
+<th>Nombre</th>
+<th>Résolution</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Exposés dans la matrice Admin → Permissions</td>
+<td>56</td>
+<td>Table <code>permissions</code>, administrables depuis l'interface</td>
+</tr>
+<tr>
+<td>Hors table par conception</td>
+<td>1</td>
+<td><code>inventaire_sessions</code>, par délégation nominative (7.3)</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Aucun module contrôlé dans le code n'est absent de la matrice.</strong> Les quatre
+modules Achats (<code>achats</code>, <code>achats_dashboard</code>, <code>achats_param</code>, <code>achats_suivi</code>)
+ont longtemps protégé des écrans sans figurer dans le tableau <code>$modules</code> de
+<code>pages/admin/permissions.php</code>, obligeant à passer par une migration SQL pour
+ajuster leurs droits. Ils sont désormais administrables depuis l'interface
+comme tous les autres.</p>
+<p>L'inverse n'existe pas : aucun module affiché dans la matrice n'est inutilisé
+dans le code.</p>
+<h4>Le piège de la liste recopiée</h4>
+<p>L'écran de permissions construit ses lignes depuis un tableau PHP, mais
+envoyait autrefois au serveur une <strong>liste de modules recopiée à la main en
+JavaScript</strong>. Les deux listes ont divergé : les modules ajoutés côté PHP
+n'étaient pas inclus dans les données transmises, donc <strong>remis silencieusement
+à zéro à chaque enregistrement</strong>. Les droits d'inventaire en ont fait les
+frais.</p>
+<p>La liste JavaScript est désormais dérivée du même tableau PHP
+(<code>json_encode(array_keys($modules))</code>) : une case rendue à l'écran est
+nécessairement sauvegardée.</p>
+<h3>7.2 La règle de repli, et son périmètre exact</h3>
+<div class="note note-info">
+<p>Un rôle dont <strong>aucune</strong> permission n'est renseignée voit <strong>tous les blocs du
+tableau de bord</strong>. Ce repli ne s'applique qu'au tableau de bord.</p>
+</div>
+<p>La distinction est essentielle et a longtemps été énoncée trop largement.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Mécanisme</th>
+<th>Rôle sans aucune permission</th>
+<th>Rôle avec permissions, module absent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Accès à une page (<code>require_permission</code>)</td>
+<td><strong>Refusé</strong> — 403</td>
+<td><strong>Refusé</strong> — 403</td>
+</tr>
+<tr>
+<td>Bloc du tableau de bord (<code>dash_bloc_visible</code>)</td>
+<td><strong>Affiché</strong> — repli</td>
+<td>Masqué</td>
+</tr>
+</tbody>
+</table></div>
+<p><code>_check_permission_db()</code> interroge la table et renvoie faux si aucune ligne
+n'existe : il n'y a <strong>aucun repli sur l'accès aux pages</strong>. Le repli est porté
+par <code>dash_role_a_des_permissions()</code>, consultée uniquement par la visibilité
+des blocs. Le tableau de bord KPI (8.4) n'entre pas dans ce mécanisme : il a
+sa propre ligne de permission (<code>kpi_dashboard</code>, <code>can_read</code>), sans repli.</p>
+<p><strong>Conséquence pratique</strong> : un rôle non paramétré n'a accès à rien, mais son
+tableau de bord paraît complet. L'écart entre les deux impressions est un
+piège de diagnostic — c'est la page qui dit la vérité, pas l'accueil.</p>
+<p><strong>Conséquence de sécurité</strong> : livrer un écran sans livrer sa ligne de
+permission le rend invisible à tous sauf <code>admin</code> et <code>superadmin</code>, et aucune
+erreur ne le signale. C'est arrivé sur six écrans en septembre 2026 (9.4).</p>
+<h3>7.3 Trois accès qui ne passent pas par la table</h3>
+<p><code>can()</code> traite trois cas avant de consulter les permissions. Chacun répond à
+un besoin que la matrice rôle × module ne sait pas exprimer.</p>
+<p><strong>Les sessions d'inventaire sont nominatives.</strong> Le module
+<code>inventaire_sessions</code> <strong>n'existe jamais dans la table <code>permissions</code></strong> :
+l'accès est réservé à <code>admin</code>/<code>superadmin</code>, sauf délégation explicite à une
+personne précise via la table <code>delegations</code>. Le code refuse délibérément de
+retomber sur la table — s'il le faisait, l'ajout accidentel d'une ligne
+donnerait un accès que personne n'a voulu, et masquerait le diagnostic.</p>
+<p><strong>Le N+1 d'un gestionnaire de stock lit les commandes de son périmètre</strong>,
+même si son rôle ne porte pas le droit. La règle est ciblée sur la
+<strong>personne</strong> réellement N+1 (<code>user_departements.is_n1</code>), pas sur un rôle :
+accordé par rôle dans la matrice, l'accès s'étendrait à tous les porteurs de
+ce rôle. La lecture seule est volontaire — le visa reste au superviseur
+opération.</p>
+<p><strong>Le gestionnaire opération est en lecture seule hors délégation.</strong> Sur un
+module qui lui est délégué, ses droits sont ceux de la table. Sur tout autre
+module, <strong>seul <code>can_read</code> peut passer</strong> : les droits d'écriture sont refusés
+sans consulter la table.</p>
+<h3>7.4 Portées implicites</h3>
+<p>Deux restrictions ne passent pas par la table des permissions :</p>
+<ul>
+<li><strong><code>coordinateur_site</code></strong> est verrouillé sur son site. Le paramètre d'URL est
+  ignoré pour lui — y compris sur le tableau de bord KPI, où sa sélection de
+  sites est forcée plutôt que choisie.</li>
+<li><strong><code>maintenance_info</code></strong> est restreint à la catégorie d'équipements
+  <code>informatique</code>.</li>
+</ul>
+<h3>7.5 Les sous-rôles Support IT</h3>
+<p>Le rôle <code>support_it</code> n'ouvre <strong>rien</strong> par lui-même. Ses droits viennent des
+sous-rôles actifs portés par <code>support_it_roles</code>, résolus à chaque requête par
+<code>_support_it_can()</code>.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Sous-rôle</th>
+<th>Modules ouverts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>maintenance</code></td>
+<td><code>interventions</code>, <code>equipements</code>, <code>sites</code></td>
+</tr>
+<tr>
+<td><code>controleur_production</code></td>
+<td><code>import_emuci</code>, <code>point_emuci</code>, <code>equipements</code>, <code>sites</code></td>
+</tr>
+<tr>
+<td><code>gestionnaire_bobines</code></td>
+<td><code>bobines</code>, <code>inventaire_bobines</code>, <code>equipements</code>, <code>sites</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Une exception, et elle est nécessaire.</strong> Le module <code>demandes</code> est transverse
+— il concerne tous les employés, quel que soit leur métier. S'il était filtré
+par sous-rôle IT, aucun compte <code>support_it</code> n'y accéderait jamais, quoi que
+porte la table <code>permissions</code>. Il est donc évalué directement sur
+<code>permissions</code>, sans passer par la grille ci-dessus.</p>
+<div class="note note-warn"><span class="note-t">Le risque de bascule</span><p> Un compte migré vers <code>support_it</code> sans qu'un
+sous-rôle soit activé dans le même mouvement perd tout accès, sans message
+explicite — l'inverse d'un compte resté sur son ancien rôle, qui
+fonctionne. La migration qui a fusionné <code>maintenance_info</code> dans <code>support_it</code>
+pose donc le sous-rôle <strong>avant</strong> de changer le rôle, pour qu'une
+interruption laisse le compte fonctionnel plutôt que muet.</p>
+</div>
+<h3>7.6 Délégation</h3>
+<p>Un utilisateur peut déléguer ses visas à un autre pour une période donnée
+(<code>delegations</code>). Sans cela, une demande reste bloquée à l'étape d'une
+personne absente.</p>
+<hr>
+</section>
+<section id="s8"><h2><span class="n">8</span> Domaine Opérations</h2>
+<h3>8.1 Le point journalier</h3>
+<p>Entité centrale : <code>op_points_journaliers</code>. Un relevé porte un site, une date,
+un type, et les quantités produites — véhicules par catégorie, plaques,
+rivets utilisés et endommagés, heures de travail.</p>
+<h4>Cycle de vie</h4>
+<figure><pre class="mermaid">stateDiagram-v2
+    direction LR
+    [*] --&gt; brouillon : saisie par le coordinateur
+    brouillon --&gt; en_attente_validation : soumission
+    en_attente_validation --&gt; valide : validation superviseur
+    en_attente_validation --&gt; rejete : rejet, motif obligatoire
+    rejete --&gt; brouillon : reprise par le coordinateur
+    valide --&gt; valide : correction acceptée
+    valide --&gt; [*]</pre></figure>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Statut</th>
+<th>Qui agit</th>
+<th>Effet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>brouillon</code></td>
+<td>Coordinateur</td>
+<td>Saisi, non transmis. <strong>N'entre dans aucun agrégat.</strong></td>
+</tr>
+<tr>
+<td><code>en_attente_validation</code></td>
+<td>—</td>
+<td>Transmis, attend le superviseur</td>
+</tr>
+<tr>
+<td><code>valide</code></td>
+<td>Superviseur</td>
+<td>Compte dans tous les indicateurs</td>
+</tr>
+<tr>
+<td><code>rejete</code></td>
+<td>Superviseur</td>
+<td>Refusé avec motif ; le coordinateur reprend</td>
+</tr>
+</tbody>
+</table></div>
+<div class="note note-info"><span class="note-t">Trois statuts, pas deux</span><p> La distinction <code>brouillon</code> /
+<code>en_attente_validation</code> est structurante : un brouillon n'est visible que de
+son auteur, un point en attente est dans la file du superviseur. Les
+confondre fait chercher des points là où ils ne sont pas.</p>
+</div>
+<h4>Correction d'un point validé</h4>
+<p>Un point <code>valide</code> n'est plus modifiable directement. La correction suit son
+propre circuit :</p>
+<figure><pre class="mermaid">sequenceDiagram
+    autonumber
+    participant C as Coordinateur
+    participant S as Superviseur
+    participant P as Point journalier
+    participant V as Validation stock matin
+    C-&gt;&gt;S: demande de correction (motif)
+    S-&gt;&gt;S: examen
+    alt acceptée
+        S-&gt;&gt;P: applique la correction
+        S-&gt;&gt;V: bascule la validation du jour en « réajusté »
+    else refusée
+        S-&gt;&gt;C: refus motivé
+    end</pre></figure>
+<p><strong>Effet de bord à connaître</strong> : accepter une correction ne touche pas
+seulement le point. La <strong>validation du stock du matin</strong> du même site et de la
+même date passe au statut <code>reajuste</code>. Les deux domaines sont liés, parce
+qu'un chiffre de production corrigé invalide le rapprochement de stock qui en
+découlait.</p>
+<h3>8.2 Rapprochement EMUCI</h3>
+<p><strong>Import</strong> (<code>import_optoplate</code>, <code>import_optotrace</code>, <code>import_sessions_emuci</code>) :
+chargement du fichier de la plateforme nationale, donnant le nombre de
+plaques par site et par <code>statut_plaque</code> (<code>in_use</code>, <code>declared_broken</code>, …).</p>
+<p>Le fichier est refusé si des colonnes attendues manquent, avec la liste des
+colonnes absentes.</p>
+<p><strong>Point EMUCI</strong> : compare le déclaré et le remonté, et expose les écarts.
+Les sites présents dans le fichier mais inconnus de l'ERP sont isolés dans
+<code>emuci_sites_inconnus</code> plutôt que rejetés.</p>
+<h3>8.3 Suivi des observations</h3>
+<p>Les observations sont saisies <strong>dans</strong> le point journalier (une liste de
+lignes typées : info, alerte, relance, incident, urgence, autre) ; l'écran
+<code>observations.php</code> porte leur <strong>cycle de vie propre</strong>, indépendant de celui
+du point qui les a produites.</p>
+<figure><pre class="mermaid">stateDiagram-v2
+    direction LR
+    [*] --&gt; en_attente
+    en_attente --&gt; en_cours : prise en charge (superviseur)
+    en_cours --&gt; traite : traitement (superviseur)
+    traite --&gt; cloture : clôture
+    en_attente --&gt; escalade : 4e relance sans traitement
+    escalade --&gt; en_cours : prise en charge</pre></figure>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Acteur</th>
+<th>Droit requis</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Prendre en charge, traiter, clôturer</td>
+<td>Superviseur</td>
+<td><code>can_update</code> sur <code>observations</code></td>
+</tr>
+<tr>
+<td>Relancer, confirmer la clôture</td>
+<td>Coordinateur auteur</td>
+<td><code>can_read</code> suffit — ce sont des actions de son propre parcours</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Règles :</strong></p>
+<ul>
+<li>Une observation ne peut être clôturée qu'après prise en charge — une
+  observation <code>en_attente</code> refuse la clôture directe.</li>
+<li>La relance ne s'applique qu'à une observation <code>en_attente</code>, et respecte un
+  délai minimal depuis la dernière relance (ou la saisie initiale).</li>
+<li>Au-delà de <strong>trois relances</strong>, l'observation bascule automatiquement au
+  statut <code>escalade</code> — un statut filtrable, préféré à une notification qui se
+  perdrait dans la liste.</li>
+<li>Un coordinateur n'agit que sur les observations de son propre site.</li>
+<li>L'historique n'est jamais supprimable.</li>
+</ul>
+<p>L'écran expose un export Excel sur le même périmètre que les filtres
+affichés.</p>
+<hr>
+</section>
+<section id="s9"><h2><span class="n">9</span> Domaine Stock, bobines et inventaires</h2>
+<h3>9.1 Cycle de vie d'une bobine</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Statut</th>
+<th>Signification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>en_stock</code></td>
+<td>Reçue, non ouverte</td>
+</tr>
+<tr>
+<td><code>en_cours</code></td>
+<td>Ouverte, en consommation</td>
+</tr>
+<tr>
+<td><code>epuisee</code></td>
+<td>Films consommés</td>
+</tr>
+<tr>
+<td><code>retiree</code></td>
+<td>Sortie du circuit</td>
+</tr>
+</tbody>
+</table></div>
+<p>Une bobine porte <code>films_total</code>, <code>films_utilises</code>, <code>films_endommages</code>,
+<code>films_restants</code>.</p>
+<div class="note note-info"><span class="note-t">Seules les bobines <code>en_cours</code> comptent</span><p> dans les films restants affichés
+par les tableaux de bord.</p>
+</div>
+<h3>9.2 Validation du stock du matin</h3>
+<p>Déclaration quotidienne par site (<code>validations_stock_matin</code>). Trois issues :
+<code>valide</code>, <code>valide_avec_ecarts</code>, <code>valide_auto</code>. Le nombre d'écarts est stocké
+(<code>nb_ecarts</code>) avec leur détail.</p>
+<h3>9.3 Rivets</h3>
+<p><code>op_stock_rivets</code>, par site et par type. <strong>Seuil d'alerte : 200 unités.</strong> En
+dessous, le site remonte dans les alertes.</p>
+<h3>9.4 Inventaires</h3>
+<p>Quatre natures de stock sont inventoriées — bobines, rivets, PMMA,
+équipements — sur le même modèle en trois tables : l'inventaire
+(<code>inventaires_*</code>), son détail ligne à ligne (<code>inventaire_details_*</code>), et les
+écarts constatés (<code>ecarts_*</code>). Une quatrième table par nature
+(<code>inventaire_corrections_*</code>) porte les demandes de correction.</p>
+<h4>La session, et ce qu'elle déclenche</h4>
+<p>La session (<code>inventaire_sessions</code>) est l'objet d'administration : elle porte
+une périodicité, une date de début, et la liste des sites concernés
+(<code>inventaire_session_sites</code>). Elle passe de <code>ouverte</code> à <code>cloturee</code>.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Périodicité</th>
+<th>Durée</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mensuel</code></td>
+<td>1 mois</td>
+</tr>
+<tr>
+<td><code>trimestriel</code></td>
+<td>3 mois</td>
+</tr>
+<tr>
+<td><code>semestriel</code></td>
+<td>6 mois</td>
+</tr>
+<tr>
+<td><code>annuel</code></td>
+<td>12 mois</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>La date de fin n'est jamais saisie</strong> : elle est déduite de la périodicité
+(<code>inv_date_fin()</code> — début + N mois − 1 jour). Le libellé l'est aussi quand
+l'administrateur n'en fournit pas : « Inventaire mensuel — mars 2026 »,
+« Inventaire trimestriel — T2 2026 ».</p>
+<div class="note note-info"><span class="note-t">L'ouverture d'une session provisionne les inventaires</span><p> Pour chaque site
+rattaché, l'application crée l'inventaire de chaque nature et <strong>génère
+toutes ses lignes de détail</strong> à partir du stock du moment. L'inventaire naît
+donc rempli du théorique, prêt à recevoir le physique.</p>
+</div>
+<h4>Ce qui distingue les quatre natures</h4>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Nature</th>
+<th>Unité de comptage</th>
+<th>Source du théorique</th>
+<th>Particularité</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Bobines</td>
+<td>La bobine, objet individuel</td>
+<td><code>op_bobines.stock_systeme</code></td>
+<td>Seule nature à calculer aussi la consommation quotidienne moyenne sur 30 jours et l'écart entre saisie terrain et données EMUCI du jour</td>
+</tr>
+<tr>
+<td>Rivets</td>
+<td>Le <strong>type</strong> de rivet, quantité agrégée par site</td>
+<td><code>op_stock_rivets</code></td>
+<td>Le détail est clé sur <code>type_rivet</code>, pas sur un identifiant d'objet</td>
+</tr>
+<tr>
+<td>PMMA</td>
+<td>Le <strong>type</strong> de PMMA, quantité agrégée</td>
+<td><code>stock_pmma_site</code></td>
+<td>Le type est un texte libre : la liste dépend de ce qui existe en stock</td>
+</tr>
+<tr>
+<td>Équipements</td>
+<td>L'équipement, objet individuel</td>
+<td><code>equipements</code> actifs du site</td>
+<td><strong>Pas de quantité</strong> — c'est une checklist de présence : trouvé / manquant</td>
+</tr>
+</tbody>
+</table></div>
+<p>L'inventaire des équipements est le seul à ne figer aucun stock système : un
+équipement est présent ou absent, il n'a pas de quantité à comparer.</p>
+<h4>L'écart déjà connu ne se recompte pas</h4>
+<p>Chaque ligne de détail porte <code>ecart_connu_avant</code> : la somme des écarts
+<strong>déjà ouverts</strong> sur cet objet au moment où l'inventaire est créé.</p>
+<p>C'est ce qui évite de compter deux fois le même manquant — une fois au
+constat initial, une fois à l'inventaire suivant tant que le traitement n'est
+pas terminé. Le compteur lit les écarts au statut <code>ouvert</code> uniquement.</p>
+<h4>Les refus, et pourquoi ils sont explicites</h4>
+<p>Deux cas refusent la création plutôt que de produire un inventaire vide ou
+doublon :</p>
+<ul>
+<li>un inventaire de même nature existe déjà pour ce site, cette date et cette
+  périodicité, sans être annulé ;</li>
+<li>le site n'a rien à compter — aucune bobine active, aucun stock de rivets ou
+  de PMMA, aucun équipement affecté.</li>
+</ul>
+<p>Le second cas mérite le message explicite qu'il reçoit : un inventaire vide
+serait indiscernable d'un inventaire non saisi.</p>
+<h4>Cycles de vie</h4>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Objet</th>
+<th>États</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Session</td>
+<td><code>ouverte</code> → <code>cloturee</code> (ou <code>annule</code>)</td>
+</tr>
+<tr>
+<td>Inventaire</td>
+<td><code>brouillon</code> → <code>valide</code> (ou <code>annule</code>)</td>
+</tr>
+<tr>
+<td>Écart</td>
+<td><code>ouvert</code> → <code>resolu</code></td>
+</tr>
+<tr>
+<td>Demande de correction</td>
+<td><code>en_attente</code> → <code>autorise</code> ou <code>refuse</code> → <code>traite</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>La création d'un inventaire journalier par un coordinateur de site n'est
+plus possible</strong> : elle dépend désormais de la session ouverte par
+l'administration.</p>
+<h4>Les six écrans ont failli être invisibles</h4>
+<p>Les écrans Inventaire et Écarts pour les équipements, le PMMA et les rivets
+ont été livrés et déployés <strong>sans les lignes de permission correspondantes</strong>.
+Conséquence de la règle 7.1 — module absent vaut refus — ils étaient
+invisibles pour tous les rôles sauf <code>admin</code> et <code>superadmin</code>, sans qu'aucune
+erreur ne le signale. Corrigé en septembre 2026.</p>
+<h3>9.5 Traçabilité des endommagements</h3>
+<p>Un film endommagé se déclare <strong>film par film</strong>, avec sa cause, depuis le
+pop-up dédié du point journalier, et se stocke dans <code>op_endommagements</code> — une
+ligne par film, et non un compteur agrégé : six films abîmés sur une même
+bobine peuvent l'avoir été à six moments et pour six causes distinctes, ce
+que seule une ligne par film restitue.</p>
+<p>L'écran <code>tracabilite_endommagements.php</code> ne fait <strong>que lire</strong> cette table :
+la saisie reste exclusivement dans le point journalier, pour garder un seul
+chemin d'écriture. Le coordinateur de site n'y voit que son propre site ;
+l'écran propose des filtres et un export sur le même périmètre.</p>
+<h3>9.6 Simulation &amp; projection de stocks</h3>
+<p><code>simulation_stocks.php</code> est un outil de <strong>projection en lecture seule</strong> : il
+lit l'historique de consommation et ne modifie jamais un stock réel — c'est
+la règle qui a guidé toute la conception de l'écran.</p>
+<h4>Deux cas d'usage, un mode explicite</h4>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Question</th>
+<th>Couverture</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stock</code></td>
+<td>Avec un nombre de bobines/vignettes donné, jusqu'à quand l'activité tient-elle ?</td>
+<td>Stock actuel ou saisi, projeté dans le temps</td>
+</tr>
+<tr>
+<td><code>ouverture</code></td>
+<td>Un ou plusieurs nouveaux sites s'ouvrent : le stock actuel absorbe-t-il la charge ? Sinon, combien commander pour tenir jusqu'à une date ?</td>
+<td>Charge additionnelle des nouveaux sites</td>
+</tr>
+<tr>
+<td><code>les_deux</code></td>
+<td>Les deux combinés</td>
+<td>—</td>
+</tr>
+</tbody>
+</table></div>
+<p>Le mode est un choix explicite de l'utilisateur, jamais déduit du
+remplissage des champs : mélanger les deux questions obligerait l'utilisateur
+à deviner ce que l'écran calcule.</p>
+<h4>Calcul par format, pas par moyenne de parc</h4>
+<p>La projection de stock se fait <strong>format par format</strong> — chaque conditionnement
+de bobine a sa propre contenance en films, administrée depuis les
+référentiels (9.7 et §13.6). Multiplier un nombre de bobines par une moyenne
+du parc entier produisait un stock projeté qui ne correspondait à rien de
+réel ; la quantité de chaque format reste éditable, et l'agrégat est la somme
+des lignes retenues.</p>
+<p><strong>L'autonomie est calculée séparément pour les bobines et pour les
+vignettes</strong> : un chiffre unique mélangeant les deux masquerait l'échéance la
+plus proche.</p>
+<h4>Scénario d'ouverture de site</h4>
+<p>Le périmètre matière (formats de bobines, types de PMMA) que consommeront les
+nouveaux sites est choisi explicitement — par défaut, l'ensemble des formats
+existants est retenu, pour reproduire le comportement qui prévalait avant que
+ce choix existe. Sans consommation journalière estimée saisie pour le nouveau
+site, la consommation moyenne d'un site existant est retenue par défaut :
+un zéro par défaut rendrait l'ouverture faussement indolore dans la
+simulation. La consommation de PMMA d'un nouveau site est projetée du même
+principe.</p>
+<h4>Source de la consommation observée</h4>
+<p>La consommation de films — moyenne globale, par site et par format — est
+calculée par <code>includes/consommation.php</code> sur <code>conso_source_bobines()</code>, qui
+additionne les deux chemins par lesquels des films quittent une bobine :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Chemin</th>
+<th>Table</th>
+<th>Films comptés</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Point journalier, points soumis</td>
+<td><code>op_films_utilises</code></td>
+<td>Utilisés + endommagés</td>
+</tr>
+<tr>
+<td>Saisie manuelle (Opérations → Bobines)</td>
+<td><code>consommations_bobines</code></td>
+<td>Quantité saisie</td>
+</tr>
+</tbody>
+</table></div>
+<p>Chaque chemin décrémente <code>films_restants</code> : leur somme ne compte rien deux
+fois. Jusqu'au 24 septembre 2026, seule la saisie manuelle était lue ; le
+point journalier n'y écrivant rien, la consommation observée valait zéro sur
+un parc géré par points journaliers et l'autonomie était surestimée.
+<code>conso_moy_bobine()</code>, qui alimente les jours restants des inventaires, lit
+encore la seule saisie manuelle.</p>
+<h4>État de la page</h4>
+<p>Tous les paramètres de simulation sont portés par les paramètres de l'URL :
+la page est intégralement rejouable et partageable par lien, sans aucun état
+à enregistrer côté serveur.</p>
+<hr>
+</section>
+<section id="s10"><h2><span class="n">10</span> Domaine Demandes internes</h2>
+<h3>10.1 Structure</h3>
+<p>Un <strong>type</strong> (<code>di_types</code>) porte une liste ordonnée d'<strong>étapes</strong>
+(<code>di_etapes</code>), chacune désignant un code de rôle valideur. Neuf types sont
+actifs.</p>
+<p>Les champs de formulaire ne sont pas en base : ils sont déclarés dans
+<code>includes/demandes_champs.php</code>, et un moteur de rendu générique les affiche.</p>
+<h3>10.2 Workflow d'une demande</h3>
+<figure><pre class="mermaid">stateDiagram-v2
+    direction LR
+    [*] --&gt; brouillon
+    brouillon --&gt; en_attente : soumission
+    en_attente --&gt; en_cours : premier visa
+    en_cours --&gt; en_cours : visa intermédiaire
+    en_cours --&gt; approuve : dernier visa, type sans traitement IT
+    en_cours --&gt; approuve_traitement : dernier visa, type avec traitement IT
+    en_attente --&gt; rejete : rejet motivé
+    en_cours --&gt; rejete : rejet motivé
+    approuve_traitement --&gt; traite : exécution par l&#x27;informatique
+    approuve --&gt; [*]
+    traite --&gt; [*]
+    rejete --&gt; [*]</pre></figure>
+<p><strong>La bifurcation finale dépend du type, pas de la demande.</strong> Six types sur
+neuf portent le drapeau <code>traitement_it</code> :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Traitement IT requis</th>
+<th>Types</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Oui</td>
+<td>Création d'accès NSIIV, basculement d'accès, basculement de compte, transfert d'agent, création de site, changement de géolocalisation</td>
+</tr>
+<tr>
+<td>Non</td>
+<td>Autorisation d'absence, imputation courrier, demande exceptionnelle</td>
+</tr>
+</tbody>
+</table></div>
+<p>Pour les six premiers, <strong>approuvé ne suffit pas</strong> : la demande reste à faire
+tant que l'informatique ne l'a pas marquée traitée (<code>traite_it</code>), avec
+éventuellement un numéro de ticket GLPI.</p>
+<h4>Le déroulé, acteur par acteur</h4>
+<figure><pre class="mermaid">sequenceDiagram
+    autonumber
+    participant D as Demandeur
+    participant N as N+1
+    participant V as Valideurs suivants
+    participant IT as Informatique
+    D-&gt;&gt;D: remplit le formulaire du type
+    Note over D: rattachement à un département exigé
+    D-&gt;&gt;N: soumet
+    N--&gt;&gt;D: rejet motivé
+    N-&gt;&gt;V: vise
+    loop chaque étape restante
+        V-&gt;&gt;V: vise, ou rejette avec motif
+    end
+    alt type avec traitement IT
+        V-&gt;&gt;IT: approuvée pour traitement
+        IT-&gt;&gt;IT: exécute, puis marque traitée
+    else type sans traitement IT
+        V-&gt;&gt;D: approuvée
+    end</pre></figure>
+<h4>Garde-fous</h4>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Garde</th>
+<th>Effet si non satisfaite</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Le demandeur est rattaché à un département</td>
+<td>Soumission refusée, message explicite</td>
+</tr>
+<tr>
+<td>L'utilisateur n'est pas le demandeur</td>
+<td>Impossible de viser sa propre demande</td>
+</tr>
+<tr>
+<td>La demande est en <code>en_attente</code> ou <code>en_cours</code></td>
+<td>Toute autre tentative de visa est rejetée</td>
+</tr>
+<tr>
+<td>Un rejet porte un motif</td>
+<td>Rejet refusé sans motif</td>
+</tr>
+</tbody>
+</table></div>
+<h3>10.3 Résolution des valideurs</h3>
+<p>Implémentée dans <code>di_user_roles()</code> et <code>di_can_validate()</code>.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Rôle ERP</th>
+<th>Étapes visables</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>raf</code></td>
+<td><code>raf</code></td>
+</tr>
+<tr>
+<td><code>daf</code></td>
+<td><code>daf</code></td>
+</tr>
+<tr>
+<td><code>support_it</code>, <code>superviseur_it</code>, <code>maintenance_info</code></td>
+<td><code>it</code></td>
+</tr>
+<tr>
+<td><code>directeur_general</code>, <code>lecteur</code></td>
+<td><code>dg</code></td>
+</tr>
+<tr>
+<td><code>admin</code>, <code>superadmin</code></td>
+<td>toutes</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Trois règles complémentaires :</strong></p>
+<ol>
+<li><strong><code>n1</code> n'est pas un rôle</strong> : c'est le responsable du département du
+   demandeur, résolu dynamiquement.</li>
+<li><strong>Une étape rattachée à un département</strong> (<code>di_roles.departement_id</code>) peut
+   être visée par n'importe quel membre de ce département. C'est ce qui fait
+   vivre le visa « Administration », dont le rôle ERP a été supprimé.</li>
+<li><strong>Personne ne vise sa propre demande</strong>, administrateurs compris.</li>
+</ol>
+<h3>10.4 Prérequis de dépôt</h3>
+<p>Un utilisateur doit être <strong>rattaché à un département</strong> pour soumettre. Sans
+rattachement, le N+1 est introuvable et la soumission est refusée avec un
+message explicite. Les administrateurs sont exemptés.</p>
+<hr>
+</section>
+<section id="s11"><h2><span class="n">11</span> Domaine Achats</h2>
+<p>Le domaine le plus riche en tables et en règles de gestion numérotées dans le
+code, reprises ici.</p>
+<h3>11.1 Workflow d'une FEB</h3>
+<p>C'est le circuit le plus long du produit : <strong>huit statuts</strong>, quatre acteurs,
+et trois portes de retour en arrière.</p>
+<figure><pre class="mermaid">stateDiagram-v2
+    direction LR
+    [*] --&gt; brouillon
+    brouillon --&gt; en_attente_n1 : soumission, si le département a un N+1
+    brouillon --&gt; soumise : soumission, sans N+1
+    en_attente_n1 --&gt; soumise : aval du N+1
+    en_attente_n1 --&gt; brouillon : refus motivé du N+1
+    soumise --&gt; prise_en_charge : un acheteur la prend
+    prise_en_charge --&gt; soumise : restitution à la file
+    prise_en_charge --&gt; en_validation : lancement du circuit
+    en_validation --&gt; confirmee : dernier visa du palier
+    en_validation --&gt; rejetee : rejet motivé
+    rejetee --&gt; prise_en_charge : reprise par l&#x27;acheteur
+    en_validation --&gt; prise_en_charge : réouverture administrative
+    confirmee --&gt; cloturee : bascule en commande
+    cloturee --&gt; [*]</pre></figure>
+<div class="note note-info"><span class="note-t">Le statut <code>en_attente_n1</code> conditionne tout le reste</span><p> Sans l'aval du
+supérieur hiérarchique, le service achats ne voit même pas la demande. La
+personne est <strong>figée</strong> sur la fiche à la soumission (RG-11) : un changement
+de responsable en cours de circuit ne déplace pas une signature attendue.</p>
+</div>
+<h4>Qui agit, et sur quoi</h4>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Transition</th>
+<th>Acteur</th>
+<th>Garde</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Soumission</td>
+<td>Demandeur</td>
+<td>Trois familles au maximum (RG-02)</td>
+</tr>
+<tr>
+<td>Aval ou refus</td>
+<td>N+1 figé sur la fiche</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Prise en charge</td>
+<td>Acheteur</td>
+<td><code>acheteur_id</code> vide <strong>et</strong> statut <code>soumise</code></td>
+</tr>
+<tr>
+<td>Restitution</td>
+<td>Le même acheteur</td>
+<td>Statut <code>prise_en_charge</code></td>
+</tr>
+<tr>
+<td>Réattribution</td>
+<td>Responsable</td>
+<td>Statut <code>prise_en_charge</code></td>
+</tr>
+<tr>
+<td>Lancement de la validation</td>
+<td>Acheteur</td>
+<td>Une offre retenue par lot, fournisseurs conformes, un palier couvre le montant</td>
+</tr>
+<tr>
+<td>Visa</td>
+<td>Signataires du palier</td>
+<td>Ne pas être le demandeur</td>
+</tr>
+<tr>
+<td>Reprise après rejet</td>
+<td>Le même acheteur</td>
+<td>Statut <code>rejetee</code></td>
+</tr>
+<tr>
+<td>Réouverture</td>
+<td>Administrateur</td>
+<td>Statut <code>en_validation</code> — annule les signatures, tracé</td>
+</tr>
+<tr>
+<td>Bascule en commande</td>
+<td>Acheteur</td>
+<td>Statut <code>confirmee</code></td>
+</tr>
+</tbody>
+</table></div>
+<h4>Le déroulé complet</h4>
+<figure><pre class="mermaid">sequenceDiagram
+    autonumber
+    participant D as Demandeur
+    participant N as N+1
+    participant A as Acheteur
+    participant S as Signataires du palier
+    participant M as Stock magasin
+    participant DP as Stock département
+    D-&gt;&gt;D: rédige la FEB (site, service, lignes)
+    D-&gt;&gt;N: soumet
+    N--&gt;&gt;D: refus motivé, retour en brouillon
+    N-&gt;&gt;A: aval, la FEB entre en file
+    A-&gt;&gt;A: prend en charge
+    A-&gt;&gt;A: constitue les lots, collecte les offres
+    Note over A: une seule offre retenue par lot,&lt;br/&gt;fournisseur conforme exigé
+    A-&gt;&gt;S: lance la validation (palier selon le montant total)
+    S--&gt;&gt;A: rejet motivé, l&#x27;acheteur reprend
+    loop chaque signataire du palier
+        S-&gt;&gt;S: vise
+    end
+    S-&gt;&gt;A: FEB confirmée
+    A-&gt;&gt;A: saisit la DA puis le BC
+    M-&gt;&gt;DP: réception : débite le magasin, crédite le département
+    A-&gt;&gt;A: clôture, ou clôture de reliquat</pre></figure>
+<h4>Les trois retours en arrière</h4>
+<p>Un circuit qui ne sait que remonter est un circuit qui bloque. Trois portes
+de sortie existent, chacune avec sa condition :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Porte</th>
+<th>Depuis</th>
+<th>Vers</th>
+<th>Réservée à</th>
+<th>Effet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Refus du N+1</td>
+<td><code>en_attente_n1</code></td>
+<td><code>brouillon</code></td>
+<td>Le N+1 figé</td>
+<td>Le demandeur corrige et resoumet</td>
+</tr>
+<tr>
+<td>Reprise après rejet</td>
+<td><code>rejetee</code></td>
+<td><code>prise_en_charge</code></td>
+<td>L'acheteur en charge</td>
+<td>Les signatures sont remises à zéro</td>
+</tr>
+<tr>
+<td>Réouverture</td>
+<td><code>en_validation</code></td>
+<td><code>prise_en_charge</code></td>
+<td>Administrateur seul</td>
+<td>Annule les signatures, tracé explicitement</td>
+</tr>
+</tbody>
+</table></div>
+<p>La troisième est <strong>la seule porte de sortie d'une FEB en cours de
+validation</strong> : offres et montants y sont verrouillés (RG-12).</p>
+<h3>11.2 Les huit statuts</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Statut</th>
+<th>Signification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>brouillon</code></td>
+<td>En rédaction par le demandeur</td>
+</tr>
+<tr>
+<td><code>en_attente_n1</code></td>
+<td>Attend l'aval du supérieur hiérarchique</td>
+</tr>
+<tr>
+<td><code>soumise</code></td>
+<td>En file, aucun acheteur attribué</td>
+</tr>
+<tr>
+<td><code>prise_en_charge</code></td>
+<td>Un acheteur se l'est attribuée</td>
+</tr>
+<tr>
+<td><code>en_validation</code></td>
+<td>Dans le circuit de visas, montants verrouillés</td>
+</tr>
+<tr>
+<td><code>confirmee</code></td>
+<td>Validée, prête à commander</td>
+</tr>
+<tr>
+<td><code>cloturee</code></td>
+<td>Terminée</td>
+</tr>
+<tr>
+<td><code>rejetee</code></td>
+<td>Refusée à une étape, avec motif</td>
+</tr>
+</tbody>
+</table></div>
+<p>Trois niveaux d'urgence : normale, urgente, critique. Le numéro est attribué
+automatiquement, par exercice.</p>
+<h3>11.3 Les règles de gestion</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Règle</th>
+<th>Énoncé</th>
+<th>Où</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>RG-02</strong></td>
+<td>Trois codes analytiques au maximum par FEB. En pratique, trois familles distinctes.</td>
+<td><code>feb_fiche.php</code></td>
+</tr>
+<tr>
+<td><strong>RG-05</strong></td>
+<td>Le code analytique n'est jamais saisi à la main, toujours dérivé.</td>
+<td><code>achats.php</code></td>
+</tr>
+<tr>
+<td><strong>RG-06</strong></td>
+<td>Le site et le service sont constants sur toute la FEB.</td>
+<td><code>achats.php</code></td>
+</tr>
+<tr>
+<td><strong>RG-08</strong></td>
+<td>Un lot est identifié par son code analytique, sans second identifiant.</td>
+<td><code>achats.php</code></td>
+</tr>
+<tr>
+<td><strong>RG-09</strong></td>
+<td>Une ligne peut être en dérogation : son fournisseur diffère de l'offre retenue du lot, et elle est exclue de la comparaison.</td>
+<td><code>achats.php</code></td>
+</tr>
+<tr>
+<td><strong>RG-10</strong></td>
+<td>Le circuit de visa se calcule sur le <strong>montant total de la FEB</strong>, jamais par ligne ni par lot.</td>
+<td><code>achats.php</code></td>
+</tr>
+<tr>
+<td><strong>RG-11</strong></td>
+<td>Le N+1 est résolu et <strong>figé</strong> sur la FEB (<code>n1_user_id</code>) : un changement de responsable en cours de circuit ne déplace pas une signature attendue.</td>
+<td><code>achats.php</code></td>
+</tr>
+<tr>
+<td><strong>RG-12</strong></td>
+<td>Offres et montants sont verrouillés dès <code>en_validation</code>. Seul un administrateur peut rouvrir, ce qui annule les signatures et laisse une trace.</td>
+<td><code>achats.php</code></td>
+</tr>
+<tr>
+<td><strong>RG-13</strong></td>
+<td>La grille des paliers actifs doit couvrir toute la plage de montants, <strong>sans trou ni chevauchement</strong>. Contrôlé à l'enregistrement et à la désactivation.</td>
+<td><code>param_paliers.php</code></td>
+</tr>
+</tbody>
+</table></div>
+<h3>11.4 Le code analytique</h3>
+<p><code>SITE / DÉPARTEMENT / FAMILLE</code>, composé des trois codes, en majuscules et
+sans espaces. Vide si l'un des trois manque.</p>
+<p>Chaque famille porte un <strong>compte comptable SYSCOHADA</strong> : trente-cinq
+familles installées, toutes rattachées à un compte (241 outillage, 2442
+équipements, 604 consommables, 605 fournitures, 611 transport, 624
+maintenance, 628 télécoms, …).</p>
+<h3>11.5 Circuit de visa par palier</h3>
+<p>Un palier associe une tranche de montant à des signataires.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Montant (XOF)</th>
+<th>Palier</th>
+<th>Signataires</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0 à 500 000</td>
+<td>RAF seul</td>
+<td>RAF</td>
+</tr>
+<tr>
+<td>500 001 à 5 000 000</td>
+<td>RAF + DAF</td>
+<td>RAF, DAF</td>
+</tr>
+<tr>
+<td>Au-delà de 5 000 000</td>
+<td>RAF + DAF + PDG</td>
+<td>RAF, DAF, PDG</td>
+</tr>
+</tbody>
+</table></div>
+<div class="note note-info"><span class="note-t">Ces bornes sont provisoires</span><p> La migration qui les installe les qualifie
+de « bornes de démarrage arbitraires, aucun seuil réel fourni ». Le
+mécanisme est en place ; les seuils ne sont pas arrêtés.</p>
+</div>
+<p><strong>Le visa du N+1 intervient avant la prise en charge par les achats</strong> : sans
+son aval, le service achats ne voit pas la demande (RG-11).</p>
+<h3>11.6 Conformité fournisseur</h3>
+<p>Un fournisseur n'est retenu que s'il porte <strong>trois pièces</strong> :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Pièce</th>
+<th>Champ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RCCM</td>
+<td><code>doc_rccm</code></td>
+</tr>
+<tr>
+<td>DFE / identification fiscale</td>
+<td><code>doc_dfe</code></td>
+</tr>
+<tr>
+<td>RIB / attestation bancaire</td>
+<td><code>doc_rib</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>Une pièce manquante bloque la retenue de l'offre.</p>
+<h3>11.7 Lots et comparatif d'offres</h3>
+<p>Une FEB se découpe en <strong>lots</strong>, un par code analytique (RG-08). Chaque lot
+reçoit des offres (<code>feb_offres</code>), dont <strong>une seule est retenue</strong>.</p>
+<p><strong>Contrôle bloquant</strong> : un lot sans offre retenue empêche la poursuite. Sans
+ce contrôle, un lot pouvait passer en validation avec des lignes à 0 XOF et
+sans fournisseur.</p>
+<p>Retenir une offre reporte le fournisseur sur les lignes du lot, <strong>sauf les
+lignes en dérogation</strong> (RG-09).</p>
+<h3>11.8 Contrôle budgétaire</h3>
+<p>Une <strong>ligne budgétaire</strong> porte un code comptable, un exercice, une enveloppe
+et un <strong>comportement</strong>. La situation d'une ligne distingue l'<strong>engagé</strong>, le
+<strong>réservé</strong> et le <strong>disponible</strong>.</p>
+<p>La validation d'un budget de département suit son propre circuit
+(<code>budget_validations</code>) : soumission, validation ou rejet motivé, avec
+réouverture administrative possible.</p>
+<div class="note note-stop"><span class="note-t">Aucune enveloppe n'est renseignée</span><p> Les six lignes installées ont une
+enveloppe vide, donc aucun plafond n'est effectif, et le comportement est
+<code>alerte</code> — jamais bloquant.</p>
+</div>
+<h3>11.9 Suivi et réception</h3>
+<p>Après confirmation, la FEB devient une commande suivie.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Statut de suivi</th>
+<th>Signification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>en_attente</code></td>
+<td>Pas encore commandé</td>
+</tr>
+<tr>
+<td><code>commande</code></td>
+<td>Bon de commande émis</td>
+</tr>
+<tr>
+<td><code>en_retard</code></td>
+<td>Délai dépassé</td>
+</tr>
+<tr>
+<td><code>livree</code></td>
+<td>Marchandise arrivée</td>
+</tr>
+<tr>
+<td><code>receptionnee</code></td>
+<td>Contrôlée et entrée en stock</td>
+</tr>
+</tbody>
+</table></div>
+<p>La réception <strong>débite le stock magasin</strong> et <strong>crédite le stock du
+département</strong> demandeur. Le débit pose un verrou sur les lignes de stock :
+deux expéditions simultanées du même article ne peuvent pas lire le même
+disponible.</p>
+<p>Un reliquat peut être clôturé explicitement.</p>
+<h3>11.10 File d'attente et ancienneté</h3>
+<p>Une FEB soumise attend en file. Un acheteur la <strong>prend en charge</strong>, peut la
+<strong>restituer</strong>, ou un responsable peut la <strong>réattribuer</strong>.</p>
+<p><strong>L'ancienneté est calculée en heures ouvrées</strong> : une fiche déposée vendredi
+soir n'est pas comptée en retard le lundi matin.</p>
+<h3>11.11 Affectation des équipements achetés</h3>
+<p>Un équipement réceptionné suit un circuit propre : proposition
+d'affectation, visa, puis confirmation de réception par le destinataire. Les
+équipements entre les deux sont « en transit ».</p>
+<hr>
+</section>
+<section id="s12"><h2><span class="n">12</span> Domaine Informatique</h2>
+<h3>12.1 Interventions</h3>
+<p><code>interventions_maintenance</code> porte le technicien, le site, l'équipement, le
+problème signalé, les travaux effectués, les pièces changées, la durée en
+minutes et un rapport en pièce jointe.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Statut après intervention</th>
+<th>Signification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>en_attente</code></td>
+<td>Déclarée, non traitée</td>
+</tr>
+<tr>
+<td><code>en_cours</code></td>
+<td>Prise en charge</td>
+</tr>
+<tr>
+<td><code>partiel</code></td>
+<td>Traitée partiellement</td>
+</tr>
+<tr>
+<td><code>resolu</code></td>
+<td>Terminée</td>
+</tr>
+</tbody>
+</table></div>
+<h3>12.2 Parc et fin de cycle</h3>
+<p>Un équipement porte un état (<code>neuf</code>, <code>bon</code>, <code>usage</code>, <code>reforme</code>), une date de
+mise en service et une <strong>date de fin de cycle</strong>, dérivée de la durée de vie
+portée par sa nomenclature.</p>
+<p><strong>Seuil d'alerte : 30 jours</strong>, appliqué sur le tableau de bord et sur
+l'écran des équipements. L'écran des rapports propose en outre une vue à
+90 jours.</p>
+<h3>12.3 Transfert d'équipement</h3>
+<p>Recherche par numéro de série, destination, motif obligatoire. Tracé dans
+<code>mouvements_equipements</code>. Requiert le droit de <strong>création</strong> sur
+<code>affectations</code> — la lecture ne suffit pas.</p>
+<hr>
+</section>
+<section id="s13"><h2><span class="n">13</span> Services transverses</h2>
+<h3>13.1 Notifications</h3>
+<p>Deux canaux distincts :</p>
+<ul>
+<li><strong>En application</strong> : table <code>notifications</code>, cloche avec compteur de non-lus
+  dans la barre du haut.</li>
+<li><strong>Par e-mail</strong> : <code>mailer_send()</code>, avec configuration SMTP ou API Brevo
+  éditable depuis l'administration.</li>
+</ul>
+<h3>13.2 Journal d'audit</h3>
+<p><code>audit_log</code>, alimenté par <code>audit_log()</code>. Trace qui a fait quoi et quand. Un
+compte désactivé n'est jamais supprimé, précisément pour que sa trace reste
+exploitable.</p>
+<h3>13.3 Documents PDF</h3>
+<p>Dompdf. Trois documents pour les achats — fiche seule, fiche avec circuit de
+validation, bon de commande — et l'impression du point journalier.</p>
+<h3>13.4 Authentification</h3>
+<ul>
+<li>Mot de passe haché (<code>password_hash</code>).</li>
+<li><strong>Changement imposé</strong> (<code>must_change_password</code>) après création de compte ou
+  réinitialisation par un administrateur : toute page redirige vers l'écran
+  de changement, et les requêtes AJAX sont refusées, tant qu'il n'est pas
+  fait.</li>
+<li>Réinitialisation en libre-service par jeton envoyé par e-mail
+  (<code>reset_token</code>, <code>reset_token_expiry</code>), qui lève la contrainte.</li>
+<li>Les mots de passe sont nettoyés de leurs espaces de bord à la saisie comme
+  à la connexion, un collage depuis un e-mail en traînant souvent.</li>
+</ul>
+<h3>13.5 Tableau de bord KPI</h3>
+<p><code>kpi_dashboard.php</code> est un tableau de bord distinct des deux existants —
+<code>dashboard.php</code> (opérationnel, orienté action du jour) et <code>pdg_overview.php</code>
+(vue exécutive, narrative) — offrant une lecture visuelle de <strong>sept familles
+d'indicateurs</strong>, chacune en panneau autonome : chiffre de tête, détail,
+courbe d'évolution.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Famille</th>
+<th>Contenu</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Production</td>
+<td>Plaques, engins et plaques par jour écoulé sur A, comparés à B ; courbe d'évolution A contre B</td>
+</tr>
+<tr>
+<td>Bobines</td>
+<td>Actives, épuisées, retirées ; taux d'utilisation calculé sur le retiré (dotation − reliquat), pas sur un compteur alimenté par le seul point journalier ; détail par série ; couverture en jours des bobines actives au rythme des 30 derniers jours, sur la sélection de sites, avec le premier format épuisé (consommation : voir 9.6) — photo de l'instant</td>
+</tr>
+<tr>
+<td>PMMA</td>
+<td>Consommation sur A comparée à B, consommation par type sur A ; stock par type et alertes de seuil à ce jour</td>
+</tr>
+<tr>
+<td>Rivets</td>
+<td>Consommation sur A comparée à B ; stock global et sites sous seuil à ce jour</td>
+</tr>
+<tr>
+<td>Commandes</td>
+<td>Total, servies, en cours sur A ; taux de satisfaction et délai de B ; taux sur les six dernières périodes</td>
+</tr>
+<tr>
+<td>Équipements</td>
+<td>Disponibles (<code>ok</code>, <code>neuf</code>, <code>bon</code>, <code>usage</code>), hors service, en maintenance, affectés — photo de l'instant</td>
+</tr>
+<tr>
+<td>Sites</td>
+<td>Production par site sur A contre B et classement ; un site actif sur B seulement reste affiché</td>
+</tr>
+</tbody>
+</table></div>
+<h4>Période analysée (A) et période de comparaison (B)</h4>
+<p><code>periode_contexte()</code> fournit A (type et date choisis) ; <code>periode_comparaison()</code>
+(<code>includes/periode.php</code>) en dérive B selon le paramètre <code>cmp</code> :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th><code>cmp</code></th>
+<th>Période B</th>
+<th>Durée comparée</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>precedente</code> (défaut)</td>
+<td>La période juste avant A</td>
+<td><strong>À date égale</strong> si A est en cours : B est arrêtée au même rang (1ᵉʳ → 24 août contre 1ᵉʳ → 24 septembre)</td>
+</tr>
+<tr>
+<td><code>an_prec</code></td>
+<td>A décalée d'un an — même semaine ISO l'année précédente, semaine 52 si la 53ᵉ n'existe pas ; le 29 février retombe au 28</td>
+<td>Périodes entières</td>
+</tr>
+<tr>
+<td><code>choisie</code></td>
+<td>Libre, de même granularité : <code>jour_b</code>, <code>mois_b</code>, <code>annee_b</code> (en hebdomadaire, <code>jour_b</code> porte le lundi de la semaine)</td>
+<td>Périodes entières</td>
+</tr>
+</tbody>
+</table></div>
+<p>Toute valeur de B invalide retombe sur la période précédente. En annuel,
+<code>an_prec</code> se confond avec <code>precedente</code> et n'est pas proposé.</p>
+<p>Les indicateurs sont calculés sur des <strong>intervalles de dates</strong>
+(<code>date_point BETWEEN du AND au</code>, agrégats <code>FILTER</code>) et non plus par égalité
+de format (<code>TO_CHAR(date_point, 'YYYY-MM') = ?</code>) : une période arrêtée à date
+ou choisie librement ne s'exprime pas par une égalité de format.</p>
+<p><strong>Durées inégales.</strong> Quand A et B n'ont pas la même durée — février contre
+mars, ou A en cours comparée entière — la tuile « plaques par jour » divise
+chaque total par ses <strong>jours réellement écoulés</strong> et reste comparable. En
+mensuel, l'axe de la courbe couvre le plus long des deux mois et chaque
+courbe s'arrête à son dernier jour.</p>
+<p><strong>Base de comptage commune.</strong> Production, PMMA et rivets excluent tous les
+points en brouillon. Jusqu'au 24 septembre 2026, PMMA et rivets les
+incluaient : deux panneaux voisins ne comptaient pas sur la même base.</p>
+<p><strong>Sélecteur.</strong> <code>periode_selecteur_comparaison()</code> rend le type, A, le mode et,
+en mode <code>choisie</code>, B. En hebdomadaire, une liste de semaines
+(« S38 · 14/09 → 20/09 ») remplace le champ date : <code>type=week</code> n'existe ni
+sous Firefox ni sous Safari. <code>periode_selecteur()</code>, utilisé par
+<code>pdg_overview.php</code>, est inchangé.</p>
+<div class="note note-info"><span class="note-t">Bandeau « Aujourd'hui » retiré (24 septembre 2026)</span><p> Quatre tuiles
+Jour/Semaine/Mois/Année, calées sur la date du jour, figuraient sous la
+comparaison. Depuis l'arrivée du choix de période, elles doublaient la
+rangée A/B (la tuile « Mois » répétait « Plaques posées ») et ignoraient
+les filtres : juin contre avril choisi, elles affichaient septembre. Chaque
+échelle s'obtient désormais par le type de période, avec la même règle à
+date égale.</p>
+<p><strong>Portage MySQL.</strong> Les nouvelles requêtes emploient <code>FILTER (WHERE …)</code> et
+<code>::date</code>, propres à PostgreSQL. Leur report sur la branche <code>vps-mysql</code>
+demande une traduction (<code>SUM(CASE WHEN … THEN … END)</code>, <code>CAST(… AS DATE)</code>).</p>
+<p><strong>Le biais de comparaison de périodes inégales, corrigé.</strong> Comparer un mois
+en cours (8 jours écoulés) à un mois précédent complet (31 jours) affichait
+une variation de -72,7 % (2 070 contre 7 590) purement mécanique, alors
+qu'à nombre de jours égal la production était stable (-0,5 %). La
+comparaison automatique compare désormais le cumul à date de A au cumul de
+la période précédente arrêté au même rang ; une période choisie par
+l'utilisateur est comparée entière, avec mention et moyenne par jour.</p>
+<p><strong>Le taux de disponibilité des équipements, corrigé.</strong> Ne compter comme
+disponible que l'état <code>etat = 'ok'</code> affichait 0,0 % de disponibilité sur un
+parc pourtant actif, l'essentiel étant saisi en <code>neuf</code> ou <code>bon</code>. Les quatre
+états <code>ok</code>, <code>neuf</code>, <code>bon</code>, <code>usage</code> comptent désormais comme disponibles ; un
+état inconnu tombe dans « autre état » plutôt que dans « disponible », pour
+rester visible sans gonfler le taux.</p>
+</div>
+<p><strong>Périmètre et vues enregistrées.</strong> Le filtre de sites accepte une sélection
+multiple, une sélection vide valant « tout le périmètre » ; le coordinateur
+de site reste verrouillé sur le sien. Un utilisateur peut enregistrer une
+combinaison de filtres — périodes A et B comprises — comme <strong>vue nommée</strong>
+(table <code>vues_enregistrees</code>),
+personnelle ou partagée ; seul son propriétaire peut la supprimer, même
+partagée. Le rafraîchissement au changement de filtre est animé, sans
+rechargement de page — le même moteur que <code>pdg_overview.php</code>.</p>
+<p>Protégé par le module <code>kpi_dashboard</code>, <code>can_read</code>.</p>
+<h3>13.6 Référentiels &amp; capacités</h3>
+<p><code>admin/referentiels_operations.php</code> administre les <strong>capacités de
+conditionnement</strong> — films par bobine selon la série, unités par carton PMMA —
+auparavant codées en dur (500 dans l'INSERT de création de bobine,
+« WSL/TL = 2000 sinon 500 » recopié dans les deux imports, rien pour le
+PMMA). Un changement de conditionnement fournisseur se fait désormais ici,
+sans déploiement.</p>
+<ul>
+<li>Une capacité peut être posée pour une <strong>série entière</strong> de bobines en une
+  saisie, ou ajustée par type individuel en complément — le conditionnement
+  dépend de la série, pas de la version.</li>
+<li>Le <strong>code</strong> d'un type de PMMA n'est jamais modifiable depuis cet écran : il
+  relie le catalogue à <code>stock_pmma_site</code> et à tout l'historique de
+  consommation ; le renommer détacherait le stock existant.</li>
+<li>Une capacité nulle ou négative est refusée.</li>
+<li>Les types présents dans les stocks mais absents du catalogue de référence
+  sont signalés explicitement, plutôt que de retomber silencieusement sur
+  une capacité par défaut.</li>
+<li>L'écran administre aussi, par rôle, <strong>l'écran d'ouverture par défaut du
+  tableau de bord KPI</strong> (13.5) — ce sur quoi un utilisateur tombe avant
+  d'avoir touché le moindre filtre. Une valeur vide supprime la ligne plutôt
+  que d'enregistrer une chaîne vide, pour distinguer « pas de défaut » de
+  « défaut absent ».</li>
+</ul>
+<p>Écran d'administration, et non de paramétrage d'exploitation courante : une
+capacité fausse ne se voit pas à l'écran, elle se propage silencieusement à
+toutes les projections (§9.6) et à tout stock créé ensuite.</p>
+<p>Protégé par le module <code>referentiels_operations</code>, <code>can_read</code>.</p>
+<hr>
+</section>
+<section id="s14"><h2><span class="n">14</span> Contraintes et points ouverts</h2>
+<h3>14.1 Valeurs provisoires, signalées par le code lui-même</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Point</th>
+<th>En place</th>
+<th>Manquant</th>
+<th>Risque</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Paliers de validation</td>
+<td>Trois paliers fonctionnels</td>
+<td>Les seuils réels</td>
+<td>Une FEB peut suivre un circuit qui ne correspond pas à la règle de l'entreprise</td>
+</tr>
+<tr>
+<td>Enveloppes budgétaires</td>
+<td>Six lignes, comportement <code>alerte</code></td>
+<td>Tous les montants</td>
+<td>Aucun dépassement n'est détecté</td>
+</tr>
+<tr>
+<td>Types d'achat</td>
+<td>DAF, DAI, DAH</td>
+<td>Le développé exact des sigles</td>
+<td>Cosmétique</td>
+</tr>
+</tbody>
+</table></div>
+<h3>14.2 Dettes structurelles</h3>
+<ol>
+<li><strong>Contrôle d'accès non centralisé.</strong> Sans routeur, chaque page pose sa
+   propre barrière, et l'oubli ne se voit pas. Deux campagnes de reprise en
+   témoignent : <code>43b1d1e</code> a remplacé les contrôles en dur par
+   <code>require_permission()</code> sur dix-sept pages, et <code>ed37027</code>, le 29 août, a
+   réaligné sept pages de plus — certaines ignoraient jusque-là totalement la
+   table des permissions.</li>
+<li><strong>Repli des rôles sans permission</strong> (7.2). Utile en transition, dangereux
+   s'il s'installe.</li>
+<li><strong>Fichiers SQL en syntaxe MySQL.</strong> Certains fichiers de <code>sql/</code> ne sont pas
+   applicables sur PostgreSQL. Leur contenu est couvert par le dump
+   PostgreSQL, mais leur présence est trompeuse.</li>
+<li><strong>Deux pages de profil</strong> coexistent, <code>mon_profil.php</code> et <code>profil.php</code>, la
+   seconde n'étant presque plus référencée.</li>
+<li><strong>Aucune table de suivi des migrations appliquées.</strong> Un outil de détection
+   existe désormais (<code>tools/inventaire_migrations.php</code>, 6.3), mais il inspecte
+   l'état d'une base à un instant donné : il ne remplace pas un
+   enregistrement systématique de ce qui a été joué, ni quand.</li>
+<li><strong>Deux moteurs à maintenir en parallèle.</strong> PostgreSQL en recette, MySQL en
+   production : chaque requête à syntaxe propriétaire existe en deux versions,
+   et rien n'empêche mécaniquement les deux branches de diverger.</li>
+</ol>
+<div class="note note-info"><span class="note-t">Résolu depuis la v3.0</span><p> Le point « quatre modules Achats hors matrice »
+ne se vérifie plus : ces quatre modules sont administrables depuis
+l'interface au même titre que les cinquante-deux autres (7.1).</p>
+</div>
+<h3>14.3 Ce que cette spécification n'établit pas</h3>
+<ul>
+<li><strong>Les volumes cibles et la performance attendue.</strong> Aucun objectif chiffré
+  n'est inscrit dans le code.</li>
+<li><strong>La politique de sauvegarde et de restauration.</strong> Un protocole
+  export/restauration a été rédigé et éprouvé hors de ce document ; il
+  s'appliquera à la base de production lors de sa création.</li>
+<li><strong>Les exigences de conformité</strong> applicables aux données personnelles des
+  agents.</li>
+<li><strong>Le comportement voulu</strong> là où il diffère du comportement implémenté.
+  Cette spécification décrit le second.</li>
+</ul>
+<hr>
+</section>
+<section id="s15"><h2>Suivi des versions</h2>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Version</th>
+<th>Date</th>
+<th>Modifications</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1.0</td>
+<td>2026-08-29</td>
+<td>Première édition</td>
+</tr>
+<tr>
+<td>1.1</td>
+<td>2026-08-29</td>
+<td>Workflows ajoutés ; deux statuts manquants corrigés (<code>en_attente_validation</code>, <code>en_attente_n1</code>)</td>
+</tr>
+<tr>
+<td>2.0</td>
+<td>2026-08-30</td>
+<td>Partie technique réelle : exécution, transactions et concurrence, sécurité, exploitation</td>
+</tr>
+<tr>
+<td>2.1</td>
+<td>2026-08-30</td>
+<td>Dictionnaire des tables centrales ; schémas en SVG plutôt qu'en mermaid sur la page publiée</td>
+</tr>
+<tr>
+<td>3.0</td>
+<td>2026-09-21</td>
+<td>Remise à niveau. <strong>Corrigé</strong> : Render/Neon est la recette et non la production (6.1) ; Dompdf n'est plus la seule dépendance (2.1) ; 106 tables ; compteurs de lignes du métier ; statuts d'inventaire et de session (9.4). <strong>Ajouté</strong> : verrouillage après cinq échecs (5.1), en-têtes de sécurité et cookie <code>Secure</code> derrière proxy (5.2, 5.3), contrôle d'accès à l'action et les cinq failles corrigées (5.7), numérotation atomique des documents (4.2), limites de téléversement du serveur (6.2), intégration continue de sécurité (6.5), sous-rôles Support IT et exception <code>demandes</code> (7.4), cinq modules hors matrice et piège de la liste recopiée (7.1), réécriture complète des inventaires (9.4)</td>
+</tr>
+<tr>
+<td>4.0</td>
+<td>2026-09-24</td>
+<td><strong>Ajouté</strong> : suivi des observations (8.3), traçabilité des endommagements (9.5), simulation &amp; projection de stocks (9.6), tableau de bord KPI (13.5), référentiels &amp; capacités (13.6), outil d'inventaire des migrations (6.3). <strong>Corrigé</strong> : 114 tables (3), 57 identifiants de module dont 56 exposés dans la matrice — l'écart des quatre modules Achats hors matrice ne se vérifie plus (7.1, 14.2)</td>
+</tr>
+<tr>
+<td>4.1</td>
+<td>2026-09-24</td>
+<td>Tableau de bord KPI : période de comparaison choisie par l'utilisateur — précédente, l'an dernier ou libre —, règle de durée, calcul par intervalles de dates, moyenne par jour, brouillons exclus de PMMA/rivets, sélecteur hebdomadaire en liste (13.5). <strong>Corrigé</strong> : deux renvois au tableau de bord KPI pointaient vers un §8.4 inexistant (13.5).</td>
+</tr>
+<tr>
+<td>4.2</td>
+<td>2026-09-24</td>
+<td>Tableau de bord KPI : bandeau « Aujourd'hui » retiré, il doublait la comparaison et ignorait les filtres (13.5).</td>
+</tr>
+<tr>
+<td>4.3</td>
+<td>2026-09-24</td>
+<td>Consommation de films : points journaliers et saisie manuelle additionnés (9.6) ; couverture du tableau de bord KPI sur la sélection de sites, les bobines actives et le premier format épuisé (13.5).</td>
+</tr>
+</tbody>
+</table></div>
+</section>
+<footer><p>Document interne EMUCI — projet NSIIV.</p></footer>
+</main>
+</div>
+<div class="impr-pied" style="margin-top:10mm;padding-top:4mm;border-top:1px solid #c3ccdf;
+     font-size:9pt;color:#4d5876">
+  Spécification fonctionnelle et technique — ERP EMUCI — document interne. État du logiciel au commit
+  <code>ff9fc2c</code>. Toute évolution fonctionnelle rend une section caduque :
+  vérifiez la version avant de vous y fier.
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({startOnLoad:true, theme:'neutral',
+    themeVariables:{fontFamily:'DM Sans, sans-serif', fontSize:'13px'}});
+  await mermaid.run();
+  document.body.dataset.pret = '1';   // repère pour l'export PDF
+</script>
+</body>
+</html>

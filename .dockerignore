@@ -19,6 +19,11 @@
 
 sql/
 docs/
+# Outils de poste (generation des documents, inventaire des migrations) :
+# servis tels quels, les scripts Python etaient lisibles depuis l'URL de
+# recette (constate le 24/09). Aucun n'a de sens dans l'image —
+# inventaire_migrations.php lit sql/, deja exclu ci-dessus.
+tools/
 
 *.md
 

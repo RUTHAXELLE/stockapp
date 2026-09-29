@@ -67,7 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // pourrait transporter n'importe quel parametre vers l'ecran.
         parse_str($flt, $brut);
         $garde = [];
-        foreach (['periode','mois','jour','annee'] as $k)
+        foreach (['periode','mois','jour','annee','cmp','mois_b','jour_b','annee_b'] as $k)
             if (isset($brut[$k]) && is_scalar($brut[$k])) $garde[$k] = (string)$brut[$k];
         if (isset($brut['sites']) && is_array($brut['sites']))
             $garde['sites'] = array_values(array_filter(array_map('intval', $brut['sites'])));
@@ -135,9 +135,11 @@ if (!isset($_GET['periode'])) {
 }
 
 $P   = periode_contexte();
+// Periode de comparaison (B) : la precedente par defaut, a date egale si A
+// est en cours ; l'an dernier ou une periode libre au choix, alors
+// comparees entieres (cf. includes/periode.php).
+$C   = periode_comparaison($P);
 $fmt = $P['date_fmt'];
-$val = $P['val'];
-$prc = $P['val_prec'];
 
 // $site_id reste defini pour les usages ou un identifiant unique a du
 // sens (couverture de stock, classement mono-site).
@@ -149,125 +151,67 @@ $sf_p = pref_clause_in('p.site_id', $sites_sel);
 $sf   = pref_clause_in('site_id',   $sites_sel);
 $sf_b = pref_clause_in('b.site_id', $sites_sel);
 
-/** Deux scalaires (periode courante / precedente) en une requete. */
-function kpi_paire(string $sql, array $params): array {
-    $r = db_fetch_one($sql, $params);
-    return [(float)($r['courant'] ?? 0), (float)($r['precedent'] ?? 0)];
+/**
+ * Somme d'une colonne sur A et sur B, en une requete. Les bornes sont des
+ * intervalles de dates, et non plus TO_CHAR(...) = valeur : B peut etre
+ * arretee a date (1er → 24 aout) ou choisie librement, ce qu'une egalite de
+ * format ne sait pas exprimer. `$depuis` part de FROM et doit exposer
+ * l'alias `p` sur op_points_journaliers.
+ */
+function kpi_somme_ab(string $col, string $depuis, array $C): array {
+    $r = db_fetch_one(
+        "SELECT COALESCE(SUM($col) FILTER (WHERE p.date_point BETWEEN ?::date AND ?::date),0) AS a,
+                COALESCE(SUM($col) FILTER (WHERE p.date_point BETWEEN ?::date AND ?::date),0) AS b
+           $depuis", [$C['du_a'], $C['au_a'], $C['du_b'], $C['au_b']]);
+    return [(float)($r['a'] ?? 0), (float)($r['b'] ?? 0)];
 }
 
-// ── PRODUCTION — la periode selectionnee
-[$plaques, $plaques_p] = kpi_paire(
-    "SELECT COALESCE(SUM(CASE WHEN TO_CHAR(p.date_point,'$fmt')=? THEN p.total_plaques END),0) AS courant,
-            COALESCE(SUM(CASE WHEN TO_CHAR(p.date_point,'$fmt')=? THEN p.total_plaques END),0) AS precedent
-       FROM op_points_journaliers p
-      WHERE p.statut <> 'brouillon' $sf_p", [$val, $prc]);
+// ── PRODUCTION — periode analysee (A) contre periode de comparaison (B)
+$depuis_points = "FROM op_points_journaliers p WHERE p.statut <> 'brouillon' $sf_p";
+[$plaques, $plaques_p] = kpi_somme_ab('p.total_plaques', $depuis_points, $C);
+[$engins,  $engins_p]  = kpi_somme_ab('p.total_engins',  $depuis_points, $C);
 
-[$engins, $engins_p] = kpi_paire(
-    "SELECT COALESCE(SUM(CASE WHEN TO_CHAR(p.date_point,'$fmt')=? THEN p.total_engins END),0) AS courant,
-            COALESCE(SUM(CASE WHEN TO_CHAR(p.date_point,'$fmt')=? THEN p.total_engins END),0) AS precedent
-       FROM op_points_journaliers p
-      WHERE p.statut <> 'brouillon' $sf_p", [$val, $prc]);
+// Moyenne par jour ecoule : seule mesure juste quand les deux periodes
+// n'ont pas la meme duree (fevrier contre mars) ou quand A est en cours et
+// comparee entiere a une periode close.
+$moy_j   = $C['jours_a'] > 0 ? $plaques   / $C['jours_a'] : null;
+$moy_j_p = $C['jours_b'] > 0 ? $plaques_p / $C['jours_b'] : null;
 
-$heures = (float) db_fetch_value(
-    "SELECT COALESCE(SUM(p.nb_heures_travail),0) FROM op_points_journaliers p
-      WHERE TO_CHAR(p.date_point,'$fmt')=? AND p.statut <> 'brouillon' $sf_p", [$val]);
-$prod_horaire = $heures > 0 ? $engins / $heures : 0;
-
-// ── PRODUCTION — les quatre echelles cote a cote
-// La maquette pose jour / semaine / mois / annee ensemble : c'est ce qui
-// permet de voir qu'une bonne journee tient dans un mauvais mois.
-//
-// ── Comparaison A DATE, et non de periode entiere ──
-// Le premier jet comparait le mois courant au mois precedent complet. Le
-// 8 septembre, cela opposait 8 jours a 31 : la tuile annoncait -72,7 %
-// (2 070 contre 7 590) alors qu'a nombre de jours egal la production
-// etait stable (2 070 contre 2 080, soit -0,5 %). Le meme biais jouait a
-// l'envers sur l'annee, affichee en hausse de 75,5 % pour une raison
-// purement mecanique. Sur un ecran de direction, la fleche est le premier
-// element lu : elle ne peut pas mesurer le temps ecoule.
-//
-// Chaque echelle compare donc son cumul a date au cumul de la periode
-// precedente arrete au meme rang : lundi→aujourd'hui contre
-// lundi→meme jour la semaine passee, 1er→quantieme contre 1er→meme
-// quantieme, etc.
-$auj = date('Y-m-d');
-
-/** Date sûre : un quantieme absent du mois vise est ramene a son dernier
- *  jour. Sans ce garde-fou, le 31 mars compare au « 31 fevrier » que
- *  strtotime deplace au 2 ou 3 mars, et le 29 fevrier bissextile glisse
- *  au 1er mars de l'annee precedente. */
-function kpi_date_rang(int $an, int $mois, int $jour): string {
-    $fin = (int) date('t', mktime(0, 0, 0, $mois, 1, $an));
-    return sprintf('%04d-%02d-%02d', $an, $mois, min($jour, $fin));
-}
-
-$q  = (int) date('j');            // quantieme du jour
-$an = (int) date('Y');
-$mo = (int) date('n');
-
-$lundi   = date('Y-m-d', strtotime('monday this week'));
-$mois_du = date('Y-m-01');
-$mp      = strtotime($mois_du . ' -1 month');
-
-$bornes = [
-    // [libelle, debut courant, fin courante, debut precedent, fin precedente]
-    ['Jour',    $auj, $auj,
-                date('Y-m-d', strtotime('-1 day')), date('Y-m-d', strtotime('-1 day'))],
-    ['Semaine', $lundi, $auj,
-                date('Y-m-d', strtotime($lundi . ' -7 days')),
-                date('Y-m-d', strtotime($auj . ' -7 days'))],
-    ['Mois',    $mois_du, $auj,
-                date('Y-m-01', $mp),
-                kpi_date_rang((int)date('Y', $mp), (int)date('n', $mp), $q)],
-    ['Année',   date('Y-01-01'), $auj,
-                ($an - 1) . '-01-01', kpi_date_rang($an - 1, $mo, $q)],
-];
-
-$sel = []; $par = [];
-foreach ($bornes as $i => [$lbl, $du, $au, $du_p, $au_p]) {
-    $sel[] = "COALESCE(SUM(p.total_plaques) FILTER (WHERE p.date_point BETWEEN ?::date AND ?::date),0) AS c$i,"
-           . "COALESCE(SUM(p.total_plaques) FILTER (WHERE p.date_point BETWEEN ?::date AND ?::date),0) AS p$i";
-    array_push($par, $du, $au, $du_p, $au_p);
-}
-$ech = db_fetch_one("SELECT " . implode(',', $sel)
-    . " FROM op_points_journaliers p WHERE p.statut <> 'brouillon' $sf_p", $par) ?: [];
-
-$echelles = [];
-foreach ($bornes as $i => [$lbl, $du, $au, $du_p, $au_p]) {
-    // La note porte l'intervalle exact compare : « vs mois precedent »
-    // laissait croire au mois entier, ce qui etait justement le probleme.
-    $note = 'vs ' . fmt_date($du_p, 'd/m')
-          . ($du_p === $au_p ? '' : ' – ' . fmt_date($au_p, 'd/m'));
-    $echelles[] = [$lbl, (float)($ech["c$i"] ?? 0), (float)($ech["p$i"] ?? 0), $note];
-}
+// Plus de bandeau Jour / Semaine / Mois / Annee cale sur la date du jour
+// (retire le 24/09/2026) : depuis le choix de la periode de comparaison, il
+// doublait la rangee A / B (le « Mois » y repetait « Plaques posees ») et
+// ignorait les filtres. Chaque echelle reste a un clic, par le type de
+// periode, avec la meme regle a date egale — cf. periode_comparaison().
 
 // ── PRODUCTION — courbe d'evolution
-// On compare les SOUS-periodes de la periode courante a celles de la
-// precedente, alignees par rang (jour de semaine, quantieme, mois) et non
-// par date : sans cet alignement, comparer le 3 mars au 3 fevrier n'aurait
-// pas de sens un mois sur deux.
+// On compare les SOUS-periodes de A a celles de B, alignees par rang (jour
+// de semaine, quantieme, mois) et non par date : sans cet alignement,
+// comparer le 3 mars au 3 fevrier n'aurait pas de sens un mois sur deux.
+// B est tracee sur sa duree complete, meme quand les chiffres sont
+// compares a date : la courbe montre ou la periode de reference etait
+// arrivee, et ou elle a fini.
 $periode = $P['periode'];
 $sous    = null;
 if ($periode === 'hebdomadaire') {
     $sous = ['fmt'=>'ID', 'cles'=>['1','2','3','4','5','6','7'],
              'lbl'=>['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'],
              'du'=>$P['du'], 'au'=>$P['au'],
-             'du_p'=>date('Y-m-d', strtotime($P['du'].' -7 days')),
-             'au_p'=>date('Y-m-d', strtotime($P['au'].' -7 days'))];
+             'du_p'=>$C['du_b'], 'au_p'=>$C['au_b_complet'], 'n_a'=>7, 'n_b'=>7];
 } elseif ($periode === 'mensuel') {
-    $du_p  = date('Y-m-01', strtotime($P['du'].' -1 month'));
-    $nb_j  = (int) date('t', strtotime($P['du']));
-    $cles  = []; for ($i = 1; $i <= $nb_j; $i++) $cles[] = sprintf('%02d', $i);
-    $sous  = ['fmt'=>'DD', 'cles'=>$cles,
-              'lbl'=>array_map(fn($c) => (int)$c % 5 === 0 || $c === '01' ? (string)(int)$c : '', $cles),
-              'du'=>$P['du'], 'au'=>$P['au'],
-              'du_p'=>$du_p, 'au_p'=>date('Y-m-t', strtotime($du_p))];
+    // Deux mois de longueurs differentes (fevrier contre mars) : l'axe
+    // couvre le plus long, et chaque courbe s'arrete a son dernier jour.
+    $n_a  = (int) date('t', strtotime($P['du']));
+    $n_b  = (int) date('t', strtotime($C['du_b']));
+    $cles = []; for ($i = 1; $i <= max($n_a, $n_b); $i++) $cles[] = sprintf('%02d', $i);
+    $sous = ['fmt'=>'DD', 'cles'=>$cles,
+             'lbl'=>array_map(fn($c) => (int)$c % 5 === 0 || $c === '01' ? (string)(int)$c : '', $cles),
+             'du'=>$P['du'], 'au'=>$P['au'],
+             'du_p'=>$C['du_b'], 'au_p'=>$C['au_b_complet'], 'n_a'=>$n_a, 'n_b'=>$n_b];
 } elseif ($periode === 'annuel') {
-    $an   = (int)$P['annee'];
     $sous = ['fmt'=>'MM', 'cles'=>['01','02','03','04','05','06','07','08','09','10','11','12'],
              'lbl'=>['J','F','M','A','M','J','J','A','S','O','N','D'],
-             'du'=>"$an-01-01", 'au'=>"$an-12-31",
-             'du_p'=>($an-1)."-01-01", 'au_p'=>($an-1)."-12-31"];
+             'du'=>$P['du'], 'au'=>$P['au'],
+             'du_p'=>$C['du_b'], 'au_p'=>$C['au_b_complet'], 'n_a'=>12, 'n_b'=>12];
 }
 
 /** Somme des plaques par sous-periode, sur un intervalle de dates. */
@@ -282,37 +226,56 @@ function kpi_serie(string $sfmt, string $du, string $au, string $filtre): array 
     return $out;
 }
 
-$serie_lbl = []; $serie_a = []; $serie_b = []; $serie_note = ''; $serie_borne = -1;
+$serie_lbl = []; $serie_a = []; $serie_b = []; $serie_note = '';
+$serie_borne = -1; $serie_borne_b = -1; $ecoules = 0;
 if ($sous) {
     $ca = kpi_serie($sous['fmt'], $sous['du'],   $sous['au'],   $sf_p);
     $cb = kpi_serie($sous['fmt'], $sous['du_p'], $sous['au_p'], $sf_p);
     foreach ($sous['cles'] as $k) { $serie_a[] = $ca[$k] ?? 0; $serie_b[] = $cb[$k] ?? 0; }
     $serie_lbl  = $sous['lbl'];
-    $serie_note = 'période actuelle contre ' . mb_strtolower($P['libelle_prec']);
+    $serie_note = mb_strtolower($P['libelle']) . ' contre ' . mb_strtolower($C['libelle_b_long']);
+    $nb_cles    = count($sous['cles']);
+    if ($sous['n_a'] < $nb_cles) $serie_borne   = $sous['n_a'];
+    if ($sous['n_b'] < $nb_cles) $serie_borne_b = $sous['n_b'];
     // Une periode en cours n'a pas encore ses derniers points : les tracer
     // a zero dessine une chute qui n'a pas eu lieu. La courbe s'arrete donc
     // au jour ecoule, l'axe couvrant toujours la periode entiere pour que
-    // la comparaison avec la precedente reste alignee.
-    if (date('Y-m-d') >= $sous['du'] && date('Y-m-d') <= $sous['au']) {
-        $auj = ['ID' => (string)(int)date('N'), 'DD' => date('d'), 'MM' => date('m')][$sous['fmt']];
-        $pos = array_search($auj, $sous['cles'], true);
+    // la comparaison avec B reste alignee.
+    if ($C['a_en_cours']) {
+        $rang = ['ID' => (string)(int)date('N'), 'DD' => date('d'), 'MM' => date('m')][$sous['fmt']];
+        $pos  = array_search($rang, $sous['cles'], true);
         if ($pos !== false) {
-            $serie_borne = (int)$pos + 1;
-            $serie_note .= ' — ' . $serie_borne . ' sur ' . count($sous['cles']) . ' écoulés';
+            $ecoules     = (int)$pos + 1;
+            $serie_borne = $ecoules;
+            $serie_note .= ' — ' . $ecoules . ' sur ' . $sous['n_a'] . ' écoulés';
         }
     }
 } else {
-    // Vue journaliere : pas de sous-periode a decouper. Les quatorze
-    // derniers jours situent la journee dans sa tendance, ce qu'un seul
-    // point ne fait pas.
-    $fin = $P['val']; $deb = date('Y-m-d', strtotime($fin.' -13 days'));
+    // Vue journaliere : pas de sous-periode a decouper. Les quatorze jours
+    // qui menent au jour choisi situent la journee dans sa tendance, ce
+    // qu'un seul point ne fait pas. Avec un jour de comparaison choisi, on
+    // superpose les quatorze jours qui menent a celui-ci ; contre la veille
+    // (defaut), la superposition decalee d'un jour n'apprendrait rien.
+    $fin = $C['du_a']; $deb = date('Y-m-d', strtotime($fin.' -13 days'));
     $c   = kpi_serie('YYYY-MM-DD', $deb, $fin, $sf_p);
+    $avec_b = $C['mode'] !== 'precedente';
+    if ($avec_b) {
+        $fin_b = $C['du_b'];
+        $cb    = kpi_serie('YYYY-MM-DD', date('Y-m-d', strtotime($fin_b.' -13 days')), $fin_b, $sf_p);
+    }
     for ($i = 13; $i >= 0; $i--) {
         $d = date('Y-m-d', strtotime($fin." -$i days"));
         $serie_a[]   = $c[$d] ?? 0;
-        $serie_lbl[] = ($i === 13 || $i === 0) ? date('d/m', strtotime($d)) : '';
+        if ($avec_b) $serie_b[] = $cb[date('Y-m-d', strtotime($fin_b." -$i days"))] ?? 0;
+        // Deux series de dates differentes sur un meme axe : l'axe dit le
+        // rang (J-13 … J), les dates sont dans la note.
+        $serie_lbl[] = ($i === 13 || $i === 0)
+            ? ($avec_b ? ($i === 0 ? 'J' : 'J-13') : date('d/m', strtotime($d)))
+            : '';
     }
-    $serie_note = 'quatorze derniers jours';
+    $serie_note = $avec_b
+        ? 'quatorze jours menant au ' . fmt_date($fin, 'd/m/Y') . ' contre ceux menant au ' . fmt_date($fin_b, 'd/m/Y')
+        : 'quatorze jours menant au ' . fmt_date($fin, 'd/m/Y');
 }
 
 // ── BOBINES
@@ -321,6 +284,7 @@ $bob = db_fetch_one(
             COUNT(*) FILTER (WHERE b.statut = 'epuisee')                      AS epuisees,
             COUNT(*) FILTER (WHERE b.statut = 'retiree')                      AS retirees,
             COALESCE(SUM(b.films_restants),0)                                 AS restants,
+            COALESCE(SUM(b.films_restants) FILTER (WHERE b.statut IN ('en_cours','en_stock')),0) AS restants_actifs,
             COALESCE(SUM(b.films_utilises),0)                                 AS utilises,
             COALESCE(SUM(b.films_endommages),0)                               AS endommages,
             COALESCE(SUM(b.qte_initiale),0)                                   AS initial
@@ -339,8 +303,24 @@ $b_endo  = (float)($bob['endommages'] ?? 0);
 $b_sorti = max(0.0, $b_init - $b_rest);
 $taux_util  = $b_init  > 0 ? $b_sorti / $b_init  * 100 : 0;
 $taux_perte = $b_sorti > 0 ? $b_endo  / $b_sorti * 100 : 0;
-$conso_jour = conso_moy_site($site_id, 30);
-$couverture = $conso_jour > 0 ? (int) floor((float)($bob['restants'] ?? 0) / $conso_jour) : null;
+// Couverture : combien de jours le stock des bobines actives tient au
+// rythme des 30 derniers jours, sur la selection de sites (et non plus sur
+// tous les sites des qu'il y en a plus d'un). Les bobines retirees sont
+// hors circuit : leurs films ne couvrent rien.
+// La consommation lit les points journaliers ET la saisie manuelle
+// (conso_source_bobines) : ne lire que la seconde affichait « aucune
+// consommation » sur un parc gere par points journaliers.
+$conso_jour = conso_moy_site($sites_sel, 30);
+$couverture = $conso_jour > 0 ? (int) floor((float)($bob['restants_actifs'] ?? 0) / $conso_jour) : null;
+
+// Un format ne remplace pas un autre : la couverture globale peut annoncer
+// des semaines alors qu'un format sera a sec bien avant. On nomme donc le
+// premier format a s'epuiser quand il arrive plus tot que la moyenne.
+$format_critique = null;
+foreach (conso_stock_par_format($sites_sel, 30) as $f) {
+    if ($f['jours'] === null) continue;
+    if ($format_critique === null || $f['jours'] < $format_critique['jours']) $format_critique = $f;
+}
 
 // Detail par serie : le taux global masque qu'une serie peut etre a bout
 // quand une autre est neuve. La serie porte le format lisible, pas le code.
@@ -371,19 +351,20 @@ $pmma_stock = db_fetch_all(
 $pmma_bas = 0; $pmma_total = 0;
 foreach ($pmma_stock as $x) { $pmma_bas += (int)$x['bas']; $pmma_total += (int)$x['qte']; }
 
-[$pmma_conso, $pmma_conso_p] = kpi_paire(
-    "SELECT COALESCE(SUM(CASE WHEN TO_CHAR(p.date_point,'$fmt')=? THEN pu.utilises END),0) AS courant,
-            COALESCE(SUM(CASE WHEN TO_CHAR(p.date_point,'$fmt')=? THEN pu.utilises END),0) AS precedent
-       FROM op_pmma_utilises pu JOIN op_points_journaliers p ON p.id = pu.point_id
-      WHERE 1=1 $sf_p", [$val, $prc]);
+// Brouillons exclus, comme pour la production : un point non soumis ne
+// compte nulle part, et deux panneaux voisins doivent compter sur la meme
+// base. Cette requete les incluait jusqu'ici.
+[$pmma_conso, $pmma_conso_p] = kpi_somme_ab('pu.utilises',
+    "FROM op_pmma_utilises pu JOIN op_points_journaliers p ON p.id = pu.point_id
+      WHERE p.statut <> 'brouillon' $sf_p", $C);
 
 // Consommation par type sur la periode — le graphe en barres de la maquette.
 $pmma_par_type = db_fetch_all(
     "SELECT pu.type_pmma AS t, COALESCE(SUM(pu.utilises),0) AS v
        FROM op_pmma_utilises pu JOIN op_points_journaliers p ON p.id = pu.point_id
-      WHERE TO_CHAR(p.date_point,'$fmt')=? AND p.statut <> 'brouillon' $sf_p
+      WHERE p.date_point BETWEEN ?::date AND ?::date AND p.statut <> 'brouillon' $sf_p
       GROUP BY pu.type_pmma HAVING COALESCE(SUM(pu.utilises),0) > 0
-      ORDER BY 2 DESC", [$val]);
+      ORDER BY 2 DESC", [$C['du_a'], $C['au_a']]);
 
 // Types reellement sous leur seuil, avec le site concerne : une alerte qui
 // ne dit pas ou regarder oblige a rouvrir une autre page.
@@ -399,10 +380,8 @@ $riv_stock = (int) db_fetch_value(
     "SELECT COALESCE(SUM(quantite),0) FROM op_stock_rivets WHERE 1=1 $sf");
 $riv_bas = (int) db_fetch_value(
     "SELECT COUNT(*) FROM op_stock_rivets WHERE quantite < COALESCE(seuil_alerte,200) $sf");
-[$riv_conso, $riv_conso_p] = kpi_paire(
-    "SELECT COALESCE(SUM(CASE WHEN TO_CHAR(p.date_point,'$fmt')=? THEN p.rivets_utilises END),0) AS courant,
-            COALESCE(SUM(CASE WHEN TO_CHAR(p.date_point,'$fmt')=? THEN p.rivets_utilises END),0) AS precedent
-       FROM op_points_journaliers p WHERE 1=1 $sf_p", [$val, $prc]);
+// Brouillons exclus : meme base que la production (cf. PMMA ci-dessus).
+[$riv_conso, $riv_conso_p] = kpi_somme_ab('p.rivets_utilises', $depuis_points, $C);
 $riv_alertes = db_fetch_all(
     "SELECT s.nom AS site, r.type_rivet AS t, r.quantite AS q, COALESCE(r.seuil_alerte,200) AS seuil
        FROM op_stock_rivets r JOIN sites s ON s.id = r.site_id
@@ -411,16 +390,23 @@ $riv_alertes = db_fetch_all(
       ORDER BY r.quantite ASC LIMIT 4");
 
 // ── COMMANDES
-$cmd = db_fetch_one(
-    "SELECT COUNT(*)                                                            AS total,
-            COUNT(*) FILTER (WHERE statut IN ('livre','recu'))                  AS servies,
-            COUNT(*) FILTER (WHERE statut IN ('en_attente','en_attente_livraison','en_cours_livraison')) AS en_cours,
-            COALESCE(AVG(CASE WHEN livraison_at IS NOT NULL
-                         THEN EXTRACT(EPOCH FROM (livraison_at - created_at))/86400 END),0) AS delai
-       FROM commandes
-      WHERE TO_CHAR(created_at,'$fmt')=? $sf", [$val]) ?: [];
-$cmd_total = (int)($cmd['total'] ?? 0);
-$taux_service = $cmd_total > 0 ? (int)$cmd['servies'] / $cmd_total * 100 : 0;
+/** Commandes creees sur un intervalle : volume, servies, en cours, delai. */
+function kpi_commandes(string $du, string $au, string $sf): array {
+    return db_fetch_one(
+        "SELECT COUNT(*)                                                            AS total,
+                COUNT(*) FILTER (WHERE statut IN ('livre','recu'))                  AS servies,
+                COUNT(*) FILTER (WHERE statut IN ('en_attente','en_attente_livraison','en_cours_livraison')) AS en_cours,
+                COALESCE(AVG(CASE WHEN livraison_at IS NOT NULL
+                             THEN EXTRACT(EPOCH FROM (livraison_at - created_at))/86400 END),0) AS delai
+           FROM commandes
+          WHERE created_at::date BETWEEN ?::date AND ?::date $sf", [$du, $au]) ?: [];
+}
+$cmd   = kpi_commandes($C['du_a'], $C['au_a'], $sf);
+$cmd_b = kpi_commandes($C['du_b'], $C['au_b'], $sf);
+$cmd_total   = (int)($cmd['total'] ?? 0);
+$cmd_total_b = (int)($cmd_b['total'] ?? 0);
+$taux_service   = $cmd_total   > 0 ? (int)$cmd['servies']   / $cmd_total   * 100 : 0;
+$taux_service_b = $cmd_total_b > 0 ? (int)$cmd_b['servies'] / $cmd_total_b * 100 : null;
 
 // Taux de satisfaction sur les six dernieres periodes : un taux isole ne
 // dit pas si le service se degrade ou se retablit.
@@ -468,30 +454,44 @@ $interv_ouvertes = (int) db_fetch_value(
       WHERE statut_apres <> 'resolu' " . pref_clause_in('site_id', $sites_sel));
 
 // ── SITES — production comparee et classement
+// Un site sans production sur A mais actif sur B reste affiche : c'est
+// precisement le cas qu'une comparaison doit faire voir. Il n'apparaissait
+// pas tant que le filtre ne portait que sur A.
+$fa = "FILTER (WHERE p.date_point BETWEEN ?::date AND ?::date)";
 $classement = db_fetch_all(
     "SELECT s.nom,
-            COALESCE(SUM(CASE WHEN TO_CHAR(p.date_point,'$fmt')=? THEN p.total_plaques END),0) AS plaques,
-            COALESCE(SUM(CASE WHEN TO_CHAR(p.date_point,'$fmt')=? THEN p.total_plaques END),0) AS plaques_p,
-            COALESCE(SUM(CASE WHEN TO_CHAR(p.date_point,'$fmt')=? THEN p.total_engins END),0)  AS engins,
-            COALESCE(SUM(CASE WHEN TO_CHAR(p.date_point,'$fmt')=? THEN p.nb_heures_travail END),0) AS heures
+            COALESCE(SUM(p.total_plaques)     $fa,0) AS plaques,
+            COALESCE(SUM(p.total_plaques)     $fa,0) AS plaques_p,
+            COALESCE(SUM(p.total_engins)      $fa,0) AS engins,
+            COALESCE(SUM(p.nb_heures_travail) $fa,0) AS heures
        FROM sites s
        LEFT JOIN op_points_journaliers p ON p.site_id = s.id AND p.statut <> 'brouillon'
       WHERE s.actif = 1 " . pref_clause_in('s.id', $sites_sel) . "
       GROUP BY s.id, s.nom
-      HAVING COALESCE(SUM(CASE WHEN TO_CHAR(p.date_point,'$fmt')=? THEN p.total_plaques END),0) > 0
-      ORDER BY plaques DESC", [$val, $prc, $val, $val, $val]);
+      HAVING COALESCE(SUM(p.total_plaques) $fa,0) > 0
+          OR COALESCE(SUM(p.total_plaques) $fa,0) > 0
+      ORDER BY plaques DESC, plaques_p DESC",
+    [$C['du_a'], $C['au_a'], $C['du_b'], $C['au_b'], $C['du_a'], $C['au_a'],
+     $C['du_a'], $C['au_a'], $C['du_a'], $C['au_a'], $C['du_b'], $C['au_b']]);
 $plaques_max = 0;
 foreach ($classement as $c)
     $plaques_max = max($plaques_max, (int)$c['plaques'], (int)$c['plaques_p']);
 
-// Une periode en cours n'a pas la duree de celle a laquelle on la compare.
-// Sans le dire, une barre deux fois plus courte se lit comme une chute de
-// production alors qu'il ne s'est ecoule que la moitie du temps.
-$en_cours = ($serie_borne > 0 && isset($sous))
-          ? 'période en cours : ' . $serie_borne . ' sur ' . count($sous['cles'])
-            . ' — l’écart avec ' . mb_strtolower($P['libelle_prec'])
-            . ' tient d’abord au temps écoulé'
-          : '';
+// Ce que compare exactement l'ecran, dit une fois pour toutes les tuiles.
+// A date : B est arretee au meme rang que A, la mention le precise.
+// Entiere avec A en cours : A n'a pas la duree de B ; sans le dire, une
+// barre deux fois plus courte se lit comme une chute de production alors
+// qu'il ne s'est ecoule que la moitie du temps.
+$note_b = $C['a_date'] ? ', à date égale (' . $C['intervalle_b'] . ')' : '';
+$en_cours = '';
+if ($C['a_date']) {
+    $en_cours = 'à date égale : ' . mb_strtolower($C['libelle_b_long'])
+              . ' est arrêtée au ' . fmt_date($C['au_b'], 'd/m/Y');
+} elseif ($C['a_en_cours'] && $ecoules > 0 && isset($sous)) {
+    $en_cours = 'période en cours : ' . $ecoules . ' sur ' . $sous['n_a']
+              . ' — comparée à ' . mb_strtolower($C['libelle_b_long'])
+              . ' entière, l’écart tient d’abord au temps écoulé ; la moyenne par jour reste comparable';
+}
 
 // ============================================================
 //  RENDU — aides d'affichage
@@ -522,7 +522,7 @@ function kpi_delta(?float $var, string $sens = 'haut'): string {
  * un canvas non dessine laisse un bloc vide, un SVG non lu reste lisible.
  */
 function kpi_courbe(array $labels, array $a, array $b = [], string $la = '', string $lb = '',
-                    string $unite = '', int $borne_a = -1): string {
+                    string $unite = '', int $borne_a = -1, int $borne_b = -1): string {
     $n = count($a);
     if ($n < 2) return '<p class="kvide">Pas assez de points pour tracer une évolution.</p>';
     $W = 520; $H = 150; $pl = 34; $pr = 8; $pt = 10; $pb = 22;
@@ -556,7 +556,7 @@ function kpi_courbe(array $labels, array $a, array $b = [], string $la = '', str
         $yy = round($y($max * $g / 3), 1);
         $o .= '<line class="kgrid" x1="' . $pl . '" y1="' . $yy . '" x2="' . ($W - $pr) . '" y2="' . $yy . '"/>';
     }
-    if ($b) $o .= '<polyline class="kline kline-b" points="' . $trace($b) . '"/>';
+    if ($b) $o .= '<polyline class="kline kline-b" points="' . $trace($b, $borne_b) . '"/>';
     $o .= '<polyline class="kline kline-a" points="' . $trace($a, $borne_a) . '"/>';
     $o .= '</svg></div>';
 
@@ -674,19 +674,39 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
 @media(prefers-reduced-motion:reduce){.pdg-bar::after{animation:none;width:100%}}
 
 /* ── Grille de panneaux ──────────────────────────────────────────── */
-.kpi-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;align-items:start}
+/* Panneaux etires a la hauteur de leur rangee : alignes en haut, des
+   panneaux de hauteurs inegales laissaient des trous sous les plus courts
+   (Rivets ~210 px a cote de Commandes ~330 px). L'ordre du document place
+   les panneaux de meme nature en colonne sur grand ecran : Commandes sous
+   Production (deux courbes), Equipements sous Bobines (deux anneaux),
+   Rivets sous PMMA (consommation, stock, seuils). */
+.kpi-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;align-items:stretch}
 .kp{grid-column:span 12;min-width:0;background:var(--card,#fff);border:1px solid var(--border);
   border-radius:var(--radius,16px);padding:18px 20px}
 @media(min-width:900px){
   .kp--prod{grid-column:span 7}.kp--bob{grid-column:span 5}
-  .kp--pmma{grid-column:span 5}.kp--riv{grid-column:span 7}
-  .kp--cmd{grid-column:span 7}.kp--eq{grid-column:span 5}
+  .kp--pmma{grid-column:span 5}.kp--cmd{grid-column:span 7}
+  .kp--eq{grid-column:span 5}.kp--riv{grid-column:span 7}
   .kp--sites{grid-column:span 12}
 }
 @media(min-width:1400px){
   .kp--prod{grid-column:span 5}.kp--bob{grid-column:span 4}.kp--pmma{grid-column:span 3}
-  .kp--riv{grid-column:span 3}.kp--cmd{grid-column:span 5}.kp--eq{grid-column:span 4}
+  .kp--cmd{grid-column:span 5}.kp--eq{grid-column:span 4}.kp--riv{grid-column:span 3}
 }
+/* Deux graphes surdimensionnes pour ce qu'ils portent : six points de taux
+   pour les commandes, une a quatre barres pour le PMMA. */
+.kp--cmd .kchart,.kp--cmd .kya{height:110px}
+/* Les panneaux courts etires occupent leur hauteur au lieu de laisser un
+   vide en bas : le graphe PMMA s'agrandit, l'anneau des equipements se
+   centre, l'encart d'alertes des rivets se cale en pied. Limite a ces trois
+   panneaux : en colonne flexible, les marges ne fusionnent plus, ce qui
+   ajoutait 6 px a Production et Commandes. */
+.kp--pmma,.kp--riv,.kp--eq{display:flex;flex-direction:column}
+.kp--pmma .kv{flex:1 1 auto;height:auto;min-height:118px}
+.kp--pmma:not(:has(.kv)) .ka{margin-top:auto}
+.kp--riv .kc-row{margin-bottom:12px}
+.kp--riv .ka{margin-top:auto}
+.kp--eq .kp-ring{flex:1 1 auto}
 
 /* ── En-tete de panneau ──────────────────────────────────────────── */
 .kp-h{display:flex;align-items:center;gap:10px;margin-bottom:14px}
@@ -866,7 +886,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
 <div class="kpi-bar">
   <div>
     <h2><i class="ph ph-gauge" aria-hidden="true"></i> Indicateurs de performance</h2>
-    <p><?= h($P['libelle']) ?> · comparaison avec <?= h($P['libelle_prec']) ?>
+    <p><?= h($P['libelle']) ?> · comparé à <?= h($C['libelle_b_long']) ?><?= h($note_b) ?>
       · <?= h($perimetre_lbl) ?><?= $memorise ? ' · filtres mémorisés' : '' ?></p>
   </div>
   <?php /* data-dash-filtre : le changement de periode passe par l'echange
@@ -906,7 +926,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     </div>
     <?php endif; ?>
 
-    <?= periode_selecteur($P) ?>
+    <?= periode_selecteur_comparaison($P, $C) ?>
 
     <?php if ($vues || $peut_enregistrer): ?>
     <div class="ms" id="msVues" data-dash-nofiltre>
@@ -952,23 +972,39 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
   <section class="kp kp--prod" aria-labelledby="kp-prod">
     <div class="kp-h">
       <span class="kp-ic"><i class="ph ph-car" aria-hidden="true"></i></span>
-      <h3 class="kp-t" id="kp-prod">Production<em>plaques posées — comparaison à date, à nombre de jours égal</em></h3>
+      <h3 class="kp-t" id="kp-prod">Production<em><?= h($P['libelle']) ?> comparé à <?= h($C['libelle_b_long']) ?><?= h($note_b) ?></em></h3>
     </div>
     <div class="kc-row">
-      <?php foreach ($echelles as [$lbl, $v, $vp, $note]): ?>
       <div class="kc">
-        <div class="kc-l"><?= h($lbl) ?></div>
-        <div class="kc-v"><?= fmt_number((int)$v) ?></div>
-        <?= kpi_delta(kpi_var($v, $vp)) ?>
-        <div class="kc-n"><?= h($note) ?> (<?= fmt_number((int)$vp) ?>)</div>
+        <div class="kc-l">Plaques posées</div>
+        <div class="kc-v"><?= fmt_number((int)$plaques) ?></div>
+        <?= kpi_delta(kpi_var($plaques, $plaques_p)) ?>
+        <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number((int)$plaques_p) ?>)</div>
       </div>
-      <?php endforeach; ?>
+      <div class="kc">
+        <div class="kc-l">Engins traités</div>
+        <div class="kc-v"><?= fmt_number((int)$engins) ?></div>
+        <?= kpi_delta(kpi_var($engins, $engins_p)) ?>
+        <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number((int)$engins_p) ?>)</div>
+      </div>
+      <div class="kc">
+        <div class="kc-l">Plaques par jour</div>
+        <div class="kc-v"><?= $moy_j !== null ? number_format($moy_j, 1, ',', ' ') : '—' ?></div>
+        <?= ($moy_j !== null && $moy_j_p !== null) ? kpi_delta(kpi_var($moy_j, $moy_j_p)) : '' ?>
+        <div class="kc-n"><?= fmt_number($C['jours_a']) ?> j écoulé(s) contre <?= fmt_number($C['jours_b']) ?> j
+          (<?= $moy_j_p !== null ? number_format($moy_j_p, 1, ',', ' ') : '—' ?>)</div>
+      </div>
     </div>
+    <?php if ($en_cours): ?>
+    <p class="kc-n" style="margin:6px 0 0"><?= h(ucfirst($en_cours)) ?>.</p>
+    <?php endif; ?>
     <div class="kp-sep"></div>
-    <div class="kp-st">Évolution — <?= h($serie_note) ?></div>
+    <?php /* Le titre dit la donnee tracee ; les periodes comparees sont dans
+             la legende, et le detail (jours ecoules) au survol. */ ?>
+    <div class="kp-st" title="<?= h(ucfirst($serie_note)) ?>">Évolution nombre de plaques posées</div>
     <?= kpi_courbe($serie_lbl, $serie_a, $serie_b,
-                   'Période actuelle', $serie_b ? 'Période précédente' : '', 'plaques',
-                   $serie_borne) ?>
+                   $P['libelle'], $serie_b ? $C['libelle_b_long'] : '', 'plaques',
+                   $serie_borne, $serie_borne_b) ?>
   </section>
 
   <!-- ══ BOBINES ══ -->
@@ -990,8 +1026,12 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     </div>
     <p class="kc-n" style="margin-top:10px">
       <?= $couverture !== null
-          ? 'Couverture : ' . fmt_number($couverture) . ' jours au rythme observé sur 30 jours.'
-          : 'Aucune consommation observée sur 30 jours : la couverture ne peut pas être calculée.' ?>
+          ? 'Couverture : ' . fmt_number($couverture) . ' jours de stock au rythme des 30 derniers jours.'
+          : 'Aucune consommation de films sur les 30 derniers jours : la couverture ne peut pas être calculée.' ?>
+      <?php if ($format_critique && $couverture !== null && $format_critique['jours'] < $couverture): ?>
+      Premier format épuisé : <?= h($format_critique['format']) ?>, dans
+      <?= fmt_number($format_critique['jours']) ?> jour(s).
+      <?php endif; ?>
       Perte : <?= number_format($taux_perte, 2, ',', ' ') ?> % des films sortis.
     </p>
     <?php if ($bob_series): ?>
@@ -1018,12 +1058,12 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
         <div class="kc-l">Consommés</div>
         <div class="kc-v"><?= fmt_number($pmma_conso) ?></div>
         <?= kpi_delta(kpi_var($pmma_conso, $pmma_conso_p)) ?>
-        <div class="kc-n">vs <?= h($P['libelle_prec']) ?> (<?= fmt_number($pmma_conso_p) ?>)</div>
+        <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number($pmma_conso_p) ?>)</div>
       </div>
       <div class="kc">
         <div class="kc-l">Stock disponible</div>
         <div class="kc-v"><?= fmt_number($pmma_total) ?></div>
-        <div class="kc-n"><?= count($pmma_stock) ?> type(s) suivi(s)</div>
+        <div class="kc-n">à ce jour · <?= count($pmma_stock) ?> type(s) suivi(s)</div>
       </div>
     </div>
     <?php if ($pmma_par_type): $mx = 0; foreach ($pmma_par_type as $t) $mx = max($mx, (int)$t['v']); ?>
@@ -1053,41 +1093,6 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     </div>
   </section>
 
-  <!-- ══ RIVETS ══ -->
-  <section class="kp kp--riv" aria-labelledby="kp-riv">
-    <div class="kp-h">
-      <span class="kp-ic"><i class="ph ph-push-pin" aria-hidden="true"></i></span>
-      <h3 class="kp-t" id="kp-riv">Rivets<em>consommation de la période et stock disponible</em></h3>
-    </div>
-    <div class="kc-row">
-      <div class="kc">
-        <div class="kc-l">Consommés</div>
-        <div class="kc-v"><?= fmt_number($riv_conso) ?></div>
-        <?= kpi_delta(kpi_var($riv_conso, $riv_conso_p)) ?>
-        <div class="kc-n">vs <?= h($P['libelle_prec']) ?> (<?= fmt_number($riv_conso_p) ?>)</div>
-      </div>
-      <div class="kc">
-        <div class="kc-l">Stock disponible</div>
-        <div class="kc-v"><?= fmt_number($riv_stock) ?></div>
-        <div class="kc-n"><?= $riv_bas > 0
-            ? fmt_number($riv_bas) . ' site(s) sous le seuil'
-            : 'aucun site sous le seuil' ?></div>
-      </div>
-    </div>
-    <div class="ka">
-      <?php if ($riv_alertes): ?>
-      <div class="ka-h"><i class="ph-fill ph-warning" aria-hidden="true"></i> Sous le seuil d'alerte</div>
-      <?php foreach ($riv_alertes as $a): ?>
-      <div class="ka-l"><b><?= h($a['site']) ?> · <?= h($a['t']) ?></b>
-        <span><?= fmt_number((int)$a['q']) ?> / <?= fmt_number((int)$a['seuil']) ?></span></div>
-      <?php endforeach; ?>
-      <?php else: ?>
-      <div class="ka-ok"><i class="ph-fill ph-check-circle" aria-hidden="true"></i>
-        Tous les sites sont au-dessus de leur seuil.</div>
-      <?php endif; ?>
-    </div>
-  </section>
-
   <!-- ══ COMMANDES ══ -->
   <section class="kp kp--cmd" aria-labelledby="kp-cmd">
     <div class="kp-h">
@@ -1100,12 +1105,16 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
         <div class="kc-v"><?= $cmd_total > 0 ? number_format($taux_service, 1, ',', ' ') . ' %' : '—' ?></div>
         <div class="kc-n"><?= $cmd_total > 0
             ? (int)$cmd['servies'] . ' servie(s) sur ' . $cmd_total
-            : 'aucune commande sur la période' ?></div>
+            : 'aucune commande sur la période' ?>
+          · vs <?= h($C['libelle_b']) ?> : <?= $taux_service_b !== null
+            ? number_format($taux_service_b, 1, ',', ' ') . ' %' : '—' ?></div>
       </div>
       <div class="kc">
         <div class="kc-l">Délai moyen</div>
         <div class="kc-v"><?= $cmd_total > 0 ? number_format((float)$cmd['delai'], 1, ',', ' ') . ' j' : '—' ?></div>
-        <div class="kc-n">de la création à la livraison</div>
+        <div class="kc-n">de la création à la livraison
+          · vs <?= h($C['libelle_b']) ?> : <?= $cmd_total_b > 0
+            ? number_format((float)$cmd_b['delai'], 1, ',', ' ') . ' j' : '—' ?></div>
       </div>
       <div class="kc">
         <div class="kc-l">En attente</div>
@@ -1158,19 +1167,54 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     <?php endif; ?>
   </section>
 
+  <!-- ══ RIVETS ══ -->
+  <section class="kp kp--riv" aria-labelledby="kp-riv">
+    <div class="kp-h">
+      <span class="kp-ic"><i class="ph ph-push-pin" aria-hidden="true"></i></span>
+      <h3 class="kp-t" id="kp-riv">Rivets<em>consommation de la période et stock disponible</em></h3>
+    </div>
+    <div class="kc-row">
+      <div class="kc">
+        <div class="kc-l">Consommés</div>
+        <div class="kc-v"><?= fmt_number($riv_conso) ?></div>
+        <?= kpi_delta(kpi_var($riv_conso, $riv_conso_p)) ?>
+        <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number($riv_conso_p) ?>)</div>
+      </div>
+      <div class="kc">
+        <div class="kc-l">Stock disponible</div>
+        <div class="kc-v"><?= fmt_number($riv_stock) ?></div>
+        <div class="kc-n">à ce jour · <?= $riv_bas > 0
+            ? fmt_number($riv_bas) . ' site(s) sous le seuil'
+            : 'aucun site sous le seuil' ?></div>
+      </div>
+    </div>
+    <div class="ka">
+      <?php if ($riv_alertes): ?>
+      <div class="ka-h"><i class="ph-fill ph-warning" aria-hidden="true"></i> Sous le seuil d'alerte</div>
+      <?php foreach ($riv_alertes as $a): ?>
+      <div class="ka-l"><b><?= h($a['site']) ?> · <?= h($a['t']) ?></b>
+        <span><?= fmt_number((int)$a['q']) ?> / <?= fmt_number((int)$a['seuil']) ?></span></div>
+      <?php endforeach; ?>
+      <?php else: ?>
+      <div class="ka-ok"><i class="ph-fill ph-check-circle" aria-hidden="true"></i>
+        Tous les sites sont au-dessus de leur seuil.</div>
+      <?php endif; ?>
+    </div>
+  </section>
+
   <!-- ══ SITES ══ -->
   <?php if (count($sites_sel) !== 1): ?>
   <section class="kp kp--sites" aria-labelledby="kp-sites">
     <div class="kp-h">
       <span class="kp-ic"><i class="ph ph-map-pin" aria-hidden="true"></i></span>
-      <h3 class="kp-t" id="kp-sites">Sites<em>plaques posées — <?= h($P['libelle']) ?></em></h3>
+      <h3 class="kp-t" id="kp-sites">Sites<em>plaques posées — <?= h($P['libelle']) ?> comparé à <?= h($C['libelle_b_long']) ?></em></h3>
     </div>
     <?php if (empty($classement)): ?>
       <p class="kvide">Aucune production enregistrée sur cette période.</p>
     <?php else: ?>
     <div class="kp-2c">
       <div>
-        <div class="kp-st">Production par site, comparée à <?= h($P['libelle_prec']) ?></div>
+        <div class="kp-st">Production par site, comparée à <?= h($C['libelle_b_long']) ?><?= h($note_b) ?></div>
         <?php if ($en_cours): ?>
         <p class="kc-n" style="margin:-2px 0 4px"><?= h(ucfirst($en_cours)) ?>.</p>
         <?php endif; ?>
@@ -1186,8 +1230,8 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
           </div>
           <?php endforeach; ?>
         </div>
-        <p class="klg"><span class="kpt"></span>Période actuelle
-          <span class="kpt kpt-b" style="background:var(--border)"></span><?= h($P['libelle_prec']) ?></p>
+        <p class="klg"><span class="kpt"></span><?= h($P['libelle']) ?>
+          <span class="kpt kpt-b" style="background:var(--border)"></span><?= h($C['libelle_b_long']) ?></p>
       </div>
       <div>
         <div class="kp-st">Classement productivité</div>

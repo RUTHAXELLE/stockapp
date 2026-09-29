@@ -1,0 +1,1435 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cahier des charges — ERP EMUCI</title>
+<meta name="description" content="Cahier des charges de l'ERP EMUCI, arrêté au commit ff9fc2c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
+<style>
+
+
+
+
+
+
+
+
+
+
+
+/* ── Mise en page pour l'impression et l'export PDF.
+   Le sommaire latéral n'a pas de sens sur papier : il devient un bloc en
+   tête. Les cadres qui défilent à l'écran doivent au contraire tout montrer,
+   puisqu'on ne peut pas faire défiler une feuille. */
+@media print{
+  @page{margin:14mm 12mm}
+  :root{--bg:#fff !important}
+  body{background:#fff !important;font-size:10.5pt;line-height:1.5}
+  .shell{display:block !important;max-width:none;padding:0}
+  .toc{position:static !important;max-height:none !important;overflow:visible !important;
+    margin:0 0 14mm;padding:0;border:none;box-shadow:none;
+    break-after:page;page-break-after:always}
+  .toc a{color:#000 !important;padding:2px 0;margin:0}
+  /* Aucune ombre a l'impression : Chrome les rastérise, ce qui alourdit
+     le fichier et salit les bords sur papier. */
+  *{box-shadow:none !important}
+  .tw,figure{overflow:visible !important;break-inside:avoid;page-break-inside:avoid}
+  table{min-width:0 !important;font-size:9pt}
+  th{background:#eef2fb !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .note{break-inside:avoid;page-break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  section{break-before:auto;margin-top:10mm}
+  h2{break-after:avoid;page-break-after:avoid}
+  h3,h4{break-after:avoid;page-break-after:avoid}
+  figure svg{max-width:100% !important}
+  a{text-decoration:none;color:inherit}
+  .impr-pied{display:block !important}
+}
+.impr-pied{display:none}
+
+*{box-sizing:border-box}html,body{margin:0}
+
+/* Même palette que le manuel : les deux documents décrivent le même produit
+   et doivent se reconnaître comme une paire. */
+:root{
+  --bg:#eef2fb; --surface:#fff; --surface-2:#f5f8fe;
+  --ink:#06033A; --body:#232c47; --muted:#4d5876;
+  --rule:#c3ccdf; --rule-soft:#dfe5f1;
+  --accent:#1B75BC; --accent-ink:#12547f; --accent-soft:#e6f0f9;
+  --warn:#8a5a00; --warn-soft:#fdf3e0; --warn-rule:#e5c58a;
+  --stop:#8a1c13; --stop-soft:#fdf1f0; --stop-rule:#e8b7b1;
+  --rg:#1f5c4a; --rg-soft:#e8f4ef; --rg-rule:#a6cdbe;
+  --shadow:0 1px 2px rgba(6,3,58,.05), 0 8px 28px -14px rgba(6,3,58,.22);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0c1020; --surface:#151b31; --surface-2:#1b2340;
+    --ink:#e8ecf8; --body:#c6cee4; --muted:#98a3c0;
+    --rule:#39445f; --rule-soft:#2a3350;
+    --accent:#6fb2e8; --accent-ink:#a9d2f4; --accent-soft:#17273a;
+    --warn:#f0c473; --warn-soft:#2c2312; --warn-rule:#5c4a24;
+    --stop:#f0a9a1; --stop-soft:#2e1715; --stop-rule:#5e2f2a;
+    --rg:#8fd3ba; --rg-soft:#12261f; --rg-rule:#2f5347;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -16px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0c1020; --surface:#151b31; --surface-2:#1b2340;
+  --ink:#e8ecf8; --body:#c6cee4; --muted:#98a3c0;
+  --rule:#39445f; --rule-soft:#2a3350;
+  --accent:#6fb2e8; --accent-ink:#a9d2f4; --accent-soft:#17273a;
+  --warn:#f0c473; --warn-soft:#2c2312; --warn-rule:#5c4a24;
+  --stop:#f0a9a1; --stop-soft:#2e1715; --stop-rule:#5e2f2a;
+  --rg:#8fd3ba; --rg-soft:#12261f; --rg-rule:#2f5347;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -16px rgba(0,0,0,.7);
+}
+:root[data-theme="light"]{
+  --bg:#eef2fb; --surface:#fff; --surface-2:#f5f8fe;
+  --ink:#06033A; --body:#232c47; --muted:#4d5876;
+  --rule:#c3ccdf; --rule-soft:#dfe5f1;
+  --accent:#1B75BC; --accent-ink:#12547f; --accent-soft:#e6f0f9;
+  --warn:#8a5a00; --warn-soft:#fdf3e0; --warn-rule:#e5c58a;
+  --stop:#8a1c13; --stop-soft:#fdf1f0; --stop-rule:#e8b7b1;
+  --rg:#1f5c4a; --rg-soft:#e8f4ef; --rg-rule:#a6cdbe;
+  --shadow:0 1px 2px rgba(6,3,58,.05), 0 8px 28px -14px rgba(6,3,58,.22);
+}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--body);margin:0;
+  font-family:'DM Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased}
+
+.shell{max-width:1220px;margin:0 auto;padding:40px 24px 96px;
+  display:grid;grid-template-columns:246px minmax(0,1fr);gap:52px;align-items:start}
+@media(max-width:960px){.shell{grid-template-columns:minmax(0,1fr);gap:0;padding:26px 18px 72px}}
+
+.toc{position:sticky;top:28px;font-size:13.5px;max-height:calc(100vh - 56px);overflow-y:auto}
+@media(max-width:960px){.toc{position:static;max-height:none;margin-bottom:34px;background:var(--surface);
+  border:1px solid var(--rule);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}}
+.toc-t{font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--muted);margin:0 0 12px}
+.toc ol{list-style:none;margin:0;padding:0}
+.toc a{display:flex;gap:9px;padding:5px 10px;margin-left:-10px;border-radius:8px;color:var(--body);
+  text-decoration:none;line-height:1.34;transition:background-color .14s,color .14s}
+.toc a:hover{background:var(--surface-2);color:var(--accent-ink)}
+.toc a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.toc .part{font-family:'Montserrat',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent-ink);margin:14px 0 4px;padding-left:0}
+.toc li:first-child.part{margin-top:0}
+.toc .n{color:var(--muted);font-variant-numeric:tabular-nums;flex-shrink:0;font-weight:500;min-width:16px}
+
+.head{margin-bottom:32px}
+.eyebrow{font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--accent-ink);margin:0 0 10px}
+h1{font-family:'Montserrat',sans-serif;font-size:clamp(28px,4.2vw,40px);line-height:1.1;font-weight:800;
+  letter-spacing:-.022em;color:var(--ink);margin:0 0 14px;text-wrap:balance}
+.lede{font-size:18px;color:var(--muted);margin:0;max-width:62ch;text-wrap:pretty}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.chip{display:inline-flex;align-items:baseline;gap:7px;background:var(--surface);border:1px solid var(--rule);
+  border-radius:999px;padding:6px 14px;font-size:13px}
+.chip b{font-family:'Montserrat',sans-serif;font-weight:700;color:var(--ink);font-size:11.5px;
+  letter-spacing:.05em;text-transform:uppercase}
+
+section{margin-top:50px;scroll-margin-top:20px}
+h2{font-family:'Montserrat',sans-serif;font-size:23px;font-weight:700;letter-spacing:-.014em;color:var(--ink);
+  margin:0 0 14px;line-height:1.25;display:flex;gap:12px;align-items:baseline;text-wrap:balance}
+h2 .n{color:var(--accent-ink);font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;flex-shrink:0}
+h4{font-family:'Montserrat',sans-serif;font-size:13.5px;font-weight:700;color:var(--ink);margin:22px 0 7px;letter-spacing:-.004em}
+h3{font-family:'Montserrat',sans-serif;font-size:16px;font-weight:700;color:var(--ink);
+  margin:28px 0 8px;letter-spacing:-.008em}
+p{margin:0 0 13px;max-width:70ch}
+ul,ol{margin:0 0 13px;padding-left:22px;max-width:70ch}
+li{margin-bottom:5px}
+li::marker{color:var(--muted)}
+strong{color:var(--ink);font-weight:700}
+code{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:.87em;background:var(--surface-2);
+  border:1px solid var(--rule-soft);border-radius:5px;padding:1px 5px;color:var(--accent-ink)}
+
+.tw{overflow-x:auto;margin:0 0 18px;background:var(--surface);border:1px solid var(--rule);
+  border-radius:12px;box-shadow:var(--shadow)}
+table{width:100%;border-collapse:collapse;font-size:14.5px;min-width:440px}
+th{font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--muted);text-align:left;padding:11px 16px;border-bottom:1px solid var(--rule);
+  background:var(--surface-2);white-space:nowrap}
+td{padding:11px 16px;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td:first-child{color:var(--ink);font-weight:500}
+td code{white-space:nowrap}
+.rg td:first-child{white-space:nowrap;font-family:'Montserrat',sans-serif;font-weight:700;color:var(--rg)}
+
+.note{border-radius:12px;padding:14px 18px;margin:0 0 18px;font-size:15px;max-width:72ch}
+.note p{margin:0}
+.note p + p{margin-top:8px}
+.note-t{font-family:'Montserrat',sans-serif;font-size:11.5px;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;margin:0 0 5px;display:block}
+.note-warn{background:var(--warn-soft);border:1px solid var(--warn-rule);color:var(--warn)}
+.note-warn .note-t,.note-warn strong{color:var(--warn)}
+.note-info{background:var(--accent-soft);border:1px solid var(--rule);color:var(--body)}
+.note-info .note-t{color:var(--accent-ink)}
+.note-stop{background:var(--stop-soft);border:1px solid var(--stop-rule);color:var(--stop)}
+.note-stop .note-t,.note-stop strong{color:var(--stop)}
+
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 18px}
+.flow-s{background:var(--surface);border:1px solid var(--rule);border-radius:9px;padding:8px 14px;
+  font-size:14px;font-weight:500;color:var(--ink);box-shadow:var(--shadow)}
+.flow-a{color:var(--muted)}
+
+footer{margin-top:50px;padding-top:22px;border-top:1px solid var(--rule);font-size:14px;color:var(--muted)}
+footer p{max-width:72ch}
+
+figure{margin:0 0 20px;background:var(--surface);border:1px solid var(--rule);
+  border-radius:12px;padding:18px 16px 12px;box-shadow:var(--shadow);overflow-x:auto}
+figure .mermaid{display:flex;justify-content:center;min-width:0}
+figcaption{margin-top:10px;font-size:13.5px;color:var(--muted);text-align:center;
+  max-width:64ch;margin-left:auto;margin-right:auto}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+</style>
+</head>
+<body>
+<div class="shell">
+<nav class="toc" aria-label="Sommaire">
+<p class="toc-t">Sommaire</p>
+<ol>
+<li><a href="#s1"><span class="n">1</span><span>Contexte et enjeux</span></a></li>
+<li><a href="#s2"><span class="n">2</span><span>Objectifs</span></a></li>
+<li><a href="#s3"><span class="n">3</span><span>Périmètre fonctionnel</span></a></li>
+<li><a href="#s4"><span class="n">4</span><span>Acteurs et habilitations</span></a></li>
+<li><a href="#s5"><span class="n">5</span><span>Exigences fonctionnelles</span></a></li>
+<li><a href="#s6"><span class="n">6</span><span>Exigences non fonctionnelles</span></a></li>
+<li><a href="#s7"><span class="n">7</span><span>Contraintes d&#x27;architecture et d&#x27;exploitation</span></a></li>
+<li><a href="#s8"><span class="n">8</span><span>Données de référence</span></a></li>
+<li><a href="#s9"><span class="n">9</span><span>Règles de gestion transverses</span></a></li>
+<li><a href="#s10"><span class="n">10</span><span>Critères d&#x27;acceptation</span></a></li>
+<li><a href="#s11"><span class="n">11</span><span>Hors périmètre</span></a></li>
+<li><a href="#s12"><span class="n">12</span><span>Écarts connus et points ouverts</span></a></li>
+<li><a href="#s13"><span>Suivi des versions</span></a></li>
+</ol>
+</nav>
+<main>
+<header class="head">
+<p class="eyebrow">ERP EMUCI</p>
+<h1>Cahier des charges — ERP EMUCI</h1>
+<p class="lede">Ce que le système doit faire, pour qui, sous quelles contraintes, et à quoi se mesure qu&#x27;il le fait.</p>
+<div class="meta"><span class="chip"><b>Version du logiciel</b> 24 septembre 2026</span><span class="chip"><b>Version du cahier des charges</b> 2.3</span><span class="chip"><b>Objet</b> établir ce que le système doit faire, pour qui, sous quelles</span></div>
+</header>
+<div class="note note-info"><span class="note-t">Provenance</span><p> Ce document est établi par lecture du code source, du
+schéma de base et de la configuration des menus. Il décrit le besoin <strong>tel
+que le produit l'implémente aujourd'hui</strong>, et signale explicitement les
+écarts entre l'intention exprimée dans le code et ce qui est réellement en
+place.</p>
+<p>Le document jumeau, <code>SPECIFICATION.md</code>, décrit <em>comment</em> le système est
+construit. Celui-ci décrit <em>ce qui est attendu de lui</em>. Lorsqu'une exigence
+n'est pas satisfaite en l'état, elle est marquée <strong>⚠ écart</strong>.</p></div>
+<section id="s1"><h2><span class="n">1</span> Contexte et enjeux</h2>
+<p>EMU-CI intervient dans le projet <strong>NSIIV</strong> (Nouveau Système d'Immatriculation
+des Véhicules). L'activité consiste à poser des plaques d'immatriculation sur
+<strong>21 sites</strong> répartis sur le territoire, à partir de consommables — bobines de
+film, rivets, PMMA — distribués depuis un stock central, et d'un parc
+d'équipements (informatique et opérationnel) affecté aux sites.</p>
+<p>Quatre difficultés justifient l'outil :</p>
+<p><strong>La donnée de production est produite sur le terrain et consommée au siège.</strong>
+Chaque site saisit son activité quotidienne (véhicules traités, plaques posées,
+films et rivets consommés). Ces chiffres alimentent la facturation, le
+réapprovisionnement et le pilotage. Sans outil, ils circulent par tableur et
+par téléphone, sans traçabilité ni contrôle de cohérence.</p>
+<p><strong>Le stock réel diverge du stock théorique.</strong> Un film endommagé, une bobine
+mal décomptée, un rivet perdu : l'écart se constate des semaines plus tard,
+quand il est trop tard pour l'expliquer. Il faut un mécanisme d'inventaire
+périodique qui fige le stock système, le confronte au stock physique, et
+conserve l'écart comme objet de suivi.</p>
+<p><strong>Les engagements de dépense ne sont pas tracés.</strong> L'expression de besoin, la
+validation hiérarchique, le contrôle budgétaire et la réception se font hors
+système. Il faut un circuit d'achat où chaque étape laisse une trace datée et
+nominative.</p>
+<p><strong>Le pilotage global manque d'un lieu unique.</strong> Le suivi de production, de
+stock et de parc existait par écrans dispersés, chacun répondant à une
+question précise mais aucun n'offrant une lecture consolidée, comparable dans
+le temps, pour la direction. Un tableau de bord d'indicateurs et un outil de
+projection de stock répondent à ce besoin (§5.8, §5.11).</p>
+<hr>
+</section>
+<section id="s2"><h2><span class="n">2</span> Objectifs</h2>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>N°</th>
+<th>Objectif</th>
+<th>Mesure</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>O1</strong></td>
+<td>Saisir la production quotidienne à la source, par les coordinateurs de site</td>
+<td>Le point journalier du jour est saisi et validé pour chaque site actif</td>
+</tr>
+<tr>
+<td><strong>O2</strong></td>
+<td>Rendre le stock vérifiable</td>
+<td>Un inventaire périodique est ouvert, saisi et clôturé, et chaque écart constaté porte un statut</td>
+</tr>
+<tr>
+<td><strong>O3</strong></td>
+<td>Tracer les demandes internes de bout en bout</td>
+<td>Toute demande porte un circuit de validation résolu, daté et nominatif</td>
+</tr>
+<tr>
+<td><strong>O4</strong></td>
+<td>Encadrer l'engagement de dépense</td>
+<td>Toute FEB suit un circuit de visas déterminé par son montant, avec contrôle budgétaire</td>
+</tr>
+<tr>
+<td><strong>O5</strong></td>
+<td>Donner à chaque métier une vue adaptée à son périmètre</td>
+<td>Aucun rôle ne voit de données hors de son périmètre, aucun ne rencontre de 403 sur son parcours normal</td>
+</tr>
+<tr>
+<td><strong>O6</strong></td>
+<td>Conserver une trace opposable</td>
+<td>Toute action modifiante est journalisée avec auteur, date et valeurs</td>
+</tr>
+<tr>
+<td><strong>O7</strong></td>
+<td>Donner à la direction une lecture consolidée et datée du parc et de la production</td>
+<td>Le tableau de bord KPI couvre les sept familles d'indicateurs, comparées dans le temps</td>
+</tr>
+<tr>
+<td><strong>O8</strong></td>
+<td>Anticiper une rupture de stock avant qu'elle ne survienne</td>
+<td>L'outil de simulation répond aux deux questions du comité de pilotage : autonomie restante, effet d'une ouverture de site</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+</section>
+<section id="s3"><h2><span class="n">3</span> Périmètre fonctionnel</h2>
+<p>Le produit est organisé en <strong>dix domaines</strong>, qui correspondent aux dix groupes
+de navigation (<code>includes/groupes_config.php</code>).</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Domaine</th>
+<th>Objet</th>
+<th>Écrans principaux</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Tableau de bord</strong></td>
+<td>Synthèse adaptée au rôle, vue exécutive, indicateurs consolidés</td>
+<td><code>dashboard</code>, <code>pdg_overview</code>, <code>kpi_dashboard</code></td>
+</tr>
+<tr>
+<td><strong>Stock</strong></td>
+<td>Parc équipements (IT et opérationnel), articles, consommables, PMMA, bobines, vignettes, rivets, commandes</td>
+<td><code>equipements</code>, <code>articles</code>, <code>consommables</code>, <code>pmma</code>, <code>commandes</code>, <code>mouvements_equipements</code></td>
+</tr>
+<tr>
+<td><strong>Bobines</strong></td>
+<td>Cycle de vie du film : commande, validation du stock du matin, rapports, vue par site, traçabilité des endommagements</td>
+<td><code>commandes_bobines</code>, <code>validation_stock_matin</code>, <code>rapports_gsb</code>, <code>stock_bobines_vue</code>, <code>tracabilite_endommagements</code></td>
+</tr>
+<tr>
+<td><strong>Inventaire</strong></td>
+<td>Inventaire périodique et écarts, sur quatre natures de stock</td>
+<td><code>inventaire_sessions</code>, <code>inventaire_{bobines,rivets,pmma,equipements}</code>, <code>ecarts_*</code></td>
+</tr>
+<tr>
+<td><strong>Opérations</strong></td>
+<td>Point journalier, demande d'intervention, données EMUCI, suivi des observations</td>
+<td><code>operations/point_journalier</code>, <code>point_emuci</code>, <code>import_emuci</code>, <code>observations</code></td>
+</tr>
+<tr>
+<td><strong>Informatique</strong></td>
+<td>Interventions, rapport journalier IT, affectation des sous-rôles Support IT, transfert d'équipement</td>
+<td><code>interventions</code>, <code>rapport_journalier</code>, <code>affectations_it</code>, <code>affectations</code></td>
+</tr>
+<tr>
+<td><strong>Rapports</strong></td>
+<td>Résumé superviseur, rapports généraux, exports, simulation &amp; projection de stocks</td>
+<td><code>resume_superviseur</code>, <code>rapports</code>, <code>export</code>, <code>simulation_stocks</code></td>
+</tr>
+<tr>
+<td><strong>Demandes internes</strong></td>
+<td>Demandes transverses avec circuit de validation</td>
+<td><code>demandes</code>, <code>demandes_new</code>, <code>demandes_a_valider</code>, <code>demandes_it</code>, <code>agents</code></td>
+</tr>
+<tr>
+<td><strong>Achats</strong></td>
+<td>Expression de besoin (FEB), visas, suivi DA/BC, réceptions, paramétrage</td>
+<td><code>achats/*</code> (20 écrans)</td>
+</tr>
+<tr>
+<td><strong>Administration</strong></td>
+<td>Utilisateurs, permissions, nomenclatures, audit, délégations, sites, départements, référentiels de capacités</td>
+<td><code>admin/*</code>, dont <code>admin/referentiels_operations</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Volumétrie de référence</strong> : 81 écrans sous <code>pages/</code>, 6 points d'entrée à la
+racine, 114 tables, 16 rôles, 21 sites actifs, et 57 identifiants de module
+contrôlés dans le code — dont 56 administrables depuis l'interface
+(Admin → Permissions) et 1 (<code>inventaire_sessions</code>) résolu par délégation
+nominative sans passer par la table des permissions. <strong>Aucun module n'est
+plus contrôlé dans le code sans être administrable depuis l'interface</strong> —
+c'était le cas des quatre modules Achats jusqu'en septembre 2026 (§12.1).</p>
+<hr>
+</section>
+<section id="s4"><h2><span class="n">4</span> Acteurs et habilitations</h2>
+<h3>4.1 Les seize rôles</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Rôle (slug)</th>
+<th>Périmètre attendu</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>superadmin</code></td>
+<td>Accès total, y compris lecture de tous les audits</td>
+</tr>
+<tr>
+<td><code>admin</code></td>
+<td>Gestion utilisateurs, équipements, sites, permissions</td>
+</tr>
+<tr>
+<td><code>lecteur</code></td>
+<td>Consultation. <strong>Libellé affiché : « PDG »</strong> — le slug n'a pas été renommé</td>
+</tr>
+<tr>
+<td><code>gestionnaire_stock</code></td>
+<td>Stock central : entrées, sorties, livraisons aux sites</td>
+</tr>
+<tr>
+<td><code>coordinateur_site</code></td>
+<td>Son site uniquement : point journalier, réception, réponse aux corrections</td>
+</tr>
+<tr>
+<td><code>maintenance_info</code></td>
+<td>Parc informatique. <strong>Rôle conservé sans compte rattaché</strong> pour la lisibilité de l'audit</td>
+</tr>
+<tr>
+<td><code>superviseur_operation</code></td>
+<td>Supervision des coordinateurs de site</td>
+</tr>
+<tr>
+<td><code>controleur_production</code></td>
+<td>Saisie quotidienne des plaques posées et réservées (données EMUCI)</td>
+</tr>
+<tr>
+<td><code>gestionnaire_stock_bobines</code></td>
+<td>Validation du stock du matin, demandes bobines, réajustements</td>
+</tr>
+<tr>
+<td><code>gestionnaire_operation</code></td>
+<td>Second du superviseur opération, destinataire des délégations</td>
+</tr>
+<tr>
+<td><code>superviseur_it</code></td>
+<td>Informatique complet, supervise les Support IT</td>
+</tr>
+<tr>
+<td><code>support_it</code></td>
+<td>Profil à sous-rôles (voir 4.2)</td>
+</tr>
+<tr>
+<td><code>superviseur_achat</code></td>
+<td>Consommables, équipements, consommation des sites, circuit achat</td>
+</tr>
+<tr>
+<td><code>raf</code></td>
+<td>Visa financier — responsable administratif et financier</td>
+</tr>
+<tr>
+<td><code>daf</code></td>
+<td>Visa financier — directeur administratif et financier</td>
+</tr>
+<tr>
+<td><code>directeur_general</code></td>
+<td>Visa de direction</td>
+</tr>
+</tbody>
+</table></div>
+<div class="note note-warn">
+<p>Un dix-septième rôle, <code>gestionnaire</code>, existe en base sans être documenté
+ci-dessus : c'est un rôle générique antérieur à la spécialisation des
+profils de gestion (<code>gestionnaire_stock</code>, <code>gestionnaire_stock_bobines</code>,
+<code>gestionnaire_operation</code>), conservé sans compte actif rattaché pour ne pas
+casser l'historique d'audit — même logique que <code>maintenance_info</code>.</p>
+</div>
+<h3>4.2 Sous-rôles Support IT</h3>
+<p>Le rôle <code>support_it</code> n'ouvre aucun accès par lui-même : les droits viennent
+des <strong>sous-rôles actifs</strong> portés par la table <code>support_it_roles</code>.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Sous-rôle</th>
+<th>Modules ouverts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>maintenance</code></td>
+<td>interventions, équipements, sites</td>
+</tr>
+<tr>
+<td><code>controleur_production</code></td>
+<td>import EMUCI, point EMUCI, équipements, sites</td>
+</tr>
+<tr>
+<td><code>gestionnaire_bobines</code></td>
+<td>bobines, inventaire bobines, équipements, sites</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>EF-HAB-1</strong> — Un compte <code>support_it</code> sans sous-rôle actif n'a accès à rien.
+C'est le comportement voulu, mais il rend la bascule d'un compte vers ce
+profil risquée : si le sous-rôle n'est pas posé dans le même mouvement, le
+compte perd tout accès sans message explicite.</p>
+<p><strong>EF-HAB-2</strong> — Le module <code>demandes</code> échappe à ce filtrage : il est transverse
+(« tous les employés ») et s'évalue directement sur la table <code>permissions</code>,
+quel que soit le sous-rôle actif.</p>
+<h3>4.3 Règles d'habilitation</h3>
+<p><strong>EF-HAB-3</strong> — Les droits sont stockés en base, par couple (rôle, module),
+avec cinq actions : <code>can_read</code>, <code>can_create</code>, <code>can_update</code>, <code>can_delete</code>,
+<code>can_export</code>.</p>
+<p><strong>EF-HAB-4</strong> — <code>admin</code> et <code>superadmin</code> court-circuitent la table : ils
+obtiennent tout sans ligne de permission.</p>
+<p><strong>EF-HAB-5</strong> — Un module absent de la table vaut <strong>refus</strong> pour l'accès aux
+pages. Conséquence directe : livrer un écran sans livrer sa ligne de
+permission le rend invisible à tous sauf aux deux profils d'administration.
+Ce cas s'est produit en septembre 2026 sur les six écrans Inventaire/Écarts,
+corrigé depuis.</p>
+<p><strong>EF-HAB-5 bis</strong> — Une exception, et une seule : un rôle <strong>sans aucune
+permission déclarée</strong> voit tous les blocs du tableau de bord. Ce repli ne
+vaut <strong>que</strong> pour le tableau de bord — les pages restent refusées. Un rôle
+non paramétré présente donc un accueil complet et n'accède à rien : c'est
+l'accès à la page qui fait foi.</p>
+<p><strong>EF-HAB-5 ter</strong> — Trois accès échappent à la matrice par conception :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Accès</th>
+<th>Mécanisme</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sessions d'inventaire</td>
+<td>Réservé à l'administration, sauf <strong>délégation nominative</strong> ; le module n'existe jamais dans la table des permissions</td>
+</tr>
+<tr>
+<td>Lecture des commandes par le N+1 d'un gestionnaire de stock</td>
+<td>Accordé à la <strong>personne</strong> identifiée comme N+1, pas à un rôle — sinon tous les porteurs du rôle l'obtiendraient</td>
+</tr>
+<tr>
+<td>Gestionnaire opération hors modules délégués</td>
+<td><strong>Lecture seule</strong> : tout droit d'écriture est refusé sans consulter la table</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>EF-HAB-6</strong> — Le contrôle doit être posé <strong>à chaque action</strong>, pas seulement à
+l'ouverture de l'écran. Un contrôle limité à la page laisse passer les appels
+directs sur les actions AJAX du même fichier.</p>
+<p><strong>EF-HAB-7</strong> — Les portées implicites (un coordinateur ne voit que son site)
+sont appliquées par filtrage SQL, pas par la table de permissions.</p>
+<p><strong>EF-HAB-8</strong> — Une délégation nominative (table <code>delegations</code>) peut ouvrir un
+module à un compte précis, sans modifier le rôle.</p>
+<hr>
+</section>
+<section id="s5"><h2><span class="n">5</span> Exigences fonctionnelles</h2>
+<h3>5.1 Opérations — le point journalier</h3>
+<p><strong>EF-OP-1</strong> — Un coordinateur de site saisit, pour son site et pour une date,
+un point journalier comprenant : véhicules par type (VP, camion, semi, moto),
+plaques posées, films consommés par bobine, rivets utilisés/endommagés
+(gonflables et éclatés distingués), PMMA utilisés, non-posés (concessionnaires
+et usagers), heures de travail, et observations typées.</p>
+<p><strong>EF-OP-2</strong> — Les observations sont une <strong>liste de lignes typées</strong> (info,
+alerte, relance, incident, urgence, autre), pas un champ libre. L'ancien format
+texte reste lisible pour les points antérieurs. Chacune porte désormais un
+<strong>cycle de vie propre</strong>, suivi depuis l'écran dédié (§5.9).</p>
+<p><strong>EF-OP-3</strong> — Le point suit le cycle : <code>brouillon</code> → <code>en_attente_validation</code> →
+<code>valide</code>, avec <code>rejete</code> (motif obligatoire) et <code>suivi</code> comme états
+complémentaires.</p>
+<p><strong>EF-OP-4</strong> — Un point vide ne peut pas être soumis : la soumission vérifie
+qu'au moins une ligne de film est saisie.</p>
+<p><strong>EF-OP-5</strong> — La reprise d'un brouillon doit restaurer <strong>tous</strong> les champs
+saisis, y compris les lignes de bobines et de rivets.</p>
+<p><strong>EF-OP-6</strong> — La modification d'un point déjà enregistré ne doit pas déduire le
+stock deux fois : le stock des films est restauré avant réécriture des lignes.</p>
+<p><strong>EF-OP-7</strong> — Un point validé ne se modifie pas directement. Le gestionnaire
+stock bobines ouvre une <strong>demande de correction</strong> ; le coordinateur répond ; la
+correction est tracée séparément (<code>correction_gp</code>, <code>motif_correction_gp</code>,
+<code>corrected_by_gp</code>, <code>corrected_at</code>).</p>
+<p><strong>EF-OP-8</strong> — Le point journalier est exportable en PDF. <strong>Un brouillon n'est
+consultable que par son auteur.</strong></p>
+<p><strong>EF-OP-9</strong> — Les données EMUCI (plaques posées, réservées) sont importées par
+fichier (OptoPlate en CSV, OptoTrace en XLSX) et rapprochées de la saisie
+terrain ; les sites inconnus de l'import sont isolés pour rattachement manuel.</p>
+<p><strong>EF-OP-10</strong> — Un film endommagé se déclare <strong>film par film</strong>, avec sa cause,
+depuis le point journalier ; l'historique complet est consultable et
+exportable séparément (§5.10).</p>
+<h3>5.2 Stock bobines</h3>
+<p><strong>EF-BOB-1</strong> — Une bobine est un objet individuel identifié par son numéro,
+porteur d'un type, d'une série, d'un stock système et d'un stock temps réel.</p>
+<p><strong>EF-BOB-2</strong> — Le gestionnaire stock bobines valide chaque matin le stock
+déclaré par site. Quatre issues : <code>Conforme</code>, <code>Avec écart</code>, <code>Réajusté</code>,
+<code>Bloqué</code>.</p>
+<p><strong>EF-BOB-3</strong> — En cas d'écart, le gestionnaire ouvre une demande de correction
+adressée au coordinateur, qui répond dans l'outil.</p>
+<p><strong>EF-BOB-4</strong> — Les rapports GSB produisent un export Excel à trois feuilles et
+un export PDF.</p>
+<p><strong>EF-BOB-5</strong> — La vue « stock par site » est exportable en XLSX et en PPTX.</p>
+<h3>5.3 Inventaire et écarts</h3>
+<p><strong>EF-INV-1</strong> — L'administration ouvre une <strong>session d'inventaire</strong> portant une
+périodicité (<code>mensuel</code>, <code>trimestriel</code>, <code>semestriel</code>, <code>annuel</code>) et une date de
+début. <strong>La date de fin est déduite de la périodicité, jamais saisie
+librement.</strong> Le libellé est calculé si l'administrateur n'en fournit pas.</p>
+<p><strong>EF-INV-2</strong> — Une session porte une liste de sites (<code>inventaire_session_sites</code>)
+et passe de <code>ouverte</code> à <code>cloturee</code>.</p>
+<p><strong>EF-INV-3</strong> — L'ouverture d'une session <strong>provisionne automatiquement</strong>
+l'inventaire de chaque site rattaché, sur quatre natures de stock :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Nature</th>
+<th>Unité inventoriée</th>
+<th>Source du stock système</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Bobines</td>
+<td>La bobine, objet individuel</td>
+<td><code>op_bobines.stock_systeme</code></td>
+</tr>
+<tr>
+<td>Rivets</td>
+<td>Le type de rivet, quantité agrégée par site</td>
+<td><code>op_stock_rivets</code></td>
+</tr>
+<tr>
+<td>PMMA</td>
+<td>Le type de PMMA, quantité agrégée par site</td>
+<td><code>stock_pmma_site</code></td>
+</tr>
+<tr>
+<td>Équipements</td>
+<td>L'équipement, <strong>sans quantité</strong> — présence à cocher</td>
+<td><code>equipements</code> actifs du site</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>EF-INV-4</strong> — Chaque ligne d'inventaire porte l'<strong>écart déjà ouvert avant
+l'inventaire</strong> (<code>ecart_connu_avant</code>), afin de ne pas recompter deux fois un
+écart déjà constaté et en cours de traitement.</p>
+<p><strong>EF-INV-5</strong> — Pour les bobines, l'inventaire calcule en plus la consommation
+quotidienne moyenne sur 30 jours et l'écart entre la saisie terrain et les
+données EMUCI du jour.</p>
+<p><strong>EF-INV-6</strong> — Un inventaire ne peut pas être créé deux fois pour le même site,
+la même date et la même périodicité.</p>
+<p><strong>EF-INV-7</strong> — Un inventaire sans objet à compter (site sans bobine active,
+sans stock de rivets, sans PMMA, sans équipement affecté) est refusé avec un
+message explicite plutôt que créé vide.</p>
+<p><strong>EF-INV-8</strong> — Tout écart constaté devient un objet de suivi (<code>ecarts_bobines</code>,
+<code>ecarts_rivets</code>, <code>ecarts_pmma</code>, <code>ecarts_equipements</code>) avec un statut <code>ouvert</code>
+puis <code>resolu</code>.</p>
+<p><strong>EF-INV-9</strong> — Les corrections d'inventaire suivent un circuit d'autorisation :
+<code>en_attente</code> → <code>autorise</code> ou <code>refuse</code> → <code>traite</code>.</p>
+<p><strong>EF-INV-10</strong> — La création d'un inventaire journalier par un coordinateur de
+site n'est plus possible : elle dépend de la session ouverte par
+l'administrateur.</p>
+<h3>5.4 Demandes internes</h3>
+<p><strong>EF-DEM-1</strong> — Une demande porte un type, un demandeur, une plateforme, et un
+circuit de validation.</p>
+<p><strong>EF-DEM-2</strong> — Le <strong>circuit est figé sur la demande au moment du dépôt</strong>
+(<code>di_etapes</code>), et non lu dynamiquement : modifier un type de demande ne
+change pas les demandes déjà en cours.</p>
+<p><strong>EF-DEM-3</strong> — Les quatre écrans du domaine (mes demandes, nouvelle demande, à
+valider, traitements IT) sont protégés par le module <code>demandes</code> :
+<code>can_read</code> pour la consultation, <code>can_create</code> pour le dépôt.</p>
+<p><strong>EF-DEM-4</strong> — Le filtrage fin par rôle et circuit (<code>di_user_roles</code>) reste
+appliqué <strong>en plus</strong> du contrôle de module : <code>can_read</code> sur <code>demandes</code> est un
+interrupteur général, pas un remplacement de la logique de circuit.</p>
+<p><strong>EF-DEM-5</strong> — Un annuaire d'agents alimente les demandes ; il accepte l'import
+Excel et la saisie manuelle.</p>
+<h3>5.5 Achats — la FEB</h3>
+<p><strong>EF-ACH-1</strong> — Une FEB (fiche d'expression de besoin) porte des lignes, des
+pièces jointes, un montant, un code analytique et une urgence
+(normale/urgente/critique). Le numéro est attribué automatiquement par
+exercice.</p>
+<p><strong>EF-ACH-2</strong> — Le cycle comprend <strong>huit statuts</strong> :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Statut</th>
+<th>Signification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>brouillon</code></td>
+<td>En rédaction par le demandeur</td>
+</tr>
+<tr>
+<td><code>en_attente_n1</code></td>
+<td>Attend l'aval du supérieur hiérarchique</td>
+</tr>
+<tr>
+<td><code>soumise</code></td>
+<td>En file d'attente, aucun acheteur attribué</td>
+</tr>
+<tr>
+<td><code>prise_en_charge</code></td>
+<td>Un acheteur se l'est attribuée</td>
+</tr>
+<tr>
+<td><code>en_validation</code></td>
+<td>Dans le circuit de visas, montants verrouillés</td>
+</tr>
+<tr>
+<td><code>confirmee</code></td>
+<td>Validée, prête à commander</td>
+</tr>
+<tr>
+<td><code>cloturee</code></td>
+<td>Terminée</td>
+</tr>
+<tr>
+<td><code>rejetee</code></td>
+<td>Refusée à une étape, avec motif obligatoire</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>EF-ACH-3</strong> — Le <strong>circuit de visas est déterminé par le montant</strong>, via des
+paliers paramétrables (<code>achat_paliers</code>) portant la liste ordonnée des rôles
+signataires.</p>
+<p><strong>EF-ACH-4</strong> — Le circuit et le palier sont <strong>figés au lancement de la
+validation</strong> (<code>workflow_snapshot</code>) : une modification ultérieure du paramétrage
+ne rejoue pas les visas déjà engagés.</p>
+<p><strong>EF-ACH-5</strong> — Les montants sont verrouillés à l'entrée en validation.</p>
+<p><strong>EF-ACH-6</strong> — Le contrôle budgétaire s'appuie sur des lignes budgétaires par
+exercice, avec un comportement paramétrable en cas de dépassement :
+<code>aucun</code>, <code>alerte</code>, <code>blocage</code>.</p>
+<p><strong>EF-ACH-7</strong> — Les offres fournisseurs sont comparables par lot ; la conformité
+du fournisseur est vérifiée.</p>
+<p><strong>EF-ACH-8</strong> — La réception peut être partielle : les reliquats sont suivis, et
+l'entrée en stock se fait par département.</p>
+<p><strong>EF-ACH-9</strong> — Les équipements achetés sont mis en attente d'affectation puis
+rattachés à un site ou à un utilisateur.</p>
+<p><strong>EF-ACH-10</strong> — Trois retours en arrière sont prévus dans le circuit ; chacun
+exige un motif.</p>
+<p><strong>EF-ACH-11</strong> — La fiche FEB et la fiche de validation sont exportables en PDF.</p>
+<h3>5.6 Informatique</h3>
+<p><strong>EF-IT-1</strong> — Une intervention est préventive ou curative, portée par un
+technicien, rattachée à un site et éventuellement à un équipement.</p>
+<p><strong>EF-IT-2</strong> — Un coordinateur peut signaler une panne (<code>demande_coordinateur</code>),
+ce qui notifie les profils de maintenance. <strong>Cette action exige le droit de
+création sur <code>interventions</code>.</strong></p>
+<p><strong>EF-IT-3</strong> — Le transfert d'équipement entre sites et le retour en stock sont
+tracés dans un historique des mouvements, séparé de l'écran d'affectation.</p>
+<p><strong>EF-IT-4</strong> — Les sous-rôles Support IT s'affectent depuis un écran dédié.
+<strong>L'affectation et la promotion exigent le droit de modification sur
+<code>affectations_it</code>.</strong></p>
+<h3>5.7 Administration</h3>
+<p><strong>EF-ADM-1</strong> — La matrice rôle × module est éditable depuis l'interface, pour
+la totalité des 56 modules administrables (§3).</p>
+<p><strong>EF-ADM-2</strong> — La liste des modules envoyée au serveur lors de la sauvegarde
+doit être <strong>dérivée de la liste affichée</strong>, et non recopiée à la main : une
+liste recopiée se désynchronise et remet silencieusement à zéro les droits des
+modules oubliés.</p>
+<p><strong>EF-ADM-3</strong> — Le journal d'audit conserve auteur, action, module, entité,
+description, valeurs avant/après, adresse IP et horodatage.</p>
+<p><strong>EF-ADM-4</strong> — La création d'un utilisateur impose une validation stricte des
+champs et un changement de mot de passe à la première connexion.</p>
+<h3>5.8 Tableau de bord KPI</h3>
+<p>Écran centralisé, distinct du tableau de bord opérationnel (<code>dashboard</code>, orienté
+action du jour) et de la vue exécutive (<code>pdg_overview</code>, narrative). Il donne une
+lecture visuelle de <strong>sept familles d'indicateurs</strong>, chacune avec son chiffre
+de tête, son détail et sa courbe d'évolution.</p>
+<p><strong>EF-KPI-1</strong> — Les sept familles couvertes sont : Production, Bobines, PMMA,
+Rivets, Commandes, Équipements, Sites (production comparée et classement).</p>
+<p><strong>EF-KPI-2</strong> — La production se lit sur la période analysée, comparée à la
+période de comparaison (EF-KPI-9) : plaques posées, engins traités, plaques
+par jour écoulé, et courbe d'évolution des deux périodes superposées. Chaque
+échelle — jour, semaine, mois, année — s'obtient par le type de période.
+<strong>Aucun chiffre de production n'est calé sur la date du jour indépendamment
+des filtres</strong> : un bandeau de ce type, présent jusqu'au 24 septembre 2026,
+répétait la comparaison et ignorait la période choisie.</p>
+<p><strong>EF-KPI-3</strong> — Le taux d'utilisation des bobines se calcule sur ce qui a
+<strong>quitté</strong> la bobine (différence entre dotation et reliquat), et non sur un
+compteur qui n'est alimenté que par le point journalier — un parc
+majoritairement issu d'import resterait sinon affiché à un taux proche de zéro.</p>
+<p><strong>EF-KPI-3 bis</strong> — La <strong>couverture</strong> indique combien de jours le stock des
+bobines actives (les retirées exclues) tient au rythme des 30 derniers jours,
+sur la sélection de sites. Quand un format s'épuise avant la moyenne, il est
+nommé avec son échéance : un format ne remplace pas un autre. La consommation
+suit la règle RG-8.</p>
+<p><strong>EF-KPI-4</strong> — Le taux de disponibilité du parc équipements compte comme
+disponibles les états <code>ok</code>, <code>neuf</code>, <code>bon</code> et <code>usage</code> — pas <code>ok</code> seul, qui sous-
+évaluait fortement un parc saisi en langage courant plutôt qu'en état
+technique binaire. Un état inconnu tombe dans « autre état », jamais dans
+« disponible ».</p>
+<p><strong>EF-KPI-5</strong> — Le taux de satisfaction des commandes se lit sur les <strong>six
+dernières périodes</strong>, pour distinguer une dégradation en cours d'un
+redressement.</p>
+<p><strong>EF-KPI-6</strong> — Un utilisateur peut filtrer par périmètre (sélection de sites,
+ou site unique) et par granularité temporelle ; le coordinateur de site reste
+verrouillé sur son site. Une sélection de sites vide vaut « tout le
+périmètre ».</p>
+<p><strong>EF-KPI-7</strong> — Un utilisateur peut <strong>enregistrer une combinaison de filtres</strong>
+— périmètre, période analysée et période de comparaison comprises — comme vue
+nommée, personnelle ou partagée, et la supprimer. Seul son propriétaire peut
+supprimer une vue, y compris partagée.</p>
+<p><strong>EF-KPI-8</strong> — L'écran est protégé par le module <code>kpi_dashboard</code>, <code>can_read</code>.</p>
+<p><strong>EF-KPI-9</strong> — L'utilisateur choisit la <strong>période analysée (A)</strong> et la
+<strong>période de comparaison (B)</strong>, de même granularité :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Comparer à</th>
+<th>Période B</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Période précédente (défaut)</td>
+<td>La période juste avant A — sans aucun réglage</td>
+</tr>
+<tr>
+<td>Même période l'an dernier</td>
+<td>A décalée d'un an (sans objet en annuel, où elle se confond avec la précédente)</td>
+</tr>
+<tr>
+<td>Période choisie</td>
+<td>Un jour, une semaine, un mois ou une année libres</td>
+</tr>
+</tbody>
+</table></div>
+<p>La semaine se choisit dans une liste (« S38 · 14/09 → 20/09 »), et non par un
+champ date : le choix porte sur une semaine, pas sur un jour.</p>
+<p><strong>EF-KPI-10</strong> — Règle de durée :</p>
+<ul>
+<li>en comparaison automatique (période précédente), si A est en cours, B est
+  arrêtée au même rang (1ᵉʳ → 24 août contre 1ᵉʳ → 24 septembre) ;</li>
+<li>dès que l'utilisateur choisit lui-même B, les deux périodes sont comparées
+  <strong>entières</strong> ; si A est en cours, l'écran le signale ;</li>
+<li>dans tous les cas, une <strong>moyenne de plaques par jour écoulé</strong> est affichée,
+  seule mesure juste quand les deux périodes n'ont pas la même durée.</li>
+</ul>
+<p><strong>EF-KPI-11</strong> — Suivent la comparaison A/B : la production, les
+consommations de PMMA et de rivets, les commandes (taux de satisfaction et
+délai de B affichés), la courbe d'évolution et le classement des sites. Les
+stocks, le parc de bobines et les équipements restent des <strong>photos de
+l'instant</strong>, signalées « à ce jour » : la base ne conserve pas l'historique du
+stock.</p>
+<p><strong>EF-KPI-12</strong> — Les consommations de PMMA et de rivets excluent les points en
+brouillon, comme la production : deux panneaux voisins comptent sur la même
+base. Un site sans production sur A mais actif sur B reste affiché au
+classement — c'est précisément ce qu'une comparaison doit faire voir.</p>
+<h3>5.9 Suivi des observations</h3>
+<p><strong>EF-OBS-1</strong> — Chaque observation saisie dans un point journalier suit un
+cycle de vie propre : <code>en_attente</code> → <code>en_cours</code> → <code>traite</code> → <code>cloture</code>, avec
+une branche <code>escalade</code> au-delà de trois relances.</p>
+<p><strong>EF-OBS-2</strong> — Le coordinateur auteur peut <strong>relancer</strong> (après un délai
+minimal depuis la dernière relance) et <strong>confirmer la clôture</strong> d'une
+observation qui le concerne — ces deux actions ne demandent que le droit de
+lecture.</p>
+<p><strong>EF-OBS-3</strong> — La prise en charge, le traitement et la clôture relèvent du
+superviseur et exigent le droit de <strong>modification</strong> sur <code>observations</code>.</p>
+<p><strong>EF-OBS-4</strong> — Une observation <code>en_attente</code> ne peut pas être clôturée
+directement : elle doit d'abord être prise en charge.</p>
+<p><strong>EF-OBS-5</strong> — Au-delà de trois relances sans traitement, l'observation
+bascule automatiquement au statut <code>escalade</code>, visible et filtrable comme tel
+— plutôt qu'une notification qui se perdrait dans la liste.</p>
+<p><strong>EF-OBS-6</strong> — La liste est exportable en Excel, avec le même périmètre et les
+mêmes filtres que l'écran.</p>
+<p><strong>EF-OBS-7</strong> — L'historique d'une observation n'est jamais supprimable.</p>
+<h3>5.10 Traçabilité des endommagements</h3>
+<p><strong>EF-TRA-1</strong> — Chaque film endommagé se déclare <strong>individuellement</strong>, avec sa
+cause, au moment de la saisie du point journalier — une bobine peut avoir
+plusieurs films endommagés à des moments et pour des causes différents, et
+c'est ce niveau de détail que l'écran restitue.</p>
+<p><strong>EF-TRA-2</strong> — L'écran de traçabilité est <strong>strictement en lecture</strong> : la
+saisie reste exclusivement dans le point journalier, pour ne conserver qu'un
+seul chemin d'écriture.</p>
+<p><strong>EF-TRA-3</strong> — Le coordinateur de site ne voit que les endommagements de son
+site ; les autres rôles filtrent librement.</p>
+<p><strong>EF-TRA-4</strong> — L'écran est exportable, sur le même périmètre que les filtres
+appliqués.</p>
+<h3>5.11 Simulation &amp; projection de stocks</h3>
+<p><strong>EF-SIM-1</strong> — L'outil est un outil de <strong>projection en lecture seule</strong> : il ne
+lit que l'historique et n'écrit jamais aucun stock réel.</p>
+<p><strong>EF-SIM-2</strong> — Deux modes de simulation, choisis explicitement (jamais déduits
+du remplissage des champs) :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Question posée</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stock</code></td>
+<td>Avec N bobines/vignettes, jusqu'à quand l'activité tient-elle ?</td>
+</tr>
+<tr>
+<td><code>ouverture</code></td>
+<td>L'ouverture d'un ou plusieurs nouveaux sites est-elle absorbée par le stock actuel ? Sinon, combien commander pour tenir jusqu'à une date donnée ?</td>
+</tr>
+<tr>
+<td><code>les_deux</code></td>
+<td>Les deux questions combinées</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>EF-SIM-3</strong> — La projection de stock se fait <strong>format par format</strong> (chaque
+conditionnement de bobine a sa propre contenance en films), la quantité de
+chaque ligne étant éditable ; l'agrégat est la somme des lignes retenues — une
+moyenne de parc appliquée à une quantité globale produit un stock projeté
+sensiblement faux.</p>
+<p><strong>EF-SIM-4</strong> — L'autonomie est calculée <strong>séparément pour les bobines et pour
+les vignettes</strong> : un chiffre unique mélangeant les deux masquerait l'échéance
+la plus proche des deux.</p>
+<p><strong>EF-SIM-5</strong> — Pour un scénario d'ouverture de site, le périmètre matière
+(formats de bobines, types de PMMA) prévu sur les nouveaux sites est choisi
+explicitement — par défaut, l'ensemble des formats existants, pour reproduire
+le comportement antérieur. Sans consommation estimée saisie, la consommation
+moyenne d'un site existant est retenue par défaut, plutôt qu'un zéro qui
+rendrait l'ouverture indolore dans la simulation.</p>
+<p><strong>EF-SIM-6</strong> — Les paramètres de simulation sont portés par l'URL : la page
+est rejouable et partageable par lien, sans état à enregistrer.</p>
+<p><strong>EF-SIM-6 bis</strong> — La consommation observée, globale comme par format, suit
+la règle RG-8 : points journaliers soumis et saisie manuelle.</p>
+<p><strong>EF-SIM-7</strong> — L'écran est protégé par le module <code>simulation_stocks</code>,
+<code>can_read</code>.</p>
+<h3>5.12 Référentiels &amp; capacités</h3>
+<p><strong>EF-REF-1</strong> — Les capacités de conditionnement (films par bobine selon la
+série, unités par carton PMMA) sont administrables depuis un écran dédié,
+plutôt qu'en dur dans le code — un changement de conditionnement fournisseur
+ne doit pas exiger un déploiement.</p>
+<p><strong>EF-REF-2</strong> — Une capacité de série s'applique à toutes les versions de cette
+série en une seule saisie ; l'édition par type individuel reste possible en
+complément.</p>
+<p><strong>EF-REF-3</strong> — Le code d'un type de PMMA n'est jamais modifiable depuis cet
+écran : il est la clé qui relie le catalogue au stock existant et à tout
+l'historique de consommation.</p>
+<p><strong>EF-REF-4</strong> — Une capacité nulle ou négative est refusée à la saisie.</p>
+<p><strong>EF-REF-5</strong> — Les types de rivets ou de PMMA présents dans les stocks mais
+absents du catalogue de référence sont signalés explicitement, plutôt que de
+retomber silencieusement sur une capacité par défaut.</p>
+<p><strong>EF-REF-6</strong> — L'écran administre aussi l'<strong>écran d'ouverture par défaut du
+tableau de bord KPI</strong>, par rôle : ce qu'un utilisateur voit en premier avant
+tout filtrage. Un défaut vide se traduit par l'absence de ligne, pas par une
+valeur vide enregistrée.</p>
+<p><strong>EF-REF-7</strong> — L'écran est protégé par le module <code>referentiels_operations</code>,
+<code>can_read</code> ; c'est un écran d'administration, pas de paramétrage
+d'exploitation courante — une capacité fausse se propage silencieusement à
+toutes les projections et à tout stock créé ensuite, sans se signaler à
+l'écran.</p>
+<hr>
+</section>
+<section id="s6"><h2><span class="n">6</span> Exigences non fonctionnelles</h2>
+<h3>6.1 Sécurité</h3>
+<p><strong>EN-SEC-1</strong> — Les mots de passe sont hachés en bcrypt, coût 12. Longueur
+minimale : 8 caractères.</p>
+<p><strong>EN-SEC-2</strong> — Après <strong>cinq échecs consécutifs</strong>, le compte est verrouillé
+<strong>quinze minutes</strong>. Le compteur est remis à zéro à la connexion réussie et à
+tout changement de mot de passe — sans quoi une réinitialisation par
+l'administrateur laisserait le compte bloqué.</p>
+<p><strong>EN-SEC-3</strong> — La session expire après <strong>quinze minutes d'inactivité</strong>, contrôle
+posé côté serveur et tracé dans l'audit.</p>
+<p><strong>EN-SEC-4</strong> — Le cookie de session est <code>HttpOnly</code>, <code>SameSite=Lax</code>, et <code>Secure</code>
+dès que la requête est servie en HTTPS. <strong>Derrière un proxy qui termine le TLS,
+la détection doit s'appuyer sur <code>X-Forwarded-Proto</code></strong> : sans cela, l'attribut
+<code>Secure</code> n'est jamais posé en production.</p>
+<p><strong>EN-SEC-5</strong> — Les en-têtes suivants sont posés sur toute réponse :
+<code>X-Content-Type-Options: nosniff</code>, <code>X-Frame-Options: SAMEORIGIN</code>,
+<code>Referrer-Policy: strict-origin-when-cross-origin</code>, et
+<code>Strict-Transport-Security</code> en HTTPS. L'en-tête <code>X-Powered-By</code> est retiré.</p>
+<p><strong>EN-SEC-6</strong> — Aucune superglobale n'est interpolée dans une requête SQL.</p>
+<p><strong>EN-SEC-7</strong> — Toute donnée rendue en HTML passe par l'échappement.</p>
+<p><strong>EN-SEC-8</strong> — Les téléversements sont limités à 10 Mo et restreints aux types
+PDF, JPEG, PNG et WebP, <strong>vérifiés sur le contenu</strong> et non sur l'extension.</p>
+<p><strong>EN-SEC-9</strong> — Les dépendances sont auditées automatiquement à chaque envoi sur
+la branche principale (analyse statique Semgrep + audit Composer).</p>
+<p><strong>EN-SEC-10 ⚠ écart</strong> — <strong>Aucune protection CSRF applicative.</strong> La protection
+repose entièrement sur <code>SameSite=Lax</code>, donc sur le comportement du navigateur.
+C'est la dette de sécurité la plus nette du produit.</p>
+<p><strong>EN-SEC-11 ⚠ écart</strong> — Le mot de passe administrateur par défaut et l'ancien
+mot de passe de base exposé dans l'historique Git restent à traiter.</p>
+<h3>6.2 Exploitation</h3>
+<p><strong>EN-EXP-1</strong> — Deux environnements distincts :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Environnement</th>
+<th>Pile</th>
+<th>Rôle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Recette</strong></td>
+<td>Render + PostgreSQL (Neon), déploiement automatique depuis <code>main</code></td>
+<td>Pré-lancement, audit, répétition</td>
+</tr>
+<tr>
+<td><strong>Production (cible)</strong></td>
+<td>VPS dédié : Apache, PHP 8.4, MySQL 8, branche <code>vps-mysql</code></td>
+<td>Exploitation réelle</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>EN-EXP-2</strong> — La base de production est <strong>créée par le gestionnaire de base de
+données</strong>, distincte de la base de recette. Les données de recette y sont
+migrées par un script dédié (PostgreSQL → MySQL).</p>
+<p><strong>EN-EXP-3</strong> — Une procédure de sauvegarde <strong>éprouvée par une restauration
+réelle</strong> doit exister avant l'ouverture aux utilisateurs.</p>
+<p><strong>EN-EXP-4</strong> — Les évolutions de schéma sont des fichiers SQL joués
+manuellement. Ils doivent être <strong>idempotents</strong> : rejouer un fichier ne change
+rien de plus.</p>
+<p><strong>EN-EXP-5</strong> — Aucune table ne trace les migrations appliquées ; l'état de la
+base se déduisait jusqu'ici uniquement par inspection de sa structure. Un
+outil d'inventaire (<code>tools/inventaire_migrations.php</code>, ajouté le 11 septembre
+2026) extrait désormais, pour chacun des 78 fichiers de <code>sql/</code>, les objets
+qu'il déclare créer et vérifie leur présence réelle sur la base ciblée,
+classant chaque migration <code>appliquée</code>, <code>absente</code> ou <code>partielle</code>. <strong>⚠ écart
+résiduel</strong> : c'est un outil de détection, pas une table de suivi — il ne
+remplace pas un enregistrement systématique de ce qui a été joué.</p>
+<p><strong>EN-EXP-6</strong> — Les limites de téléversement de PHP doivent être relevées au
+niveau du serveur (50 Mo) : les valeurs par défaut rejetaient silencieusement
+les fichiers d'import EMUCI.</p>
+<h3>6.3 Ergonomie et accessibilité</h3>
+<p><strong>EN-ERG-1</strong> — L'application est utilisée <strong>sur téléphone par les coordinateurs
+de site</strong>, qui saisissent sur le terrain.</p>
+<p><strong>EN-ERG-2 ⚠ écart</strong> — Onze pages débordent horizontalement à 375 px de large,
+et des champs en fenêtre modale n'ont pas de libellé accessible. Le parcours du
+point journalier est prioritaire.</p>
+<p><strong>EN-ERG-3</strong> — Les filtres des listes longues fonctionnent sans rechargement de
+page.</p>
+<h3>6.4 Traçabilité</h3>
+<p><strong>EN-TRA-1</strong> — Toute action modifiante est journalisée.</p>
+<p><strong>EN-TRA-2</strong> — Les rôles supprimés ou fusionnés sont <strong>conservés en base sans
+compte rattaché</strong> lorsque le journal d'audit y fait référence : les supprimer
+rendrait l'historique illisible.</p>
+<hr>
+</section>
+<section id="s7"><h2><span class="n">7</span> Contraintes d&#x27;architecture et d&#x27;exploitation</h2>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Contrainte</th>
+<th>Portée</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PHP 8.2, sans framework</strong></td>
+<td>Pas de routeur, pas d'ORM, pas d'injection de dépendances. Chaque écran est un fichier autonome qui inclut ses dépendances.</td>
+</tr>
+<tr>
+<td><strong>Deux moteurs de base</strong></td>
+<td>PostgreSQL en recette, MySQL en production cible (branche <code>vps-mysql</code>). Toute requête doit être écrite ou traduite pour les deux.</td>
+</tr>
+<tr>
+<td><strong>Accès base centralisé</strong></td>
+<td>Uniquement par les aides <code>db_*</code>, jamais PDO directement.</td>
+</tr>
+<tr>
+<td><strong>Configuration par variables d'environnement</strong></td>
+<td>Aucun secret dans le dépôt.</td>
+</tr>
+<tr>
+<td><strong>Exports</strong></td>
+<td>Excel via PhpSpreadsheet, PDF via Dompdf, PPTX via ZipArchive natif.</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+</section>
+<section id="s8"><h2><span class="n">8</span> Données de référence</h2>
+<p><strong>114 tables</strong>, regroupées par domaine :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Domaine</th>
+<th>Tables principales</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Comptes et droits</td>
+<td><code>users</code>, <code>roles</code>, <code>permissions</code>, <code>support_it_roles</code>, <code>delegations</code>, <code>sessions</code>, <code>audit_log</code></td>
+</tr>
+<tr>
+<td>Organisation</td>
+<td><code>sites</code>, <code>departements</code>, <code>user_departements</code>, <code>configurations_site</code>, <code>agents</code></td>
+</tr>
+<tr>
+<td>Opérations</td>
+<td><code>op_points_journaliers</code>, <code>op_films_utilises</code>, <code>op_pmma_utilises</code>, <code>op_types_vehicule</code>, <code>points_emuci</code>, <code>import_optoplate</code>, <code>import_optotrace</code>, <code>import_sessions_emuci</code>, <code>emuci_sites_inconnus</code>, <code>corrections_point_emuci</code>, <code>op_observations</code>, <code>op_observation_relances</code>, <code>op_endommagements</code></td>
+</tr>
+<tr>
+<td>Bobines</td>
+<td><code>op_bobines</code>, <code>op_types_bobines</code>, <code>mouvements_bobines</code>, <code>consommations_bobines</code>, <code>commandes_bobines</code>, <code>demandes_bobines</code>, <code>corrections_bobines</code>, <code>validations_stock_matin</code>, <code>comparaisons_stock</code></td>
+</tr>
+<tr>
+<td>Rivets et PMMA</td>
+<td><code>op_stock_rivets</code>, <code>stock_pmma</code>, <code>stock_pmma_site</code>, <code>op_types_pmma</code></td>
+</tr>
+<tr>
+<td>Inventaire</td>
+<td><code>inventaire_sessions</code>, <code>inventaire_session_sites</code>, <code>inventaires_{bobines,rivets,pmma,equipements}</code>, <code>inventaire_details_*</code>, <code>inventaire_corrections_*</code>, <code>ecarts_{bobines,rivets,pmma,equipements}</code></td>
+</tr>
+<tr>
+<td>Parc</td>
+<td><code>equipements</code>, <code>equipement_affectations</code>, <code>mouvements_equipements</code>, <code>affectations_equipements</code>, <code>nomenclatures</code>, <code>nomenclature_liens</code>, <code>interventions_maintenance</code></td>
+</tr>
+<tr>
+<td>Stock général</td>
+<td><code>articles</code>, <code>consommables</code>, <code>stock_site</code>, <code>stock_consommables_site</code>, <code>stock_fin_mois</code>, <code>mouvements_stock</code>, <code>commandes</code>, <code>commande_lignes</code>, <code>commande_compteurs</code>, <code>distributions_site</code>, <code>distribution_lignes</code>, <code>receptions_site</code>, <code>receptions_consommables</code>, <code>receptions_fournisseur</code>, <code>reception_lignes</code>, <code>livraisons_consommables</code>, <code>litige_messages</code></td>
+</tr>
+<tr>
+<td>Demandes internes</td>
+<td><code>di_demandes</code>, <code>di_etapes</code>, <code>di_types</code>, <code>di_roles</code>, <code>di_user_roles</code>, <code>di_plateformes</code></td>
+</tr>
+<tr>
+<td>Achats</td>
+<td><code>feb</code>, <code>feb_lignes</code>, <code>feb_offres</code>, <code>feb_pieces_jointes</code>, <code>feb_receptions</code>, <code>feb_receptions_departement</code>, <code>feb_expeditions</code>, <code>feb_suivi</code>, <code>feb_compteurs</code>, <code>fournisseurs</code>, <code>familles_achat</code>, <code>achat_types</code>, <code>achat_paliers</code>, <code>achat_parametres</code>, <code>lignes_budgetaires</code>, <code>budget_validations</code>, <code>stock_departement</code></td>
+</tr>
+<tr>
+<td>Transverse</td>
+<td><code>notifications</code>, <code>rapports_journaliers_info</code>, <code>points_journaliers_info</code>, <code>bilans_mensuels_bobines</code>, <code>vues_enregistrees</code>, <code>preferences_utilisateur</code>, <code>defauts_affichage</code></td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+</section>
+<section id="s9"><h2><span class="n">9</span> Règles de gestion transverses</h2>
+<p><strong>RG-1 — Les compteurs sont atomiques.</strong> Tout numéro de document (commande,
+FEB) est attribué par incrément sous verrou de ligne, jamais par tirage
+aléatoire : un tirage entre en collision avec l'index d'unicité et remonte une
+erreur brute à l'utilisateur.</p>
+<p><strong>RG-2 — Trois notions de stock coexistent</strong> et ne doivent pas être
+confondues : stock système (théorique, tenu par les mouvements), stock temps
+réel (recalculé), stock physique (constaté à l'inventaire).</p>
+<p><strong>RG-3 — Un écart connu ne se recompte pas.</strong> Un écart déjà ouvert est reporté
+sur la ligne d'inventaire suivante comme antériorité.</p>
+<p><strong>RG-4 — Une valeur de référence figée sur un document ne se relit pas.</strong>
+Circuit de demande, palier de visa, montant en validation : ce qui est figé au
+lancement reste figé.</p>
+<p><strong>RG-5 — Les notifications utilisent un type contraint</strong> parmi <code>fin_cycle</code>,
+<code>stock_bas</code>, <code>alerte_conso</code>, <code>info</code>.</p>
+<p><strong>RG-6 — Toute migration de permissions est additive par défaut.</strong> Elle relève
+un droit sans jamais en retirer, sauf intention explicite et documentée.</p>
+<p><strong>RG-7 — Un outil de simulation ne modifie jamais un stock réel.</strong> La
+projection (§5.11) est un calcul en lecture seule ; aucune de ses actions
+n'écrit dans les tables de stock.</p>
+<p><strong>RG-8 — La consommation de films compte toutes les sorties.</strong> Les films
+quittent une bobine par le point journalier (films utilisés et endommagés,
+points soumis) ou par la saisie manuelle de consommation ; les deux
+décrémentent le stock et sont additionnés. La couverture du tableau de bord
+KPI et la simulation de stocks reposent sur cette consommation.</p>
+<hr>
+</section>
+<section id="s10"><h2><span class="n">10</span> Critères d&#x27;acceptation</h2>
+<p>La mise en service est acceptée lorsque les conditions suivantes sont réunies.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>N°</th>
+<th>Critère</th>
+<th>Vérification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>CA-1</strong></td>
+<td>Chaque rôle parcourt son périmètre sans 403 ni bloc vide</td>
+<td>Un compte par rôle, parcours complet</td>
+</tr>
+<tr>
+<td><strong>CA-2</strong></td>
+<td>Le point journalier du jour est saisi par les sites et validé par le gestionnaire stock bobines</td>
+<td>Donnée du jour entrée et ressortie validée</td>
+</tr>
+<tr>
+<td><strong>CA-3</strong></td>
+<td>Une session d'inventaire s'ouvre, se saisit et se clôture sur les quatre natures</td>
+<td>Sur au moins un site pilote</td>
+</tr>
+<tr>
+<td><strong>CA-4</strong></td>
+<td>Une demande interne parcourt son circuit jusqu'à la clôture</td>
+<td>Un circuit à plusieurs étapes</td>
+</tr>
+<tr>
+<td><strong>CA-5</strong></td>
+<td>Une FEB parcourt le circuit jusqu'à la réception, visas compris</td>
+<td>Montant déclenchant au moins deux visas</td>
+</tr>
+<tr>
+<td><strong>CA-6</strong></td>
+<td>Les exports Excel et PDF s'ouvrent sans erreur</td>
+<td>Rapports GSB, fiche FEB, point journalier</td>
+</tr>
+<tr>
+<td><strong>CA-7</strong></td>
+<td>Une sauvegarde a été restaurée pour de vrai</td>
+<td>Base jetable, comptages comparés</td>
+</tr>
+<tr>
+<td><strong>CA-8</strong></td>
+<td>Aucun secret actif ne subsiste dans le dépôt</td>
+<td>Mot de passe admin changé, ancien secret révoqué</td>
+</tr>
+<tr>
+<td><strong>CA-9</strong></td>
+<td>La saisie du point journalier est utilisable sur téléphone</td>
+<td>Parcours complet à 375 px</td>
+</tr>
+<tr>
+<td><strong>CA-10</strong></td>
+<td>Chaque parcours est signé par un utilisateur de son métier</td>
+<td>Quatre signataires désignés nominativement</td>
+</tr>
+<tr>
+<td><strong>CA-11</strong></td>
+<td>Le tableau de bord KPI ouvre ses sept familles sans erreur, quel que soit le périmètre filtré</td>
+<td>Un compte par rôle ayant accès au module <code>kpi_dashboard</code></td>
+</tr>
+<tr>
+<td><strong>CA-11 bis</strong></td>
+<td>Le tableau de bord KPI compare deux périodes choisies par l'utilisateur, dans les quatre granularités</td>
+<td>Un mois contre un mois non consécutif, une semaine contre une autre, et le rapprochement avec un calcul direct en base</td>
+</tr>
+<tr>
+<td><strong>CA-12</strong></td>
+<td>La simulation de stock répond aux deux cas d'usage du comité de pilotage sans écrire aucun stock réel</td>
+<td>Comparaison du stock avant/après simulation</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+</section>
+<section id="s11"><h2><span class="n">11</span> Hors périmètre</h2>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Sujet</th>
+<th>Raison</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Référentiel de marques d'équipement</td>
+<td>En attente d'arbitrage depuis août 2026 ; sans cette décision, la tâche ne peut pas être faite correctement</td>
+</tr>
+<tr>
+<td>Reprise de l'historique antérieur à l'outil</td>
+<td>Non demandée</td>
+</tr>
+<tr>
+<td>Interface avec un système comptable tiers</td>
+<td>Les références Sage sont saisies, non interfacées</td>
+</tr>
+<tr>
+<td>Application mobile native</td>
+<td>Le besoin mobile est couvert par le navigateur</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+</section>
+<section id="s12"><h2><span class="n">12</span> Écarts connus et points ouverts</h2>
+<h3>12.1 Écarts entre l'exigence et l'implémentation</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Réf.</th>
+<th>Écart</th>
+<th>Gravité</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>EN-SEC-10</td>
+<td>Aucune protection CSRF applicative</td>
+<td>Élevée</td>
+</tr>
+<tr>
+<td>EN-SEC-11</td>
+<td>Mot de passe admin par défaut, ancien secret dans l'historique Git</td>
+<td>Élevée</td>
+</tr>
+<tr>
+<td>EF-HAB-5 bis</td>
+<td>Un rôle non paramétré affiche un tableau de bord complet alors qu'il n'accède à aucune page : deux impressions contradictoires pour le même compte</td>
+<td>Faible, mais piège de diagnostic</td>
+</tr>
+<tr>
+<td>EN-EXP-5</td>
+<td>Un outil de détection des migrations existe désormais (11 septembre 2026), mais aucune table ne trace systématiquement ce qui a été joué sur chaque environnement</td>
+<td>Moyenne, réduite depuis la v1.0</td>
+</tr>
+<tr>
+<td>EN-ERG-2</td>
+<td>Onze pages débordent à 375 px, libellés modaux manquants</td>
+<td>Moyenne, relevée par la confirmation de l'usage mobile</td>
+</tr>
+</tbody>
+</table></div>
+<div class="note note-info"><span class="note-t">Résolu depuis la v1.0</span><p> Les quatre modules Achats (<code>achats</code>,
+<code>achats_dashboard</code>, <code>achats_param</code>, <code>achats_suivi</code>) figurent désormais
+dans la matrice Admin → Permissions : un administrateur peut ajuster
+leurs droits depuis l'interface, sans migration SQL.</p>
+</div>
+<h3>12.2 Valeurs provisoires signalées par le code lui-même</h3>
+<p>Le paramétrage initial du module Achats porte des valeurs de démarrage
+arbitraires, faute de source métier disponible à la rédaction : bornes des
+paliers de validation, libellés des types d'achat (DAF/DAI/DAH), familles
+d'achat génériques, lignes budgétaires sans enveloppe. <strong>Elles doivent être
+ajustées dans les écrans de paramétrage avant la mise en service.</strong></p>
+<h3>12.3 Décisions attendues</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Réf.</th>
+<th>Décision</th>
+<th>Statut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D1</td>
+<td>Bascule progressive ou totale</td>
+<td><strong>Tranchée</strong> : deux à trois sites pilotes, généralisation ensuite</td>
+</tr>
+<tr>
+<td>D2</td>
+<td>Saisie sur téléphone par les coordinateurs</td>
+<td><strong>Tranchée</strong> : oui — le responsive entre dans le périmètre</td>
+</tr>
+<tr>
+<td>D3</td>
+<td>Signataires de la recette, un par métier</td>
+<td>En attente</td>
+</tr>
+<tr>
+<td>D4</td>
+<td>Date de livraison de la production VPS par le gestionnaire de base</td>
+<td>En attente, conditionnée par la chaîne de validation DAF → responsables → PDG</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+</section>
+<section id="s13"><h2>Suivi des versions</h2>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Version</th>
+<th>Date</th>
+<th>Objet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1.0</td>
+<td>21 septembre 2026</td>
+<td>Établissement initial. Couvre les dix domaines, les seize rôles, les 106 tables et les quarante-deux identifiants de module contrôlés dans le code.</td>
+</tr>
+<tr>
+<td>2.0</td>
+<td>24 septembre 2026</td>
+<td>Ajout de cinq domaines fonctionnels absents de la v1.0 : tableau de bord KPI (§5.8), suivi des observations (§5.9), traçabilité des endommagements (§5.10), simulation &amp; projection de stocks (§5.11), référentiels &amp; capacités (§5.12). Volumétrie recalculée : 81 écrans, 114 tables, 57 identifiants de module. Écart EF-ADM-1 (modules Achats hors matrice) constaté résolu.</td>
+</tr>
+<tr>
+<td>2.1</td>
+<td>24 septembre 2026</td>
+<td>Tableau de bord KPI : comparaison de la période analysée à une période choisie — précédente, même période l'an dernier ou libre (EF-KPI-9) ; règle de durée à date égale en automatique, périodes entières au choix, moyenne par jour (EF-KPI-10) ; panneaux qui suivent la comparaison et photos de l'instant (EF-KPI-11) ; brouillons exclus des consommations PMMA/rivets, sites actifs sur B seulement conservés au classement (EF-KPI-12) ; bandeau « Aujourd'hui » (EF-KPI-2) ; critère CA-11 bis.</td>
+</tr>
+<tr>
+<td>2.2</td>
+<td>24 septembre 2026</td>
+<td>Tableau de bord KPI : bandeau « Aujourd'hui » retiré — il doublait la comparaison et ignorait les filtres (EF-KPI-2).</td>
+</tr>
+<tr>
+<td>2.3</td>
+<td>24 septembre 2026</td>
+<td>Consommation de films calculée sur toutes les sorties, points journaliers compris (RG-8) : couverture du tableau de bord KPI (EF-KPI-3 bis) et simulation (EF-SIM-6 bis). Seule la saisie manuelle était lue jusque-là : la couverture restait incalculable sur un parc géré par points journaliers.</td>
+</tr>
+</tbody>
+</table></div>
+</section>
+<footer><p>Document interne EMUCI — projet NSIIV.</p></footer>
+</main>
+</div>
+<div class="impr-pied" style="margin-top:10mm;padding-top:4mm;border-top:1px solid #c3ccdf;
+     font-size:9pt;color:#4d5876">
+  Cahier des charges — ERP EMUCI — document interne. État du logiciel au commit
+  <code>ff9fc2c</code>. Toute évolution fonctionnelle rend une section caduque :
+  vérifiez la version avant de vous y fier.
+</div>
+
+<script>document.body.dataset.pret = '1';</script>
+</body>
+</html>

@@ -89,6 +89,247 @@ function periode_contexte(): array {
                  'annee_min'=>$annee_min, 'annee_max'=>$annee_max];
 }
 
+/** Date sûre : un quantieme absent du mois vise est ramene a son dernier
+ *  jour. Sans ce garde-fou, le 31 mars compare au « 31 fevrier » que
+ *  strtotime deplace au 2 ou 3 mars, et le 29 fevrier bissextile glisse
+ *  au 1er mars de l'annee precedente. */
+function periode_date_rang(int $an, int $mois, int $jour): string {
+    $fin = (int) date('t', mktime(0, 0, 0, $mois, 1, $an));
+    return sprintf('%04d-%02d-%02d', $an, $mois, min($jour, $fin));
+}
+
+/** Nombre de jours calendaires de $du a $au inclus, 0 si l'intervalle est vide. */
+function periode_nb_jours(string $du, string $au): int {
+    if ($au < $du) return 0;
+    return (int) round((strtotime($au) - strtotime($du)) / 86400) + 1;
+}
+
+/**
+ * Periode de comparaison (B), a cote de la periode analysee (A) que porte
+ * periode_contexte(). Trois modes, parametre `cmp` :
+ *
+ *   precedente  la periode juste avant A — le defaut, sans aucun clic ;
+ *   an_prec     la meme periode un an plus tot (sans objet en annuel,
+ *               ou elle se confond avec la precedente) ;
+ *   choisie     une periode libre de meme granularite (jour_b, mois_b,
+ *               annee_b ; en hebdomadaire jour_b porte une date de la
+ *               semaine, comme `jour` pour A).
+ *
+ * Regle de duree, arbitree avec le metier :
+ *   - en mode `precedente`, si A est en cours, B est arretee au meme rang
+ *     (1er → 24 aout contre 1er → 24 septembre) : c'est la comparaison
+ *     automatique, elle ne doit pas annoncer une baisse qui ne tient
+ *     qu'au temps ecoule ;
+ *   - des que l'utilisateur choisit lui-meme B (`an_prec`, `choisie`),
+ *     les deux periodes sont comparees entieres. L'ecran le signale
+ *     quand A est en cours, et la moyenne par jour reste comparable.
+ *
+ * Distinct de periode_contexte() pour ne rien changer a
+ * pages/pdg_overview.php, qui compare toujours a la periode precedente.
+ */
+function periode_comparaison(array $P): array {
+    $mc = ['01'=>'Jan','02'=>'Fév','03'=>'Mar','04'=>'Avr','05'=>'Mai','06'=>'Juin',
+           '07'=>'Juil','08'=>'Aoû','09'=>'Sep','10'=>'Oct','11'=>'Nov','12'=>'Déc'];
+    $ml = ['01'=>'Janvier','02'=>'Février','03'=>'Mars','04'=>'Avril','05'=>'Mai','06'=>'Juin',
+           '07'=>'Juillet','08'=>'Août','09'=>'Septembre','10'=>'Octobre','11'=>'Novembre','12'=>'Décembre'];
+
+    $per  = $P['periode'];
+    $mode = in_array($_GET['cmp'] ?? '', ['precedente','an_prec','choisie'], true)
+          ? $_GET['cmp'] : 'precedente';
+    if ($mode === 'an_prec' && $per === 'annuel') $mode = 'precedente';
+
+    $du_a = $P['du'];
+    $au_a = $P['au'];
+    $auj  = date('Y-m-d');
+
+    $jour_b = trim($_GET['jour_b'] ?? '');
+    $jour_b_ok = preg_match('/^\d{4}-\d{2}-\d{2}$/', $jour_b) && strtotime($jour_b);
+
+    if ($per === 'journalier') {
+        if ($mode === 'an_prec') {
+            $b = periode_date_rang((int)substr($du_a,0,4) - 1, (int)substr($du_a,5,2), (int)substr($du_a,8,2));
+        } elseif ($mode === 'choisie' && $jour_b_ok) {
+            $b = $jour_b;
+        } else {
+            $b = date('Y-m-d', strtotime($du_a . ' -1 day'));
+        }
+        $du_b = $au_b = $b;
+        $lib = $lib_long = fmt_date($b, 'd/m/Y');
+    } elseif ($per === 'hebdomadaire') {
+        if ($mode === 'an_prec') {
+            $sem = (int) date('W', strtotime($du_a));
+            $d = new DateTime();
+            $d->setISODate((int) date('o', strtotime($du_a)) - 1, $sem);
+            // Une annee ISO sans semaine 53 : setISODate deborde sur la
+            // semaine 1 suivante. On retombe alors sur la semaine 52.
+            if ((int) $d->format('W') !== $sem) $d->setISODate((int) date('o', strtotime($du_a)) - 1, 52);
+            $du_b = $d->format('Y-m-d');
+        } elseif ($mode === 'choisie' && $jour_b_ok) {
+            $du_b = date('Y-m-d', strtotime($jour_b . ' monday this week'));
+        } else {
+            $du_b = date('Y-m-d', strtotime($du_a . ' -7 days'));
+        }
+        $au_b = date('Y-m-d', strtotime($du_b . ' +6 days'));
+        $lib      = 'S' . date('W', strtotime($du_b)) . ' ' . date('o', strtotime($du_b));
+        $lib_long = 'Semaine ' . date('W', strtotime($du_b)) . ' — du '
+                  . fmt_date($du_b, 'd/m') . ' au ' . fmt_date($au_b, 'd/m/Y');
+    } elseif ($per === 'annuel') {
+        $an_a = (int) $P['annee'];
+        $an_b = (int) ($_GET['annee_b'] ?? 0);
+        if ($mode !== 'choisie' || $an_b < 2000 || $an_b > 2100) $an_b = $an_a - 1;
+        $du_b = $an_b . '-01-01';
+        $au_b = $an_b . '-12-31';
+        $lib = $lib_long = 'Année ' . $an_b;
+    } else {
+        $mois_b = trim($_GET['mois_b'] ?? '');
+        if ($mode === 'an_prec') {
+            $mois_b = ((int)substr($P['mois'],0,4) - 1) . substr($P['mois'],4);
+        } elseif ($mode !== 'choisie' || !preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $mois_b)) {
+            $mois_b = date('Y-m', strtotime($P['mois'] . '-01 -1 month'));
+        }
+        $du_b = $mois_b . '-01';
+        $au_b = date('Y-m-t', strtotime($du_b));
+        $lib      = ($mc[substr($mois_b,5,2)] ?? '') . ' ' . substr($mois_b,0,4);
+        $lib_long = ($ml[substr($mois_b,5,2)] ?? '') . ' ' . substr($mois_b,0,4);
+    }
+
+    $au_b_complet = $au_b;
+    $a_en_cours   = $per !== 'journalier' && $auj >= $du_a && $auj <= $au_a;
+    $a_date       = $mode === 'precedente' && $a_en_cours;
+
+    if ($a_date) {
+        if ($per === 'hebdomadaire') {
+            $au_b = date('Y-m-d', strtotime($du_b . ' +' . (periode_nb_jours($du_a, $auj) - 1) . ' days'));
+        } elseif ($per === 'mensuel') {
+            $au_b = periode_date_rang((int)substr($du_b,0,4), (int)substr($du_b,5,2), (int)date('j'));
+        } else {
+            $au_b = periode_date_rang((int)substr($du_b,0,4), (int)date('n'), (int)date('j'));
+        }
+    }
+
+    $intervalle_b = $du_b === $au_b ? fmt_date($du_b, 'd/m')
+                  : fmt_date($du_b, 'd/m') . ' – ' . fmt_date($au_b, 'd/m');
+
+    return [
+        'mode'         => $mode,
+        'du_a'         => $du_a,
+        'au_a'         => $au_a,
+        'du_b'         => $du_b,
+        'au_b'         => $au_b,            // borne effective, a date si a_date
+        'au_b_complet' => $au_b_complet,
+        'libelle_b'    => $lib,
+        'libelle_b_long' => $lib_long,
+        'a_date'       => $a_date,
+        'a_en_cours'   => $a_en_cours,
+        'intervalle_b' => $intervalle_b,
+        // Jours reellement ecoules de chaque periode : une periode future
+        // ou en cours ne compte que ce qui est passe.
+        'jours_a'      => periode_nb_jours($du_a, min($au_a, $auj)),
+        'jours_b'      => periode_nb_jours($du_b, min($au_b, $auj)),
+    ];
+}
+
+/**
+ * Selecteur de periode avec comparaison — type, periode analysee (A),
+ * mode de comparaison, et periode B quand elle est choisie librement.
+ *
+ * En hebdomadaire, une liste de semaines (« S38 · 14/09 → 20/09 ») plutot
+ * qu'un champ date : le choix porte sur une semaine, pas sur un jour, et
+ * le champ natif `type=week` n'existe ni sous Firefox ni sous Safari.
+ * La valeur transmise reste le lundi de la semaine, dans `jour` (resp.
+ * `jour_b`), ce que periode_contexte() sait deja lire.
+ */
+function periode_selecteur_comparaison(array $P, array $C, string $classe = 'month-inp'): string {
+    $h = fn($v) => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+    $sub = ' onchange="this.form.submit()"';
+
+    $semaines = function (string $nom, string $choisi) use ($P, $h, $classe, $sub): string {
+        $fin = max(date('Y-m-d', strtotime('monday this week')), $choisi);
+        $deb = date('Y-m-d', strtotime($P['annee_min'] . '-01-01 monday this week'));
+        $o = '<select name="' . $h($nom) . '" class="' . $h($classe) . '"' . $sub
+           . ' aria-label="Choisir la semaine">';
+        $groupe = null;
+        for ($l = $fin; $l >= $deb; $l = date('Y-m-d', strtotime($l . ' -7 days'))) {
+            $an = date('o', strtotime($l));
+            if ($an !== $groupe) {
+                if ($groupe !== null) $o .= '</optgroup>';
+                $o .= '<optgroup label="' . $h($an) . '">';
+                $groupe = $an;
+            }
+            $o .= '<option value="' . $l . '"' . ($l === $choisi ? ' selected' : '') . '>S'
+                . date('W', strtotime($l)) . ' · ' . date('d/m', strtotime($l)) . ' → '
+                . date('d/m', strtotime($l . ' +6 days')) . '</option>';
+        }
+        return $o . ($groupe !== null ? '</optgroup>' : '') . '</select>';
+    };
+    $annees = function (string $nom, int $choisi, string $aria) use ($P, $h, $classe, $sub): string {
+        $o = '<select name="' . $h($nom) . '" class="' . $h($classe) . '"' . $sub
+           . ' aria-label="' . $h($aria) . '">';
+        for ($y = $P['annee_max']; $y >= min($P['annee_min'], $choisi); $y--) {
+            $o .= '<option value="' . $y . '"' . ($y === $choisi ? ' selected' : '') . '>' . $y . '</option>';
+        }
+        return $o . '</select>';
+    };
+
+    $out = '<select name="periode" class="' . $h($classe) . '"' . $sub
+         . ' title="Type de période" style="min-width:118px">';
+    foreach (['journalier'=>'Journalier','hebdomadaire'=>'Hebdomadaire',
+              'mensuel'=>'Mensuel','annuel'=>'Annuel'] as $k => $lbl) {
+        $out .= '<option value="' . $k . '"' . ($P['periode'] === $k ? ' selected' : '') . '>' . $lbl . '</option>';
+    }
+    $out .= '</select>';
+
+    // Periode analysee (A)
+    switch ($P['periode']) {
+        case 'annuel':
+            $out .= $annees('annee', (int)$P['annee'], "Choisir l'année analysée");
+            break;
+        case 'mensuel':
+            $out .= '<input type="month" name="mois" value="' . $h($P['mois']) . '" class="' . $h($classe)
+                  . '"' . $sub . ' aria-label="Choisir le mois analysé">';
+            break;
+        case 'hebdomadaire':
+            $out .= $semaines('jour', $P['du']);
+            break;
+        default:
+            $out .= '<input type="date" name="jour" value="' . $h($P['jour']) . '" class="' . $h($classe)
+                  . '"' . $sub . ' aria-label="Choisir le jour analysé">';
+    }
+
+    // Mode de comparaison
+    $modes = ['precedente' => 'vs période précédente'];
+    if ($P['periode'] !== 'annuel') $modes['an_prec'] = "vs même période l'an dernier";
+    $modes['choisie'] = 'vs période choisie…';
+    // Mode et periode B dans un meme groupe : sur un ecran etroit, la barre
+    // passe a la ligne sans separer « vs periode choisie » de sa periode.
+    $out .= '<span style="display:inline-flex;gap:8px;flex-wrap:wrap;align-items:center">';
+    $out .= '<select name="cmp" class="' . $h($classe) . '"' . $sub . ' title="Comparer à">';
+    foreach ($modes as $k => $lbl) {
+        $out .= '<option value="' . $k . '"' . ($C['mode'] === $k ? ' selected' : '') . '>' . $h($lbl) . '</option>';
+    }
+    $out .= '</select>';
+
+    // Periode B, seulement quand elle est libre
+    if ($C['mode'] === 'choisie') {
+        switch ($P['periode']) {
+            case 'annuel':
+                $out .= $annees('annee_b', (int)substr($C['du_b'], 0, 4), "Choisir l'année de comparaison");
+                break;
+            case 'mensuel':
+                $out .= '<input type="month" name="mois_b" value="' . $h(substr($C['du_b'], 0, 7))
+                      . '" class="' . $h($classe) . '"' . $sub . ' aria-label="Choisir le mois de comparaison">';
+                break;
+            case 'hebdomadaire':
+                $out .= $semaines('jour_b', $C['du_b']);
+                break;
+            default:
+                $out .= '<input type="date" name="jour_b" value="' . $h($C['du_b']) . '" class="'
+                      . $h($classe) . '"' . $sub . ' aria-label="Choisir le jour de comparaison">';
+        }
+    }
+    return $out . '</span>';
+}
+
 /**
  * Selecteur de periode — le meme balisage pour tous les ecrans qui
  * utilisent periode_contexte(), afin que l'utilisateur retrouve le

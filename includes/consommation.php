@@ -41,7 +41,49 @@
 require_once __DIR__ . '/referentiels.php';   // libelles format / version
 
 /**
+ * Sorties de films des bobines, toutes sources confondues, sous forme de
+ * table derivee (bobine_id, site_id, date_conso, quantite).
+ *
+ * ── Pourquoi deux sources ──
+ * Les films quittent une bobine par deux chemins, qui decrementent chacun
+ * films_restants :
+ *   - le point journalier (op_films_utilises), chemin quotidien des
+ *     coordinateurs — films utilises ET endommages, les deux sortent de
+ *     la bobine ;
+ *   - la saisie manuelle de consommation d'Operations → Bobines
+ *     (consommations_bobines).
+ * Jusqu'au 24/09/2026, les moyennes ne lisaient que la seconde. Or le
+ * point journalier n'y ecrit rien : sur un parc gere par points
+ * journaliers, la consommation observee valait zero, le dashboard KPI
+ * annoncait « aucune consommation sur 30 jours » et la simulation
+ * surestimait l'autonomie. Les deux chemins decrementant chacun le stock,
+ * les additionner ne compte rien deux fois.
+ *
+ * Points en brouillon exclus, comme partout ailleurs dans les indicateurs.
+ */
+function conso_source_bobines(): string {
+    return "(SELECT fu.bobine_id, p.site_id, p.date_point AS date_conso,
+                    (fu.films_utilises + fu.films_endommages) AS quantite
+               FROM op_films_utilises fu
+               JOIN op_points_journaliers p ON p.id = fu.point_id
+              WHERE p.statut <> 'brouillon'
+             UNION ALL
+             SELECT cb.bobine_id, cb.site_id, cb.date_conso, cb.quantite
+               FROM consommations_bobines cb)";
+}
+
+/** Liste d'identifiants de sites, entiers et positifs ; 0 ou [] = tous. */
+function conso_ids_sites(int|array $sites): array {
+    $ids = is_array($sites) ? $sites : [$sites];
+    return array_values(array_unique(array_filter(array_map('intval', $ids), fn($i) => $i > 0)));
+}
+
+/**
  * Consommation moyenne journaliere d'une bobine, en films par jour.
+ *
+ * Lit encore la seule saisie manuelle (consommations_bobines), et non
+ * conso_source_bobines() : elle alimente les jours restants des
+ * inventaires, dont la bascule reste a decider (24/09/2026).
  */
 function conso_moy_bobine(int $bobine_id, int $jours = 30): float {
     return (float) db_fetch_value(
@@ -54,19 +96,27 @@ function conso_moy_bobine(int $bobine_id, int $jours = 30): float {
 }
 
 /**
- * Consommation moyenne journaliere d'un site, en films par jour.
- * site_id = 0 : tous les sites confondus.
+ * Consommation moyenne journaliere d'un site ou d'une selection de sites,
+ * en films par jour. 0 ou [] : tous les sites confondus.
+ * Source : conso_source_bobines().
  */
-function conso_moy_site(int $site_id = 0, int $jours = 30): float {
-    $filtre = $site_id ? "AND site_id = ?" : "";
-    $params = $site_id ? [$jours, $site_id] : [$jours];
+function conso_moy_site(int|array $sites = 0, int $jours = 30): float {
+    $ids    = conso_ids_sites($sites);
+    $filtre = $ids ? "AND c.site_id IN (" . implode(',', $ids) . ")" : "";
     return (float) db_fetch_value(
-        "SELECT COALESCE(SUM(quantite)::numeric / GREATEST(((NOW())::date - (MIN(date_conso)::date)), 1), 0)
-           FROM consommations_bobines
-          WHERE date_conso >= (CURRENT_DATE - (? || ' DAY')::interval)
+        "SELECT COALESCE(SUM(c.quantite)::numeric / GREATEST(((NOW())::date - (MIN(c.date_conso)::date)), 1), 0)
+           FROM " . conso_source_bobines() . " c
+          WHERE c.date_conso >= (CURRENT_DATE - (? || ' DAY')::interval)
             $filtre",
-        $params
+        [$jours]
     );
+}
+
+/** Nombre de sites ayant consomme des films sur la fenetre. */
+function conso_nb_sites_actifs(int $jours = 30): int {
+    return (int) db_fetch_value(
+        "SELECT COUNT(DISTINCT c.site_id) FROM " . conso_source_bobines() . " c
+          WHERE c.date_conso >= (CURRENT_DATE - (? || ' DAY')::interval)", [$jours]);
 }
 
 /**
@@ -83,7 +133,7 @@ function conso_moy_par_site(int $jours = 30): array {
         "SELECT s.id, s.nom,
                 COALESCE(SUM(c.quantite)::numeric / GREATEST(((NOW())::date - (MIN(c.date_conso)::date)), 1), 0) AS conso
            FROM sites s
-           LEFT JOIN consommations_bobines c
+           LEFT JOIN " . conso_source_bobines() . " c
                   ON c.site_id = s.id
                  AND c.date_conso >= (CURRENT_DATE - (? || ' DAY')::interval)
           WHERE s.actif = 1
@@ -112,8 +162,11 @@ function conso_moy_par_site(int $jours = 30): array {
  * Retourne type_code => [serie, films_restants, bobines, films_par_bobine,
  *                        conso, jours, date_epuisement]
  */
-function conso_stock_par_format(int $site_id = 0, int $jours = 30): array {
-    $f_b = $site_id ? "AND b.site_id = $site_id" : "";
+function conso_stock_par_format(int|array $sites = 0, int $jours = 30): array {
+    // Identifiants castes en entier par conso_ids_sites() : aucune valeur
+    // d'URL n'atteint la requete telle quelle.
+    $ids = conso_ids_sites($sites);
+    $f_b = $ids ? "AND b.site_id IN (" . implode(',', $ids) . ")" : "";
 
     $stock = db_fetch_all(
         "SELECT b.type_code, MIN(b.serie) AS serie,
@@ -170,7 +223,7 @@ function conso_stock_par_format(int $site_id = 0, int $jours = 30): array {
         "SELECT b.type_code,
                 COALESCE(SUM(c.quantite)::numeric
                          / GREATEST(((NOW())::date - (MIN(c.date_conso)::date)), 1), 0) AS conso
-           FROM consommations_bobines c
+           FROM " . conso_source_bobines() . " c
            JOIN op_bobines b ON b.id = c.bobine_id
           WHERE c.date_conso >= (CURRENT_DATE - (? || ' DAY')::interval)
             AND b.type_code IS NOT NULL $f_b

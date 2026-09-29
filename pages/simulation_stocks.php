@@ -150,9 +150,7 @@ $conso_site_new = max(0.0, (float)($_GET['conso_new'] ?? 0));
 // Sans estimation saisie, on prend la consommation moyenne d'un site
 // existant : plus honnête qu'un zéro qui rendrait l'ajout indolore.
 if ($nb_sites_new > 0 && $conso_site_new <= 0) {
-    $sites_actifs = (int) db_fetch_value(
-        "SELECT COUNT(DISTINCT site_id) FROM consommations_bobines
-          WHERE date_conso >= (CURRENT_DATE - (? || ' DAY')::interval)", [$fenetre]);
+    $sites_actifs = conso_nb_sites_actifs($fenetre);
     $conso_site_new = $sites_actifs > 0 ? conso_moy_site(0, $fenetre) / $sites_actifs : 0.0;
     $conso_new_estimee = true;
 } else {
