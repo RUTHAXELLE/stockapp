@@ -74,8 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         try {
             db_query("INSERT INTO vues_enregistrees (user_id, ecran, nom, filtres, partagee)
                       VALUES (?,?,?,?,?)
-                      ON CONFLICT (user_id, ecran, nom)
-                      DO UPDATE SET filtres = EXCLUDED.filtres, partagee = EXCLUDED.partagee",
+                      ON DUPLICATE KEY UPDATE filtres = VALUES(filtres), partagee = VALUES(partagee)",
                 [(int)$user['id'], 'kpi_dashboard', $nom, http_build_query($garde),
                  !empty($_POST['partagee']) ? 1 : 0]);
         } catch (Throwable $e) {
@@ -160,8 +159,8 @@ $sf_b = pref_clause_in('b.site_id', $sites_sel);
  */
 function kpi_somme_ab(string $col, string $depuis, array $C): array {
     $r = db_fetch_one(
-        "SELECT COALESCE(SUM($col) FILTER (WHERE p.date_point BETWEEN ?::date AND ?::date),0) AS a,
-                COALESCE(SUM($col) FILTER (WHERE p.date_point BETWEEN ?::date AND ?::date),0) AS b
+        "SELECT COALESCE(SUM(CASE WHEN p.date_point BETWEEN ? AND ? THEN $col END),0) AS a,
+                COALESCE(SUM(CASE WHEN p.date_point BETWEEN ? AND ? THEN $col END),0) AS b
            $depuis", [$C['du_a'], $C['au_a'], $C['du_b'], $C['au_b']]);
     return [(float)($r['a'] ?? 0), (float)($r['b'] ?? 0)];
 }
@@ -216,13 +215,20 @@ if ($periode === 'hebdomadaire') {
 
 /** Somme des plaques par sous-periode, sur un intervalle de dates. */
 function kpi_serie(string $sfmt, string $du, string $au, string $filtre): array {
+    // MySQL n'a pas de jeton DATE_FORMAT pour le jour de semaine ISO
+    // (Postgres 'ID', 1=lundi..7=dimanche) : WEEKDAY() rend 0=lundi..6=
+    // dimanche, +1 reproduit la meme numerotation. Les autres jetons
+    // ('DD','MM','YYYY-MM-DD') se traduisent directement en %d/%m/%Y.
+    $expr = $sfmt === 'ID'
+        ? '(WEEKDAY(p.date_point)+1)'
+        : "DATE_FORMAT(p.date_point,'" . strtr($sfmt, ['YYYY'=>'%Y','MM'=>'%m','DD'=>'%d']) . "')";
     $out = [];
     foreach (db_fetch_all(
-        "SELECT TO_CHAR(p.date_point,'$sfmt') AS b, COALESCE(SUM(p.total_plaques),0) AS v
+        "SELECT $expr AS b, COALESCE(SUM(p.total_plaques),0) AS v
            FROM op_points_journaliers p
-          WHERE p.date_point BETWEEN ?::date AND ?::date
+          WHERE p.date_point BETWEEN ? AND ?
             AND p.statut <> 'brouillon' $filtre
-          GROUP BY 1", [$du, $au]) as $r) $out[$r['b']] = (float)$r['v'];
+          GROUP BY 1", [$du, $au]) as $r) $out[(string)$r['b']] = (float)$r['v'];
     return $out;
 }
 
@@ -280,11 +286,11 @@ if ($sous) {
 
 // ── BOBINES
 $bob = db_fetch_one(
-    "SELECT COUNT(*) FILTER (WHERE b.statut IN ('en_cours','en_stock'))       AS actives,
-            COUNT(*) FILTER (WHERE b.statut = 'epuisee')                      AS epuisees,
-            COUNT(*) FILTER (WHERE b.statut = 'retiree')                      AS retirees,
+    "SELECT COUNT(CASE WHEN b.statut IN ('en_cours','en_stock') THEN 1 END)   AS actives,
+            COUNT(CASE WHEN b.statut = 'epuisee' THEN 1 END)                  AS epuisees,
+            COUNT(CASE WHEN b.statut = 'retiree' THEN 1 END)                  AS retirees,
             COALESCE(SUM(b.films_restants),0)                                 AS restants,
-            COALESCE(SUM(b.films_restants) FILTER (WHERE b.statut IN ('en_cours','en_stock')),0) AS restants_actifs,
+            COALESCE(SUM(CASE WHEN b.statut IN ('en_cours','en_stock') THEN b.films_restants END),0) AS restants_actifs,
             COALESCE(SUM(b.films_utilises),0)                                 AS utilises,
             COALESCE(SUM(b.films_endommages),0)                               AS endommages,
             COALESCE(SUM(b.qte_initiale),0)                                   AS initial
@@ -362,7 +368,7 @@ foreach ($pmma_stock as $x) { $pmma_bas += (int)$x['bas']; $pmma_total += (int)$
 $pmma_par_type = db_fetch_all(
     "SELECT pu.type_pmma AS t, COALESCE(SUM(pu.utilises),0) AS v
        FROM op_pmma_utilises pu JOIN op_points_journaliers p ON p.id = pu.point_id
-      WHERE p.date_point BETWEEN ?::date AND ?::date AND p.statut <> 'brouillon' $sf_p
+      WHERE p.date_point BETWEEN ? AND ? AND p.statut <> 'brouillon' $sf_p
       GROUP BY pu.type_pmma HAVING COALESCE(SUM(pu.utilises),0) > 0
       ORDER BY 2 DESC", [$C['du_a'], $C['au_a']]);
 
@@ -394,12 +400,12 @@ $riv_alertes = db_fetch_all(
 function kpi_commandes(string $du, string $au, string $sf): array {
     return db_fetch_one(
         "SELECT COUNT(*)                                                            AS total,
-                COUNT(*) FILTER (WHERE statut IN ('livre','recu'))                  AS servies,
-                COUNT(*) FILTER (WHERE statut IN ('en_attente','en_attente_livraison','en_cours_livraison')) AS en_cours,
+                COUNT(CASE WHEN statut IN ('livre','recu') THEN 1 END)              AS servies,
+                COUNT(CASE WHEN statut IN ('en_attente','en_attente_livraison','en_cours_livraison') THEN 1 END) AS en_cours,
                 COALESCE(AVG(CASE WHEN livraison_at IS NOT NULL
-                             THEN EXTRACT(EPOCH FROM (livraison_at - created_at))/86400 END),0) AS delai
+                             THEN TIMESTAMPDIFF(SECOND, created_at, livraison_at)/86400 END),0) AS delai
            FROM commandes
-          WHERE created_at::date BETWEEN ?::date AND ?::date $sf", [$du, $au]) ?: [];
+          WHERE DATE(created_at) BETWEEN ? AND ? $sf", [$du, $au]) ?: [];
 }
 $cmd   = kpi_commandes($C['du_a'], $C['au_a'], $sf);
 $cmd_b = kpi_commandes($C['du_b'], $C['au_b'], $sf);
@@ -421,8 +427,8 @@ for ($i = 5; $i >= 0; $i--) {
             'mensuel'=>date('Y-m', strtotime($ref)),
             'annuel'=>date('Y', strtotime($ref))][$periode];
     $r = db_fetch_one(
-        "SELECT COUNT(*) AS n, COUNT(*) FILTER (WHERE statut IN ('livre','recu')) AS ok
-           FROM commandes WHERE TO_CHAR(created_at,'$fmt')=? $sf", [$k]) ?: [];
+        "SELECT COUNT(*) AS n, COUNT(CASE WHEN statut IN ('livre','recu') THEN 1 END) AS ok
+           FROM commandes WHERE DATE_FORMAT(created_at,'$fmt')=? $sf", [$k]) ?: [];
     $n = (int)($r['n'] ?? 0);
     $cmd_hist[]     = $n > 0 ? (int)$r['ok'] / $n * 100 : 0;
     $cmd_hist_lbl[] = ($i === 5 || $i === 0) ? $k : '';
@@ -438,10 +444,10 @@ for ($i = 5; $i >= 0; $i--) {
 // dans « disponible » : elle reste visible au lieu de gonfler le taux.
 $eq = db_fetch_one(
     "SELECT COUNT(*)                                                    AS total,
-            COUNT(*) FILTER (WHERE etat IN ('ok','neuf','bon','usage')) AS ok,
-            COUNT(*) FILTER (WHERE etat IN ('hs','reforme','endommage')) AS hs,
-            COUNT(*) FILTER (WHERE etat = 'maintenance')                AS maint,
-            COUNT(*) FILTER (WHERE statut_stock = 'affecte')            AS affectes
+            COUNT(CASE WHEN etat IN ('ok','neuf','bon','usage') THEN 1 END) AS ok,
+            COUNT(CASE WHEN etat IN ('hs','reforme','endommage') THEN 1 END) AS hs,
+            COUNT(CASE WHEN etat = 'maintenance' THEN 1 END)                AS maint,
+            COUNT(CASE WHEN statut_stock = 'affecte' THEN 1 END)            AS affectes
        FROM equipements WHERE actif = 1 $sf") ?: [];
 $eq_total = (int)($eq['total'] ?? 0);
 $eq_ok    = (int)($eq['ok'] ?? 0);
@@ -457,19 +463,24 @@ $interv_ouvertes = (int) db_fetch_value(
 // Un site sans production sur A mais actif sur B reste affiche : c'est
 // precisement le cas qu'une comparaison doit faire voir. Il n'apparaissait
 // pas tant que le filtre ne portait que sur A.
-$fa = "FILTER (WHERE p.date_point BETWEEN ?::date AND ?::date)";
+// MySQL n'a pas FILTER (WHERE ...) : la condition passe dans un CASE
+// enveloppant la colonne sommee, dans SELECT comme dans HAVING (meme
+// semantique — SUM ignore les lignes qui tombent sur NULL). $fa reste
+// un seul texte reutilise : la periode (A ou B) vient uniquement de
+// l'ordre positionnel des ? dans $params ci-dessous, pas de $fa lui-meme.
+$fa = "CASE WHEN p.date_point BETWEEN ? AND ? THEN";
 $classement = db_fetch_all(
     "SELECT s.nom,
-            COALESCE(SUM(p.total_plaques)     $fa,0) AS plaques,
-            COALESCE(SUM(p.total_plaques)     $fa,0) AS plaques_p,
-            COALESCE(SUM(p.total_engins)      $fa,0) AS engins,
-            COALESCE(SUM(p.nb_heures_travail) $fa,0) AS heures
+            COALESCE(SUM($fa p.total_plaques END),0)     AS plaques,
+            COALESCE(SUM($fa p.total_plaques END),0)     AS plaques_p,
+            COALESCE(SUM($fa p.total_engins END),0)      AS engins,
+            COALESCE(SUM($fa p.nb_heures_travail END),0) AS heures
        FROM sites s
        LEFT JOIN op_points_journaliers p ON p.site_id = s.id AND p.statut <> 'brouillon'
       WHERE s.actif = 1 " . pref_clause_in('s.id', $sites_sel) . "
       GROUP BY s.id, s.nom
-      HAVING COALESCE(SUM(p.total_plaques) $fa,0) > 0
-          OR COALESCE(SUM(p.total_plaques) $fa,0) > 0
+      HAVING COALESCE(SUM($fa p.total_plaques END),0) > 0
+          OR COALESCE(SUM($fa p.total_plaques END),0) > 0
       ORDER BY plaques DESC, plaques_p DESC",
     [$C['du_a'], $C['au_a'], $C['du_b'], $C['au_b'], $C['du_a'], $C['au_a'],
      $C['du_a'], $C['au_a'], $C['du_a'], $C['au_a'], $C['du_b'], $C['au_b']]);

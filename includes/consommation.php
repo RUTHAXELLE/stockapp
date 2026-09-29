@@ -87,10 +87,10 @@ function conso_ids_sites(int|array $sites): array {
  */
 function conso_moy_bobine(int $bobine_id, int $jours = 30): float {
     return (float) db_fetch_value(
-        "SELECT COALESCE(SUM(quantite)::numeric / GREATEST(((NOW())::date - (MIN(date_conso)::date)), 1), 0)
+        "SELECT COALESCE(SUM(quantite) / GREATEST(DATEDIFF(NOW(), MIN(date_conso)), 1), 0)
            FROM consommations_bobines
           WHERE bobine_id = ?
-            AND date_conso >= (CURRENT_DATE - (? || ' DAY')::interval)",
+            AND date_conso >= DATE_SUB(CURRENT_DATE, INTERVAL ? DAY)",
         [$bobine_id, $jours]
     );
 }
@@ -104,9 +104,9 @@ function conso_moy_site(int|array $sites = 0, int $jours = 30): float {
     $ids    = conso_ids_sites($sites);
     $filtre = $ids ? "AND c.site_id IN (" . implode(',', $ids) . ")" : "";
     return (float) db_fetch_value(
-        "SELECT COALESCE(SUM(c.quantite)::numeric / GREATEST(((NOW())::date - (MIN(c.date_conso)::date)), 1), 0)
+        "SELECT COALESCE(SUM(c.quantite) / GREATEST(DATEDIFF(NOW(), MIN(c.date_conso)), 1), 0)
            FROM " . conso_source_bobines() . " c
-          WHERE c.date_conso >= (CURRENT_DATE - (? || ' DAY')::interval)
+          WHERE c.date_conso >= DATE_SUB(CURRENT_DATE, INTERVAL ? DAY)
             $filtre",
         [$jours]
     );
@@ -116,7 +116,7 @@ function conso_moy_site(int|array $sites = 0, int $jours = 30): float {
 function conso_nb_sites_actifs(int $jours = 30): int {
     return (int) db_fetch_value(
         "SELECT COUNT(DISTINCT c.site_id) FROM " . conso_source_bobines() . " c
-          WHERE c.date_conso >= (CURRENT_DATE - (? || ' DAY')::interval)", [$jours]);
+          WHERE c.date_conso >= DATE_SUB(CURRENT_DATE, INTERVAL ? DAY)", [$jours]);
 }
 
 /**
@@ -131,11 +131,11 @@ function conso_nb_sites_actifs(int $jours = 30): int {
 function conso_moy_par_site(int $jours = 30): array {
     $rows = db_fetch_all(
         "SELECT s.id, s.nom,
-                COALESCE(SUM(c.quantite)::numeric / GREATEST(((NOW())::date - (MIN(c.date_conso)::date)), 1), 0) AS conso
+                COALESCE(SUM(c.quantite) / GREATEST(DATEDIFF(NOW(), MIN(c.date_conso)), 1), 0) AS conso
            FROM sites s
            LEFT JOIN " . conso_source_bobines() . " c
                   ON c.site_id = s.id
-                 AND c.date_conso >= (CURRENT_DATE - (? || ' DAY')::interval)
+                 AND c.date_conso >= DATE_SUB(CURRENT_DATE, INTERVAL ? DAY)
           WHERE s.actif = 1
           GROUP BY s.id, s.nom
           ORDER BY s.nom",
@@ -221,11 +221,11 @@ function conso_stock_par_format(int|array $sites = 0, int $jours = 30): array {
 
     $conso = db_fetch_all(
         "SELECT b.type_code,
-                COALESCE(SUM(c.quantite)::numeric
-                         / GREATEST(((NOW())::date - (MIN(c.date_conso)::date)), 1), 0) AS conso
+                COALESCE(SUM(c.quantite)
+                         / GREATEST(DATEDIFF(NOW(), MIN(c.date_conso)), 1), 0) AS conso
            FROM " . conso_source_bobines() . " c
            JOIN op_bobines b ON b.id = c.bobine_id
-          WHERE c.date_conso >= (CURRENT_DATE - (? || ' DAY')::interval)
+          WHERE c.date_conso >= DATE_SUB(CURRENT_DATE, INTERVAL ? DAY)
             AND b.type_code IS NOT NULL $f_b
           GROUP BY b.type_code", [$jours]);
     $par_conso = [];
@@ -282,11 +282,11 @@ function conso_stock_par_pmma(int $site_id = 0, int $jours = 30): array {
     // la premiere consommation observee dans la fenetre.
     $conso = db_fetch_all(
         "SELECT pu.type_pmma,
-                COALESCE(SUM(pu.utilises)::numeric
-                         / GREATEST(((NOW())::date - (MIN(p.date_point)::date)), 1), 0) AS conso
+                COALESCE(SUM(pu.utilises)
+                         / GREATEST(DATEDIFF(NOW(), MIN(p.date_point)), 1), 0) AS conso
            FROM op_pmma_utilises pu
            JOIN op_points_journaliers p ON p.id = pu.point_id
-          WHERE p.date_point >= (CURRENT_DATE - (? || ' DAY')::interval)
+          WHERE p.date_point >= DATE_SUB(CURRENT_DATE, INTERVAL ? DAY)
             AND p.statut <> 'brouillon' $f_p
           GROUP BY pu.type_pmma", [$jours]);
     $par_conso = [];

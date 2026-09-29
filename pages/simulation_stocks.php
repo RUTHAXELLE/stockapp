@@ -168,7 +168,7 @@ if ($pmma_conso_saisie !== '' && is_numeric($pmma_conso_saisie)) {
     $sites_pmma = (int) db_fetch_value(
         "SELECT COUNT(DISTINCT p.site_id)
            FROM op_pmma_utilises pu JOIN op_points_journaliers p ON p.id = pu.point_id
-          WHERE p.date_point >= (CURRENT_DATE - (? || ' DAY')::interval)
+          WHERE p.date_point >= DATE_SUB(CURRENT_DATE, INTERVAL ? DAY)
             AND p.statut <> 'brouillon'", [$fenetre]);
     $pmma_total = 0.0;
     foreach (conso_stock_par_pmma(0, $fenetre) as $x) $pmma_total += $x['conso'];
