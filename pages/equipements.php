@@ -60,10 +60,14 @@ function _prochain_numero_serie(int $nomenclature_id): string {
     $code = $nomenclature_id
         ? (db_fetch_value("SELECT code FROM nomenclatures WHERE id=?", [$nomenclature_id]) ?: 'EQP')
         : 'EQP';
+    // MySQL : ::int -> CAST(... AS UNSIGNED), opérateur ~ -> REGEXP, et
+    // CONCAT() au lieu de || (qui vaut OR en MySQL hors PIPES_AS_CONCAT).
+    // Cette requête était restée en syntaxe PostgreSQL sur la branche :
+    // la création d'un équipement échouait faute de numéro.
     $seq = (int)db_fetch_value(
-        "SELECT COALESCE(MAX((regexp_replace(numero_serie_interne,'.*-',''))::int),0)+1
+        "SELECT COALESCE(MAX(CAST(REGEXP_REPLACE(numero_serie_interne,'.*-','') AS UNSIGNED)),0)+1
          FROM equipements
-         WHERE nomenclature_id=? AND numero_serie_interne ~ ('^' || ? || '-[A-Z]+-[0-9]+$')",
+         WHERE nomenclature_id=? AND numero_serie_interne REGEXP CONCAT('^', ?, '-[A-Z]+-[0-9]+$')",
         [$nomenclature_id, $code]
     );
     return $code . '-EMUCI-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);

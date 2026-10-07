@@ -93,7 +93,7 @@ function _verifier_coherence_optoplate(string $date_import, int $user_id): array
         // vraie date d'installation de chaque plaque (pas la date saisie à l'import,
         // qui peut couvrir un historique de plusieurs jours voire complet).
         $nb_inuse_emuci = (int)db_fetch_value(
-            "SELECT COUNT(*) FROM import_optoplate WHERE site_id=? AND statut_plaque='in_use' AND date_installation::date=?",
+            "SELECT COUNT(*) FROM import_optoplate WHERE site_id=? AND statut_plaque='in_use' AND DATE(date_installation)=?",
             [$site_id, $date_import]
         );
 
@@ -644,7 +644,7 @@ $stats_optoplate = db_fetch_all(
         COUNT(DISTINCT num_bobine) AS nb_bobines,
         COUNT(DISTINCT immatriculation) AS nb_vehicules
      FROM import_optoplate
-     WHERE ((statut_plaque='in_use' AND date_installation::date=?)
+     WHERE ((statut_plaque='in_use' AND DATE(date_installation)=?)
             OR (statut_plaque!='in_use' AND date_import=?))
      " . ($f_site ? "AND site_id=$f_site" : "") . "
      GROUP BY statut_plaque, site_nom_emuci, site_id
@@ -709,7 +709,7 @@ $comparaison = db_fetch_all(
          FROM (
              SELECT site_id, statut_plaque, COUNT(*) AS nb_plaques
              FROM import_optoplate
-             WHERE ((statut_plaque='in_use' AND date_installation::date=?)
+             WHERE ((statut_plaque='in_use' AND DATE(date_installation)=?)
                     OR (statut_plaque!='in_use' AND date_import=?))
              GROUP BY site_id, statut_plaque
          ) sub GROUP BY site_id

@@ -519,15 +519,15 @@ $jour_ref = $periode === 'journalier' ? $C['du_a']
           : ($C['a_en_cours'] ? date('Y-m-d') : $C['au_a']);
 $saisie_sites = db_fetch_all(
     "SELECT s.nom,
-            COUNT(p.id) FILTER (WHERE p.statut NOT IN ('brouillon','rejete'))  AS soumis,
-            COUNT(p.id) FILTER (WHERE p.statut = 'en_attente_validation')      AS attente,
-            COUNT(p.id) FILTER (WHERE p.statut = 'brouillon')                  AS brouillon,
-            COUNT(p.id) FILTER (WHERE p.statut = 'rejete')                     AS rejete
+            COUNT(CASE WHEN p.statut NOT IN ('brouillon','rejete') THEN 1 END) AS soumis,
+            COUNT(CASE WHEN p.statut = 'en_attente_validation' THEN 1 END)     AS attente,
+            COUNT(CASE WHEN p.statut = 'brouillon' THEN 1 END)                 AS brouillon,
+            COUNT(CASE WHEN p.statut = 'rejete' THEN 1 END)                    AS rejete
        FROM sites s
-       LEFT JOIN op_points_journaliers p ON p.site_id = s.id AND p.date_point = ?::date
+       LEFT JOIN op_points_journaliers p ON p.site_id = s.id AND p.date_point = ?
       WHERE s.actif = 1 " . pref_clause_in('s.id', $sites_sel) . "
-        AND (s.date_debut_mission IS NULL OR s.date_debut_mission <= ?::date)
-        AND (s.date_fin_mission   IS NULL OR s.date_fin_mission   >= ?::date)
+        AND (s.date_debut_mission IS NULL OR s.date_debut_mission <= ?)
+        AND (s.date_fin_mission   IS NULL OR s.date_fin_mission   >= ?)
         AND EXISTS (SELECT 1 FROM op_bobines b
                      WHERE b.site_id = s.id AND b.statut IN ('en_cours','en_stock'))
       GROUP BY s.id, s.nom
@@ -552,23 +552,25 @@ foreach ($saisie_sites as $s) {
 // seul côté reste affiché — plaques déclarées mais absentes d'EMUCI, ou
 // l'inverse : c'est précisément l'écart à voir.
 $emuci_jours = (int) db_fetch_value(
-    "SELECT COUNT(DISTINCT date_installation::date) FROM import_optoplate
-      WHERE date_installation::date BETWEEN ?::date AND ?::date", [$C['du_a'], $C['au_a']]);
+    "SELECT COUNT(DISTINCT DATE(date_installation)) FROM import_optoplate
+      WHERE DATE(date_installation) BETWEEN ? AND ?", [$C['du_a'], $C['au_a']]);
 $emuci_sites = [];
 $emuci_tot = 0; $emuci_decl = 0;
 if ($emuci_jours > 0) {
+    // MySQL : ::date -> DATE() ; `declare` entre accents graves, mot réservé
+    // en MySQL (la clé PHP reste la même que sur main). CTE : MySQL 8+.
     $emuci_sites = db_fetch_all(
-        "WITH j AS (SELECT DISTINCT date_installation::date AS d FROM import_optoplate
-                     WHERE date_installation::date BETWEEN ?::date AND ?::date),
+        "WITH j AS (SELECT DISTINCT DATE(date_installation) AS d FROM import_optoplate
+                     WHERE DATE(date_installation) BETWEEN ? AND ?),
               e AS (SELECT o.site_id, COUNT(*) AS n FROM import_optoplate o
                      WHERE o.statut_plaque = 'in_use' AND o.site_id IS NOT NULL
-                       AND o.date_installation::date IN (SELECT d FROM j)
+                       AND DATE(o.date_installation) IN (SELECT d FROM j)
                      GROUP BY o.site_id),
               d AS (SELECT p.site_id, SUM(COALESCE(p.correction_gp, p.total_plaques)) AS n
                       FROM op_points_journaliers p
                      WHERE p.statut <> 'brouillon' AND p.date_point IN (SELECT d FROM j)
                      GROUP BY p.site_id)
-         SELECT s.nom, COALESCE(e.n,0) AS emuci, COALESCE(d.n,0) AS declare
+         SELECT s.nom, COALESCE(e.n,0) AS emuci, COALESCE(d.n,0) AS `declare`
            FROM sites s
            LEFT JOIN e ON e.site_id = s.id
            LEFT JOIN d ON d.site_id = s.id
@@ -593,12 +595,12 @@ function kpi_endommagements(string $du, string $au, array $sites_sel): array {
            FROM sites s
            LEFT JOIN (SELECT c.site_id, SUM(c.quantite) AS sortis
                         FROM " . conso_source_bobines() . " c
-                       WHERE c.date_conso BETWEEN ?::date AND ?::date
+                       WHERE c.date_conso BETWEEN ? AND ?
                        GROUP BY c.site_id) x ON x.site_id = s.id
            LEFT JOIN (SELECT p.site_id, SUM(fu.films_endommages) AS endo
                         FROM op_films_utilises fu
                         JOIN op_points_journaliers p ON p.id = fu.point_id
-                       WHERE p.statut <> 'brouillon' AND p.date_point BETWEEN ?::date AND ?::date
+                       WHERE p.statut <> 'brouillon' AND p.date_point BETWEEN ? AND ?
                        GROUP BY p.site_id) y ON y.site_id = s.id
           WHERE s.actif = 1 " . pref_clause_in('s.id', $sites_sel) . "
             AND (x.sortis IS NOT NULL OR y.endo IS NOT NULL)",
@@ -635,7 +637,7 @@ foreach (db_fetch_all(
     "SELECT e.cause, e.etape, COUNT(*) AS n
        FROM op_endommagements e
        JOIN op_points_journaliers p ON p.id = e.point_id
-      WHERE p.statut <> 'brouillon' AND p.date_point BETWEEN ?::date AND ?::date
+      WHERE p.statut <> 'brouillon' AND p.date_point BETWEEN ? AND ?
         " . pref_clause_in('e.site_id', $sites_sel) . "
       GROUP BY e.cause, e.etape", [$C['du_a'], $C['au_a']]) as $r) {
     $endo_causes[$r['cause']] = ($endo_causes[$r['cause']] ?? 0) + (int)$r['n'];

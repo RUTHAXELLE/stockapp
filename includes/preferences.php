@@ -84,8 +84,7 @@ function pref_ecrire(string $cle, string $valeur): void {
         db_query(
             "INSERT INTO preferences_utilisateur (user_id, cle, valeur)
              VALUES (?,?,?)
-             ON CONFLICT (user_id, cle)
-             DO UPDATE SET valeur = EXCLUDED.valeur, updated_at = CURRENT_TIMESTAMP",
+             ON DUPLICATE KEY UPDATE valeur = VALUES(valeur), updated_at = CURRENT_TIMESTAMP",
             [(int)$u['id'], $cle, $valeur]);
         $c = &pref_cache();
         $c[$cle] = $valeur;

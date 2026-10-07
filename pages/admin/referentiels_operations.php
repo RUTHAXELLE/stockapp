@@ -148,8 +148,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         }
         if (!in_array($valeur, $connus[$cle], true)) json_response(false, 'Valeur non autorisée.');
         db_query("INSERT INTO defauts_affichage (role_id, cle, valeur) VALUES (?,?,?)
-                  ON CONFLICT (role_id, cle)
-                  DO UPDATE SET valeur = EXCLUDED.valeur, updated_at = CURRENT_TIMESTAMP",
+                  ON DUPLICATE KEY UPDATE valeur = VALUES(valeur), updated_at = CURRENT_TIMESTAMP",
             [$role_id, $cle, $valeur]);
         audit_log($user['id'], 'UPDATE', 'referentiels_operations', $role_id,
                   "Défaut $cle = $valeur pour {$r['nom']}");

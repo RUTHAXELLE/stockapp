@@ -68,9 +68,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // coup, et la contrainte unique (site_id, type_pmma) le garantit.
         db_query("INSERT INTO stock_pmma_site (site_id,type_pmma,quantite,seuil_alerte)
                   VALUES (?,?,?,?)
-                  ON CONFLICT (site_id, type_pmma)
-                  DO UPDATE SET quantite = stock_pmma_site.quantite + EXCLUDED.quantite,
-                                updated_at = CURRENT_TIMESTAMP",
+                  ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite),
+                                          updated_at = CURRENT_TIMESTAMP",
             [$site_id, $type, $quantite,
              $catalogue_pmma[$type]['seuil_defaut'] ?? 10]);
         audit_log($user['id'], 'CREATE', 'pmma', null, "Entrée PMMA: $quantite ($type) site:$site_id");

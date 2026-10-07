@@ -52,12 +52,12 @@ $f_pers  = trim($_GET['personne'] ?? '');
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $f_du)) $f_du = date('Y-m-01');
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $f_au)) $f_au = date('Y-m-d');
 
-$where  = ["e.created_at::date BETWEEN ? AND ?"];
+$where  = ["DATE(e.created_at) BETWEEN ? AND ?"];
 $params = [$f_du, $f_au];
 if ($f_site)  { $where[] = "e.site_id = ?";  $params[] = $f_site; }
 if (isset($ETAPES[$f_etape])) { $where[] = "e.etape = ?"; $params[] = $f_etape; }
 if (isset($CAUSES[$f_cause])) { $where[] = "e.cause = ?"; $params[] = $f_cause; }
-if ($f_pers)  { $where[] = "e.personne ILIKE ?"; $params[] = '%'.$f_pers.'%'; }
+if ($f_pers)  { $where[] = "e.personne LIKE ?"; $params[] = '%'.$f_pers.'%'; }
 $wsql = implode(' AND ', $where);
 
 $lignes = db_fetch_all(

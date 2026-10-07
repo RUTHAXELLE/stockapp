@@ -327,12 +327,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     if ($o_texte === '') continue;
                     $o_type = (string)($o['type'] ?? 'info');
                     if (!in_array($o_type, $types_obs, true)) $o_type = 'info';
+                    // MySQL : ON DUPLICATE KEY UPDATE n'a pas de WHERE. La
+                    // condition de Postgres (ne réécrire qu'une observation
+                    // encore en attente) passe dans un IF() par colonne :
+                    // une observation déjà prise en charge garde son texte.
                     db_query(
-                        "INSERT INTO op_observations (point_id,ordre,site_id,type,texte,created_by)
+                        "INSERT INTO op_observations (point_id,ordre,site_id,`type`,texte,created_by)
                          VALUES (?,?,?,?,?,?)
-                         ON CONFLICT (point_id,ordre) DO UPDATE
-                            SET type=EXCLUDED.type, texte=EXCLUDED.texte
-                          WHERE op_observations.statut='en_attente'",
+                         ON DUPLICATE KEY UPDATE
+                            `type` = IF(statut = 'en_attente', VALUES(`type`), `type`),
+                            texte  = IF(statut = 'en_attente', VALUES(texte), texte)",
                         [$point_id, $i, $site_id, $o_type, $o_texte, $user['id']]
                     );
                 }

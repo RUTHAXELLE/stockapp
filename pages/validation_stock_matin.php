@@ -309,7 +309,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         db_query(
             "INSERT INTO validations_stock_matin (site_id,date_validation,statut,nb_ecarts,bobines_snapshot,gsb_user_id,gsb_at,commentaire)
              VALUES (?,?,'valide_gsb',0,?,?,NOW(),?)
-             ON CONFLICT (site_id,date_validation) DO UPDATE SET statut='valide_gsb',nb_ecarts=0,bobines_snapshot=EXCLUDED.bobines_snapshot,gsb_user_id=EXCLUDED.gsb_user_id,gsb_at=NOW(),commentaire=EXCLUDED.commentaire",
+             ON DUPLICATE KEY UPDATE statut='valide_gsb',nb_ecarts=0,bobines_snapshot=VALUES(bobines_snapshot),gsb_user_id=VALUES(gsb_user_id),gsb_at=NOW(),commentaire=VALUES(commentaire)",
             [$site_id, $date, $snapshot, $user['id'], "Validé sans référence EMUCI (aucun import disponible) : $commentaire"]
         );
         $coords = db_fetch_all("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug='coordinateur_site' AND u.site_id=? AND u.actif=1", [$site_id]);

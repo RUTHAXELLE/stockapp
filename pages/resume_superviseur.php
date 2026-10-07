@@ -204,7 +204,7 @@ $kpi = [
     'points_brouillon'=>(int)db_fetch_value("SELECT COUNT(*) FROM op_points_journaliers WHERE date_point=? AND statut='en_attente_validation'".($f_site?" AND site_id=$f_site":""),[$f_date]),
     // Compté sur la vraie date d'installation de chaque plaque (date_installation),
     // pas la date saisie à l'import (date_import), qui peut couvrir un historique.
-    'in_use_emuci'  => (int)db_fetch_value("SELECT COUNT(*) FROM import_optoplate WHERE date_installation::date=? AND statut_plaque='in_use'".($f_site?" AND site_id=$f_site":""),[$f_date]),
+    'in_use_emuci'  => (int)db_fetch_value("SELECT COUNT(*) FROM import_optoplate WHERE DATE(date_installation)=? AND statut_plaque='in_use'".($f_site?" AND site_id=$f_site":""),[$f_date]),
     'ecart_jour'    => 0,
 ];
 $kpi['ecart_jour'] = $kpi['in_use_emuci'] - $kpi['plaques_jour'];

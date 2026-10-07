@@ -93,7 +93,7 @@ if (!$f_date) {
 }
 
 $has_import = (int)db_fetch_value(
-    "SELECT COUNT(*) FROM import_optoplate WHERE date_import=? OR date_installation::date=?", [$f_date, $f_date]
+    "SELECT COUNT(*) FROM import_optoplate WHERE date_import=? OR DATE(date_installation)=?", [$f_date, $f_date]
 ) > 0;
 
 $sites_list = db_fetch_all("SELECT id, nom FROM sites WHERE actif=1 ORDER BY nom");
@@ -122,7 +122,7 @@ foreach ($sites_list as $s) {
     // complet — compter par date_import y ferait remonter tout le fichier sous
     // une seule journée.
     $in_use   = (int)db_fetch_value(
-        "SELECT COUNT(*) FROM import_optoplate WHERE site_id=? AND statut_plaque='in_use' AND date_installation::date=?",
+        "SELECT COUNT(*) FROM import_optoplate WHERE site_id=? AND statut_plaque='in_use' AND DATE(date_installation)=?",
         [$sid, $f_date]
     );
     $reserved = (int)db_fetch_value(
