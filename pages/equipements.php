@@ -90,6 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $nse          = trim($_POST['numero_serie_externe'] ?? '');
         $nom_id       = (int)($_POST['nomenclature_id']     ?? 0);
         $site_id      = (int)($_POST['site_id']             ?? 0) ?: null;
+        $emplacement  = trim($_POST['emplacement']           ?? '');
         $etat         = trim($_POST['etat']                 ?? 'neuf');
         $date_achat   = trim($_POST['date_achat']           ?? '');
         $prix_achat   = (float)($_POST['prix_achat']        ?? 0);
@@ -114,10 +115,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             db_query(
                 "INSERT INTO equipements
                  (marque,modele,categorie,nomenclature_id,numero_serie_interne,numero_chrono,numero_serie_origine,
-                  site_id,etat,statut_stock,date_acquisition,prix_achat,date_fin_cycle,duree_amortissement_mois,actif)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
+                  site_id,emplacement,etat,statut_stock,date_acquisition,prix_achat,date_fin_cycle,duree_amortissement_mois,actif)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
                 [$marque,$modele,$f_categorie,$nom_id ?: null,$nsi,$numero_chrono,$nse,
-                 $site_id,$etat,$statut_stock,$date_achat ?: null,$prix_achat,$date_fin_cycle,$duree_mois]
+                 $site_id,$emplacement ?: null,$etat,$statut_stock,$date_achat ?: null,$prix_achat,$date_fin_cycle,$duree_mois]
             );
             $id = (int)db_last_id();
             audit_log($user['id'],'CREATE','equipements',$id,"Création équipement: $label");
@@ -127,10 +128,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             db_query(
                 "UPDATE equipements
                  SET marque=?,modele=?,nomenclature_id=?,numero_serie_interne=?,numero_serie_origine=?,
-                     site_id=?,etat=?,statut_stock=?,date_acquisition=?,prix_achat=?,date_fin_cycle=?,duree_amortissement_mois=?
+                     site_id=?,emplacement=?,etat=?,statut_stock=?,date_acquisition=?,prix_achat=?,date_fin_cycle=?,duree_amortissement_mois=?
                  WHERE id=?",
                 [$marque,$modele,$nom_id ?: null,$nsi,$nse,
-                 $site_id,$etat,$statut_stock,$date_achat ?: null,$prix_achat,$date_fin_cycle,$duree_mois,$id]
+                 $site_id,$emplacement ?: null,$etat,$statut_stock,$date_achat ?: null,$prix_achat,$date_fin_cycle,$duree_mois,$id]
             );
             audit_log($user['id'],'UPDATE','equipements',$id,"Modification équipement: $label");
             json_response(true,'Équipement mis à jour.');
@@ -243,7 +244,7 @@ if (isset($_GET['export'])) {
     $ws = $sp->getActiveSheet();
     $ws->setTitle('Équipements');
     $etats = ['neuf'=>'Neuf','bon'=>'Bon état','usage'=>'Usagé','endommage'=>'Endommagé','hs'=>'Hors service'];
-    $headers = ['N° Série','Type','Marque','Modèle','Site','État','Statut stock',
+    $headers = ['N° Série','Type','Marque','Modèle','Site','Emplacement','État','Statut stock',
                 'Date acq.','Prix achat','Valeur résiduelle','Amort. %',
                 'Fin de cycle','Nb interventions','Taux curative %'];
     foreach ($headers as $i => $h) {
@@ -263,15 +264,16 @@ if (isset($_GET['export'])) {
         $ws->setCellValue([3,  $row], $e['marque'] ?? '');
         $ws->setCellValue([4,  $row], $e['modele'] ?? '');
         $ws->setCellValue([5,  $row], $e['site_nom'] ?? '');
-        $ws->setCellValue([6,  $row], $etats[$e['etat']] ?? $e['etat']);
-        $ws->setCellValue([7,  $row], $e['statut_stock'] ?? '');
-        $ws->setCellValue([8,  $row], $e['date_acquisition'] ?? '');
-        $ws->setCellValue([9,  $row], $e['prix_achat'] ? (float)$e['prix_achat'] : '');
-        $ws->setCellValue([10, $row], $e['valeur_residuelle'] !== null ? (float)$e['valeur_residuelle'] : '');
-        $ws->setCellValue([11, $row], $e['pct_amorti'] !== null ? (float)$e['pct_amorti'] : '');
-        $ws->setCellValue([12, $row], $e['date_fin_cycle'] ?? '');
-        $ws->setCellValue([13, $row], (int)$e['nb_interventions_total']);
-        $ws->setCellValue([14, $row], $taux_curative);
+        $ws->setCellValue([6,  $row], $e['emplacement'] ?? '');
+        $ws->setCellValue([7,  $row], $etats[$e['etat']] ?? $e['etat']);
+        $ws->setCellValue([8,  $row], $e['statut_stock'] ?? '');
+        $ws->setCellValue([9,  $row], $e['date_acquisition'] ?? '');
+        $ws->setCellValue([10, $row], $e['prix_achat'] ? (float)$e['prix_achat'] : '');
+        $ws->setCellValue([11, $row], $e['valeur_residuelle'] !== null ? (float)$e['valeur_residuelle'] : '');
+        $ws->setCellValue([12, $row], $e['pct_amorti'] !== null ? (float)$e['pct_amorti'] : '');
+        $ws->setCellValue([13, $row], $e['date_fin_cycle'] ?? '');
+        $ws->setCellValue([14, $row], (int)$e['nb_interventions_total']);
+        $ws->setCellValue([15, $row], $taux_curative);
         $row++;
     }
     foreach (range(1, count($headers)) as $col)
@@ -407,10 +409,10 @@ include __DIR__ . '/../templates/header.php';
         $days_left = $e['date_fin_cycle'] ? (int)round((strtotime($e['date_fin_cycle'])-time())/86400) : null;
       ?>
         <tr style="<?= $e['etat']==='hs'?'background:#fff5f5':'' ?>">
-          <td style="font-weight:600;color:var(--navy)"><?= h(($e['numero_serie_interne']??'—') . (($e['marque']??'') ? ' — '.($e['marque']??'').' '.($e['modele']??'') : '')) ?></td>
+          <td style="font-weight:600;color:var(--navy)"><?= h($e['numero_serie_interne']??'—') ?></td>
           <td style="font-size:12px"><?= h($e['type_nom']??'—') ?></td>
           <td style="font-family:monospace;font-size:12px"><?= h($e['numero_serie_interne']??'—') ?></td>
-          <td><?= h($e['site_nom']??'Non affecté') ?></td>
+          <td><?= h($e['site_nom']??'Non affecté') ?><?php if(!empty($e['emplacement'])): ?><div style="font-size:12px;color:var(--muted)"><?= h($e['emplacement']) ?></div><?php endif; ?></td>
           <td style="text-align:center"><span class="etat-badge etat-<?= $e['etat'] ?>"><?= ucfirst($e['etat']) ?></span></td>
           <td style="text-align:center">
             <?php if($nb_int > 0): ?>
@@ -493,6 +495,10 @@ include __DIR__ . '/../templates/header.php';
           <option value="<?= $s['id'] ?>"><?= h($s['nom']) ?></option>
           <?php endforeach; ?>
         </select>
+      </div>
+      <div class="form-group">
+        <label>Emplacement</label>
+        <input type="text" class="form-control" id="eEmplacement" placeholder="ex: Bureau RH, 2e étage, Salle serveur...">
       </div>
       <div class="form-group">
         <label>État</label>
@@ -589,7 +595,7 @@ function ouvrirCreation(){
   document.getElementById('titleModal').textContent='Nouvel équipement';
   document.getElementById('eAction').value='creer';
   document.getElementById('eId').value='';
-  ['eMarque','eModele','eNsi','eNse','ePrix'].forEach(id=>document.getElementById(id).value='');
+  ['eMarque','eModele','eNsi','eNse','ePrix','eEmplacement'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('eEtat').value='neuf';
   document.getElementById('eStatutStock').value='affecte';
   document.getElementById('eAlert').innerHTML='';
@@ -604,6 +610,7 @@ function modifierEquip(e){
   document.getElementById('eNsi').value=e.numero_serie_interne||'';
   document.getElementById('eNse').value=e.numero_serie_origine||'';
   document.getElementById('eSite').value=e.site_id||'';
+  document.getElementById('eEmplacement').value=e.emplacement||'';
   document.getElementById('eEtat').value=e.etat||'bon';
   document.getElementById('eStatutStock').value=e.statut_stock||'affecte';
   document.getElementById('eDate').value=e.date_acquisition||'';
@@ -633,6 +640,7 @@ async function sauvegarder(){
       numero_serie_interne: document.getElementById('eNsi').value.trim(),
       numero_serie_externe: document.getElementById('eNse').value.trim(),
       site_id             : document.getElementById('eSite').value,
+      emplacement         : document.getElementById('eEmplacement').value.trim(),
       etat                : document.getElementById('eEtat').value,
       statut_stock        : document.getElementById('eStatutStock').value,
       date_achat          : document.getElementById('eDate').value,

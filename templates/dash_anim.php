@@ -347,11 +347,21 @@
   // que de laisser traîner l'ancienne valeur de location.search — d'où la
   // liste des noms lue sur f.elements (tous les champs du formulaire),
   // pas sur FormData (qui omet les cases décochées).
+  //
+  // Un tableau peut aussi arriver numéroté dans l'adresse : le lien d'une
+  // vue enregistrée, écrit par http_build_query(), porte sites[0], sites[1]…
+  // et non sites[]. Ces clés-là doivent partir avec sites[] : laissées en
+  // place, PHP les fusionnait avec les cases cochées, et choisir un site
+  // depuis une vue l'ajoutait aux sites de la vue au lieu de les remplacer.
   function urlDuFiltre(f) {
     var p = new URLSearchParams(location.search);
     var noms = {};
     Array.prototype.forEach.call(f.elements, function (el) { if (el.name) noms[el.name] = true; });
-    Object.keys(noms).forEach(function (k) { p.delete(k); });
+    var aEffacer = [];
+    p.forEach(function (v, k) {
+      if (noms[k] || noms[k.replace(/\[\d*\]$/, '[]')]) aEffacer.push(k);
+    });
+    aEffacer.forEach(function (k) { p.delete(k); });
     new FormData(f).forEach(function (v, k) { p.append(k, v); });
     return location.pathname + '?' + p.toString();
   }

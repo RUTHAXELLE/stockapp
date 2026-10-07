@@ -16,6 +16,7 @@ recopier.
 
 Le PDF passe par Chrome sans interface : il applique la feuille
 `@media print` du document et rend les schémas mermaid avant impression.
+Chrome ne renseigne pas l'auteur du PDF : il est posé ensuite avec pypdf.
 """
 import argparse
 import html
@@ -36,6 +37,13 @@ except ImportError:
 RACINE = Path(__file__).resolve().parent.parent
 SRC = RACINE / "docs"
 DST = RACINE / "docs" / "partage"
+
+# Auteur et coordonnées, repris dans l'en-tête, le pied de page et les
+# propriétés du PDF.
+AUTEUR = "GAYE Emmanuel"
+COURRIEL = "gayerodrigue@gmail.com"
+TELEPHONE = "+2250103559652"
+TELEPHONE_AFFICHE = "+225 01 03 55 96 52"
 
 # Chemins usuels de Chrome sous Windows, essayés dans l'ordre.
 CHROME_CANDIDATS = [
@@ -216,6 +224,8 @@ def construire(doc: dict, css: str, commit: str) -> str:
     if provenance:
         interne = markdown.markdown(provenance, extensions=["sane_lists"])
         bloc_provenance = embellir(f"<blockquote>{interne}</blockquote>")
+    contact = (f'{html.escape(AUTEUR)} · <a href="mailto:{COURRIEL}">{COURRIEL}</a> · '
+               f'<a href="tel:{TELEPHONE}" style="white-space:nowrap">{TELEPHONE_AFFICHE}</a>')
     besoin_mermaid = bool(mermaids)
     script = ("""
 <script type="module">
@@ -234,6 +244,7 @@ def construire(doc: dict, css: str, commit: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(doc["titre"])} — ERP EMUCI</title>
 <meta name="description" content="{html.escape(doc["titre"])} de l'ERP EMUCI, arrêté au commit {commit}">
+<meta name="author" content="{html.escape(AUTEUR)}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
@@ -243,6 +254,9 @@ h1.partie{{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
   color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
   border-bottom:2px solid var(--accent)}}
 figure .mermaid{{background:transparent}}
+.contact{{margin:.6rem 0 0;font-size:.85rem;color:var(--muted,#4d5876)}}
+.contact b{{color:inherit;font-weight:700}}
+.contact a{{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor}}
 </style>
 </head>
 <body>
@@ -254,6 +268,7 @@ figure .mermaid{{background:transparent}}
 <h1>{html.escape(titre_h1 or doc["titre"])}</h1>
 <p class="lede">{html.escape(doc["lede"])}</p>
 <div class="meta">{chips}</div>
+<p class="contact"><b>Auteur</b> {contact}</p>
 </header>
 {bloc_provenance}
 {corps}
@@ -264,7 +279,8 @@ figure .mermaid{{background:transparent}}
      font-size:9pt;color:#4d5876">
   {html.escape(doc["titre"])} — ERP EMUCI — document interne. État du logiciel au commit
   <code>{commit}</code>. Toute évolution fonctionnelle rend une section caduque :
-  vérifiez la version avant de vous y fier.
+  vérifiez la version avant de vous y fier.<br>
+  Auteur : {html.escape(AUTEUR)} — {COURRIEL} — <span style="white-space:nowrap">{TELEPHONE_AFFICHE}</span>
 </div>
 {script}
 </body>
@@ -306,6 +322,24 @@ def en_pdf(html_path: Path, pdf_path: Path) -> bool:
         shutil.rmtree(profil, ignore_errors=True)
 
 
+def poser_auteur_pdf(pdf_path: Path) -> None:
+    """Chrome laisse l'auteur vide : on le pose sans toucher au contenu."""
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError:
+        print("  pypdf absent — auteur du PDF non renseigné (pip install pypdf).")
+        return
+    lecteur = PdfReader(pdf_path)
+    ecrivain = PdfWriter(clone_from=lecteur)
+    meta = dict(lecteur.metadata or {})
+    meta["/Author"] = AUTEUR
+    ecrivain.add_metadata(meta)
+    tmp = pdf_path.with_suffix(".tmp.pdf")
+    with open(tmp, "wb") as f:
+        ecrivain.write(f)
+    tmp.replace(pdf_path)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pdf", action="store_true", help="générer aussi les PDF")
@@ -331,6 +365,7 @@ def main() -> int:
                 pdf.unlink()
             t0 = time.time()
             if en_pdf(out, pdf):
+                poser_auteur_pdf(pdf)
                 print(f"PDF   {pdf.name}  ({pdf.stat().st_size // 1024} Ko, "
                       f"{time.time() - t0:.0f}s)")
     return 0

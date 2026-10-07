@@ -1,0 +1,13 @@
+-- ============================================================
+--  Ajout du champ "Emplacement" sur les équipements
+--
+--  Le champ "Site" existant ne donne que le site (ex: Yopougon), pas la
+--  localisation précise dans le site (ex: "Bureau DG, 2e étage", "Salle
+--  serveur"). Nécessaire pour les équipements informatique (imprimantes,
+--  postes...) mais laissé disponible pour les deux catégories puisque
+--  pages/equipements.php sert "informatique" et "operationnel" avec le
+--  même formulaire.
+--
+--  Idempotente : IF NOT EXISTS évite une erreur si déjà appliquée.
+-- ============================================================
+ALTER TABLE equipements ADD COLUMN IF NOT EXISTS emplacement varchar(150) DEFAULT NULL;
