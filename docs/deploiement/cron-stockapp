@@ -1,0 +1,21 @@
+# ============================================================
+#  Tâches planifiées — ERP EMUCI (branche vps-mysql)
+#  À copier tel quel dans /etc/cron.d/stockapp (sans extension),
+#  propriétaire root, droits 644. Prérequis :
+#    mkdir -p /var/log/stockapp && chown www-data: /var/log/stockapp
+#    /etc/mysql/stockapp-client.cnf (droits 600, voir le manuel)
+# ============================================================
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Clôture automatique des bobines épuisées, toutes les 5 minutes
+*/5 * * * * www-data php /var/www/stockapp/cron/check_alerts.php bobines >> /var/log/stockapp/cron.log 2>&1
+
+# Sauvegarde complète de la base à 2 h 30, conservée 14 jours
+30 2 * * * root mysqldump --defaults-extra-file=/etc/mysql/stockapp-client.cnf --no-tablespaces --single-transaction stockapp | gzip > /var/backups/stockapp/quotidien_$(date +\%F).sql.gz && find /var/backups/stockapp -name 'quotidien_*.sql.gz' -mtime +14 -delete
+
+# Alertes quotidiennes (fins de cycle, stocks bas) : NE PAS ACTIVER.
+# cron/check_alerts.php appelle notif_check_fin_cycles() et
+# notif_check_stock_bas(), qui n'existent dans aucune branche :
+# la tâche s'arrête en erreur fatale. Voir le manuel, « Limites connues ».
+# 0 8 * * * www-data php /var/www/stockapp/cron/check_alerts.php >> /var/log/stockapp/cron.log 2>&1

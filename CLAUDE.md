@@ -187,7 +187,7 @@ Variables CSS globales (définies dans `templates/header.php`) :
 ### Backlog ⏳
 - [ ] Supprimer `fix_columns.php` à la racine (migration one-shot terminée)
 - [ ] Vérifier permissions `coordinateur_site` sur `inventaire_bobines` dans Admin → Permissions
-- [ ] Déploiement VPS : Nginx/Apache + PHP-FPM + MySQL + Certbot (branche `vps-mysql`, guide `DEPLOY-VPS-MYSQL.md`)
+- [ ] Déploiement VPS : Nginx/Apache + PHP-FPM + MySQL + Certbot (branche `vps-mysql`, manuel `docs/MANUEL_DEPLOIEMENT_VPS.md`, base vide)
 - [ ] Révoquer l'ancien mot de passe MySQL Railway exposé dans l'historique Git
 - [ ] Changer le mot de passe admin par défaut `Admin@2024`
 

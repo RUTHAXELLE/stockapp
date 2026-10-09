@@ -1,0 +1,911 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manuel de déploiement — serveur VPS — ERP EMUCI</title>
+<meta name="description" content="Manuel de déploiement — serveur VPS de l'ERP EMUCI, arrêté au commit 1957743 (vps-mysql)">
+<meta name="author" content="GAYE Emmanuel">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
+<style>
+
+
+
+
+
+
+
+
+
+
+
+
+/* ── Mise en page pour l'impression et l'export PDF.
+   Le sommaire latéral n'a pas de sens sur papier : il devient un bloc en
+   tête. Les cadres qui défilent à l'écran doivent au contraire tout montrer,
+   puisqu'on ne peut pas faire défiler une feuille. */
+@media print{
+  @page{margin:14mm 12mm}
+  :root{--bg:#fff !important}
+  body{background:#fff !important;font-size:10.5pt;line-height:1.5}
+  .shell{display:block !important;max-width:none;padding:0}
+  .toc{position:static !important;max-height:none !important;overflow:visible !important;
+    margin:0 0 14mm;padding:0;border:none;box-shadow:none;
+    break-after:page;page-break-after:always}
+  .toc a{color:#000 !important;padding:2px 0;margin:0}
+  /* Aucune ombre a l'impression : Chrome les rastérise, ce qui alourdit
+     le fichier et salit les bords sur papier. */
+  *{box-shadow:none !important}
+  .tw,figure{overflow:visible !important;break-inside:avoid;page-break-inside:avoid}
+  table{min-width:0 !important;font-size:9pt}
+  th{background:#eef2fb !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .note{break-inside:avoid;page-break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  section{break-before:auto;margin-top:10mm}
+  h2{break-after:avoid;page-break-after:avoid}
+  h3,h4{break-after:avoid;page-break-after:avoid}
+  figure svg{max-width:100% !important}
+  a{text-decoration:none;color:inherit}
+  .impr-pied{display:block !important}
+}
+.impr-pied{display:none}
+
+*{box-sizing:border-box}html,body{margin:0}
+
+/* Même palette que le manuel : les deux documents décrivent le même produit
+   et doivent se reconnaître comme une paire. */
+:root{
+  --bg:#eef2fb; --surface:#fff; --surface-2:#f5f8fe;
+  --ink:#06033A; --body:#232c47; --muted:#4d5876;
+  --rule:#c3ccdf; --rule-soft:#dfe5f1;
+  --accent:#1B75BC; --accent-ink:#12547f; --accent-soft:#e6f0f9;
+  --warn:#8a5a00; --warn-soft:#fdf3e0; --warn-rule:#e5c58a;
+  --stop:#8a1c13; --stop-soft:#fdf1f0; --stop-rule:#e8b7b1;
+  --rg:#1f5c4a; --rg-soft:#e8f4ef; --rg-rule:#a6cdbe;
+  --shadow:0 1px 2px rgba(6,3,58,.05), 0 8px 28px -14px rgba(6,3,58,.22);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0c1020; --surface:#151b31; --surface-2:#1b2340;
+    --ink:#e8ecf8; --body:#c6cee4; --muted:#98a3c0;
+    --rule:#39445f; --rule-soft:#2a3350;
+    --accent:#6fb2e8; --accent-ink:#a9d2f4; --accent-soft:#17273a;
+    --warn:#f0c473; --warn-soft:#2c2312; --warn-rule:#5c4a24;
+    --stop:#f0a9a1; --stop-soft:#2e1715; --stop-rule:#5e2f2a;
+    --rg:#8fd3ba; --rg-soft:#12261f; --rg-rule:#2f5347;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -16px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0c1020; --surface:#151b31; --surface-2:#1b2340;
+  --ink:#e8ecf8; --body:#c6cee4; --muted:#98a3c0;
+  --rule:#39445f; --rule-soft:#2a3350;
+  --accent:#6fb2e8; --accent-ink:#a9d2f4; --accent-soft:#17273a;
+  --warn:#f0c473; --warn-soft:#2c2312; --warn-rule:#5c4a24;
+  --stop:#f0a9a1; --stop-soft:#2e1715; --stop-rule:#5e2f2a;
+  --rg:#8fd3ba; --rg-soft:#12261f; --rg-rule:#2f5347;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -16px rgba(0,0,0,.7);
+}
+:root[data-theme="light"]{
+  --bg:#eef2fb; --surface:#fff; --surface-2:#f5f8fe;
+  --ink:#06033A; --body:#232c47; --muted:#4d5876;
+  --rule:#c3ccdf; --rule-soft:#dfe5f1;
+  --accent:#1B75BC; --accent-ink:#12547f; --accent-soft:#e6f0f9;
+  --warn:#8a5a00; --warn-soft:#fdf3e0; --warn-rule:#e5c58a;
+  --stop:#8a1c13; --stop-soft:#fdf1f0; --stop-rule:#e8b7b1;
+  --rg:#1f5c4a; --rg-soft:#e8f4ef; --rg-rule:#a6cdbe;
+  --shadow:0 1px 2px rgba(6,3,58,.05), 0 8px 28px -14px rgba(6,3,58,.22);
+}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--body);margin:0;
+  font-family:'DM Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased}
+
+.shell{max-width:1220px;margin:0 auto;padding:40px 24px 96px;
+  display:grid;grid-template-columns:246px minmax(0,1fr);gap:52px;align-items:start}
+@media(max-width:960px){.shell{grid-template-columns:minmax(0,1fr);gap:0;padding:26px 18px 72px}}
+
+.toc{position:sticky;top:28px;font-size:13.5px;max-height:calc(100vh - 56px);overflow-y:auto}
+@media(max-width:960px){.toc{position:static;max-height:none;margin-bottom:34px;background:var(--surface);
+  border:1px solid var(--rule);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}}
+.toc-t{font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--muted);margin:0 0 12px}
+.toc ol{list-style:none;margin:0;padding:0}
+.toc a{display:flex;gap:9px;padding:5px 10px;margin-left:-10px;border-radius:8px;color:var(--body);
+  text-decoration:none;line-height:1.34;transition:background-color .14s,color .14s}
+.toc a:hover{background:var(--surface-2);color:var(--accent-ink)}
+.toc a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.toc .part{font-family:'Montserrat',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent-ink);margin:14px 0 4px;padding-left:0}
+.toc li:first-child.part{margin-top:0}
+.toc .n{color:var(--muted);font-variant-numeric:tabular-nums;flex-shrink:0;font-weight:500;min-width:16px}
+
+.head{margin-bottom:32px}
+.eyebrow{font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--accent-ink);margin:0 0 10px}
+h1{font-family:'Montserrat',sans-serif;font-size:clamp(28px,4.2vw,40px);line-height:1.1;font-weight:800;
+  letter-spacing:-.022em;color:var(--ink);margin:0 0 14px;text-wrap:balance}
+.lede{font-size:18px;color:var(--muted);margin:0;max-width:62ch;text-wrap:pretty}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.chip{display:inline-flex;align-items:baseline;gap:7px;background:var(--surface);border:1px solid var(--rule);
+  border-radius:999px;padding:6px 14px;font-size:13px}
+.chip b{font-family:'Montserrat',sans-serif;font-weight:700;color:var(--ink);font-size:11.5px;
+  letter-spacing:.05em;text-transform:uppercase}
+
+section{margin-top:50px;scroll-margin-top:20px}
+h2{font-family:'Montserrat',sans-serif;font-size:23px;font-weight:700;letter-spacing:-.014em;color:var(--ink);
+  margin:0 0 14px;line-height:1.25;display:flex;gap:12px;align-items:baseline;text-wrap:balance}
+h2 .n{color:var(--accent-ink);font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;flex-shrink:0}
+h4{font-family:'Montserrat',sans-serif;font-size:13.5px;font-weight:700;color:var(--ink);margin:22px 0 7px;letter-spacing:-.004em}
+h3{font-family:'Montserrat',sans-serif;font-size:16px;font-weight:700;color:var(--ink);
+  margin:28px 0 8px;letter-spacing:-.008em}
+p{margin:0 0 13px;max-width:70ch}
+ul,ol{margin:0 0 13px;padding-left:22px;max-width:70ch}
+li{margin-bottom:5px}
+li::marker{color:var(--muted)}
+strong{color:var(--ink);font-weight:700}
+code{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:.87em;background:var(--surface-2);
+  border:1px solid var(--rule-soft);border-radius:5px;padding:1px 5px;color:var(--accent-ink)}
+
+.tw{overflow-x:auto;margin:0 0 18px;background:var(--surface);border:1px solid var(--rule);
+  border-radius:12px;box-shadow:var(--shadow)}
+table{width:100%;border-collapse:collapse;font-size:14.5px;min-width:440px}
+th{font-family:'Montserrat',sans-serif;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--muted);text-align:left;padding:11px 16px;border-bottom:1px solid var(--rule);
+  background:var(--surface-2);white-space:nowrap}
+td{padding:11px 16px;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td:first-child{color:var(--ink);font-weight:500}
+td code{white-space:nowrap}
+.rg td:first-child{white-space:nowrap;font-family:'Montserrat',sans-serif;font-weight:700;color:var(--rg)}
+
+.note{border-radius:12px;padding:14px 18px;margin:0 0 18px;font-size:15px;max-width:72ch}
+.note p{margin:0}
+.note p + p{margin-top:8px}
+.note-t{font-family:'Montserrat',sans-serif;font-size:11.5px;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;margin:0 0 5px;display:block}
+.note-warn{background:var(--warn-soft);border:1px solid var(--warn-rule);color:var(--warn)}
+.note-warn .note-t,.note-warn strong{color:var(--warn)}
+.note-info{background:var(--accent-soft);border:1px solid var(--rule);color:var(--body)}
+.note-info .note-t{color:var(--accent-ink)}
+.note-stop{background:var(--stop-soft);border:1px solid var(--stop-rule);color:var(--stop)}
+.note-stop .note-t,.note-stop strong{color:var(--stop)}
+
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 18px}
+.flow-s{background:var(--surface);border:1px solid var(--rule);border-radius:9px;padding:8px 14px;
+  font-size:14px;font-weight:500;color:var(--ink);box-shadow:var(--shadow)}
+.flow-a{color:var(--muted)}
+
+footer{margin-top:50px;padding-top:22px;border-top:1px solid var(--rule);font-size:14px;color:var(--muted)}
+footer p{max-width:72ch}
+
+figure{margin:0 0 20px;background:var(--surface);border:1px solid var(--rule);
+  border-radius:12px;padding:18px 16px 12px;box-shadow:var(--shadow);overflow-x:auto}
+figure .mermaid{display:flex;justify-content:center;min-width:0}
+figcaption{margin-top:10px;font-size:13.5px;color:var(--muted);text-align:center;
+  max-width:64ch;margin-left:auto;margin-right:auto}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+.contact{margin:.6rem 0 0;font-size:.85rem;color:var(--muted,#4d5876)}
+.contact b{color:inherit;font-weight:700}
+.contact a{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor}
+</style>
+</head>
+<body>
+<div class="shell">
+<nav class="toc" aria-label="Sommaire">
+<p class="toc-t">Sommaire</p>
+<ol>
+<li><a href="#s1"><span class="n">1</span><span>Prérequis</span></a></li>
+<li><a href="#s2"><span class="n">2</span><span>Préparer le serveur</span></a></li>
+<li><a href="#s3"><span class="n">3</span><span>Créer la base et le compte MySQL</span></a></li>
+<li><a href="#s4"><span class="n">4</span><span>Récupérer le code</span></a></li>
+<li><a href="#s5"><span class="n">5</span><span>Configurer l&#x27;application et PHP</span></a></li>
+<li><a href="#s6"><span class="n">6</span><span>Installer la base vide et le premier compte</span></a></li>
+<li><a href="#s7"><span class="n">7</span><span>Configurer le serveur web</span></a></li>
+<li><a href="#s8"><span class="n">8</span><span>Activer HTTPS</span></a></li>
+<li><a href="#s9"><span class="n">9</span><span>Tâches planifiées et sauvegardes</span></a></li>
+<li><a href="#s10"><span class="n">10</span><span>Contrôles avant ouverture</span></a></li>
+<li><a href="#s11"><span class="n">11</span><span>Premiers paramétrages dans l&#x27;application</span></a></li>
+<li><a href="#s12"><span class="n">12</span><span>Mettre à jour l&#x27;application</span></a></li>
+<li><a href="#s13"><span class="n">13</span><span>Sauvegarde et restauration</span></a></li>
+<li><a href="#s14"><span class="n">14</span><span>Retour arrière</span></a></li>
+<li><a href="#s15"><span class="n">15</span><span>Limites connues</span></a></li>
+<li><a href="#s16"><span>Annexe A — Check-list à transmettre à l&#x27;hébergeur</span></a></li>
+<li><a href="#s17"><span>Annexe B — Fichiers fournis</span></a></li>
+<li><a href="#s18"><span>Annexe C — Résultats des essais (09/10/2026)</span></a></li>
+</ol>
+</nav>
+<main>
+<header class="head">
+<p class="eyebrow">ERP EMUCI</p>
+<h1>ERP EMUCI — Manuel de déploiement sur le serveur VPS</h1>
+<p class="lede">Prérequis, installation sur base vide, mise en ligne, sauvegardes et mises à jour.</p>
+<div class="meta"><span class="chip"><b>Branche</b> vps-mysql (dépôt RUTHAXELLE/stockapp)</span><span class="chip"><b>Serveur</b> erp.digimmat.ci → 169.58.104.110, Ubuntu 24.04 LTS</span><span class="chip"><b>Date</b> 09/10/2026</span></div>
+<p class="contact"><b>Auteur</b> GAYE Emmanuel · <a href="mailto:gayerodrigue@gmail.com">gayerodrigue@gmail.com</a> · <a href="tel:+2250103559652" style="white-space:nowrap">+225 01 03 55 96 52</a></p>
+</header>
+<div class="note note-info"><p>Procédure jouée de bout en bout le 09/10/2026 sur un Ubuntu 24.04 identique
+au serveur cible (Nginx 1.24, Apache 2.4.58, PHP 8.3.6, MySQL 8.0.46), avec
+un compte MySQL limité à sa base, comme en production. Le serveur réel
+n'a pas encore pu être vérifié, faute d'accès SSH à ce jour (voir § 15).</p></div>
+<p>Ce manuel décrit l'installation complète de l'ERP sur un serveur Ubuntu neuf.
+Il part d'une <strong>base de données vide</strong> : aucune donnée de la recette (comptes
+de test, bobines, imports, journal) n'est reprise. Seuls les référentiels
+nécessaires au fonctionnement sont installés (voir § 6).</p>
+<p>Les essais ont couvert : l'installation du schéma et la mise à vide, la
+création du premier compte, la connexion, les principaux écrans et l'export
+Excel, le blocage des adresses sensibles, les tâches planifiées, la
+sauvegarde et sa restauration, et une mise à jour par <code>deploy.sh</code>
+(détail en annexe C).</p>
+<section id="s1"><h2><span class="n">1</span> Prérequis</h2>
+<h3>1.1 Serveur</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Élément</th>
+<th>Exigé</th>
+<th>Remarque</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Système</td>
+<td><strong>Ubuntu 24.04 LTS</strong>, 64 bits</td>
+<td>Constaté sur 169.58.104.110 (bannière SSH <code>OpenSSH_9.6p1 Ubuntu-3ubuntu13.19</code>)</td>
+</tr>
+<tr>
+<td>Processeur / mémoire</td>
+<td>2 vCPU, 4 Go de RAM conseillés</td>
+<td>Recommandation : MySQL et PHP sur la même machine, exports Excel jusqu'à 256 Mo par requête</td>
+</tr>
+<tr>
+<td>Disque</td>
+<td>40 Go conseillés</td>
+<td>Base, sauvegardes de 14 jours, fichiers déposés (imports EMUCI jusqu'à 50 Mo)</td>
+</tr>
+<tr>
+<td>Fuseau horaire</td>
+<td><code>Africa/Abidjan</code></td>
+<td>Réglé au § 2</td>
+</tr>
+</tbody>
+</table></div>
+<h3>1.2 Logiciels</h3>
+<p>Tous viennent des dépôts officiels d'Ubuntu 24.04 ; aucune source externe
+n'est nécessaire.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Logiciel</th>
+<th>Version minimale</th>
+<th>Version testée</th>
+<th>Paquets</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Serveur web</td>
+<td>Nginx 1.18 <strong>ou</strong> Apache 2.4</td>
+<td>Nginx 1.24 / Apache 2.4.58</td>
+<td><code>nginx</code> (ou <code>apache2 libapache2-mod-php8.3</code>)</td>
+</tr>
+<tr>
+<td>PHP</td>
+<td><strong>8.2</strong> (exigé par PhpSpreadsheet)</td>
+<td>8.3.6</td>
+<td><code>php8.3-fpm php8.3-cli php8.3-mysql php8.3-gd php8.3-zip php8.3-mbstring php8.3-xml php8.3-curl</code></td>
+</tr>
+<tr>
+<td>MySQL</td>
+<td>8.0</td>
+<td>8.0.46</td>
+<td><code>mysql-server</code></td>
+</tr>
+<tr>
+<td>Outils</td>
+<td>—</td>
+<td>—</td>
+<td><code>git curl unzip certbot python3-certbot-nginx logrotate cron ufw</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>Les huit paquets PHP couvrent les 15 extensions utilisées par l'application :
+ctype, dom, fileinfo, filter, gd, iconv, libxml, mbstring, pdo_mysql,
+simplexml, xml, xmlreader, xmlwriter, zip, zlib. Les bibliothèques PHP
+(<code>vendor/</code>) sont livrées dans le dépôt : <strong>Composer n'est pas nécessaire</strong>.</p>
+<div class="note note-info">
+<p>Si PHP 8.4 est déjà installé sur le serveur, il convient aussi : remplacer
+<code>8.3</code> par <code>8.4</code> dans les noms de paquets, les chemins <code>/etc/php/8.3/…</code> et le
+chemin du socket <code>php8.3-fpm.sock</code>.</p>
+</div>
+<h3>1.3 Réseau</h3>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Flux</th>
+<th>Sens</th>
+<th>Statut au 09/10/2026</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>22 (SSH)</td>
+<td>entrant, depuis les postes d'administration</td>
+<td>Ouvert ; identifiants transmis refusés</td>
+</tr>
+<tr>
+<td>80 (HTTP)</td>
+<td>entrant, depuis Internet</td>
+<td><strong>Fermé</strong> — à ouvrir</td>
+</tr>
+<tr>
+<td>443 (HTTPS)</td>
+<td>entrant, depuis Internet</td>
+<td><strong>Fermé</strong> — à ouvrir</td>
+</tr>
+<tr>
+<td>3306 (MySQL)</td>
+<td>—</td>
+<td>Fermé — <strong>doit le rester</strong> : MySQL n'écoute que sur le serveur</td>
+</tr>
+<tr>
+<td>HTTPS sortant vers <code>github.com</code> et Let's Encrypt</td>
+<td>sortant</td>
+<td>À confirmer</td>
+</tr>
+</tbody>
+</table></div>
+<p>Le nom <code>erp.digimmat.ci</code> pointe déjà vers 169.58.104.110 (enregistrement DNS A
+vérifié). Let's Encrypt en a besoin pour délivrer le certificat.</p>
+<h3>1.4 Accès à obtenir</h3>
+<ul>
+<li>Un <strong>compte SSH avec droits <code>sudo</code></strong> sur le serveur (clé SSH de préférence).</li>
+<li>Un accès en lecture au dépôt <code>RUTHAXELLE/stockapp</code>. S'il est privé, une
+  <em>deploy key</em> en lecture seule est la solution la plus propre.</li>
+<li>L'adresse email du futur <strong>super-administrateur</strong> de l'application.</li>
+</ul>
+<hr>
+</section>
+<section id="s2"><h2><span class="n">2</span> Préparer le serveur</h2>
+<p>Toutes les commandes se lancent en SSH sur le serveur.</p>
+<pre><code class="language-bash">sudo apt update &amp;&amp; sudo apt upgrade -y
+sudo timedatectl set-timezone Africa/Abidjan
+</code></pre>
+<p>Installer les logiciels (variante Nginx, conseillée) :</p>
+<pre><code class="language-bash">sudo apt install -y nginx mysql-server git curl unzip logrotate cron ufw php8.3-fpm php8.3-cli php8.3-mysql php8.3-gd php8.3-zip php8.3-mbstring php8.3-xml php8.3-curl certbot python3-certbot-nginx
+</code></pre>
+<p>Variante Apache : remplacer <code>nginx</code> par <code>apache2 libapache2-mod-php8.3</code>, et
+<code>python3-certbot-nginx</code> par <code>python3-certbot-apache</code>.</p>
+<p>Pare-feu : n'ouvrir que SSH et le web.</p>
+<pre><code class="language-bash">sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'
+sudo ufw enable
+</code></pre>
+<p>(Variante Apache : <code>sudo ufw allow 'Apache Full'</code>.)</p>
+<p>Vérifier que MySQL n'écoute que localement. La valeur attendue est <code>127.0.0.1</code>,
+valeur par défaut d'Ubuntu :</p>
+<pre><code class="language-bash">grep -E '^\s*bind-address' /etc/mysql/mysql.conf.d/mysqld.cnf
+</code></pre>
+<hr>
+</section>
+<section id="s3"><h2><span class="n">3</span> Créer la base et le compte MySQL</h2>
+<p><strong>Les étapes 3 à 5 se font dans la même session SSH</strong> : le mot de passe MySQL
+est généré dans une variable, écrit directement dans les fichiers de
+configuration, et n'est jamais affiché ni saisi à la main.</p>
+<pre><code class="language-bash">MDP=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32)
+</code></pre>
+<pre><code class="language-bash">sudo mysql &lt;&lt;SQL
+CREATE DATABASE stockapp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'stockapp'@'localhost' IDENTIFIED BY '$MDP';
+CREATE USER 'stockapp'@'127.0.0.1' IDENTIFIED BY '$MDP';
+GRANT ALL PRIVILEGES ON stockapp.* TO 'stockapp'@'localhost', 'stockapp'@'127.0.0.1';
+SQL
+</code></pre>
+<p>Le compte n'a de droits que sur la base <code>stockapp</code>. Les deux variantes
+(<code>localhost</code>, <code>127.0.0.1</code>) couvrent les deux modes de connexion :
+l'application passe par le socket local, les scripts par TCP.</p>
+<p>Fichier d'identifiants pour les sauvegardes et les commandes d'administration
+(lisible par root uniquement) :</p>
+<pre><code class="language-bash">sudo install -m 600 /dev/null /etc/mysql/stockapp-client.cnf
+printf '[client]\nuser=stockapp\npassword=%s\n' &quot;$MDP&quot; | sudo tee /etc/mysql/stockapp-client.cnf &gt; /dev/null
+</code></pre>
+<hr>
+</section>
+<section id="s4"><h2><span class="n">4</span> Récupérer le code</h2>
+<pre><code class="language-bash">sudo git clone -b vps-mysql https://github.com/RUTHAXELLE/stockapp.git /var/www/stockapp
+cd /var/www/stockapp
+</code></pre>
+<p>Le code est publié tel quel dans <code>/var/www/stockapp</code>. Les fichiers qui ne
+doivent pas être servis (<code>.env</code>, <code>.git</code>, <code>sql/</code>, <code>tools/</code>, <code>docs/</code>…) sont
+bloqués par la configuration du serveur web (§ 7). <strong>Ne pas utiliser
+d'autre configuration que celle fournie.</strong></p>
+<hr>
+</section>
+<section id="s5"><h2><span class="n">5</span> Configurer l&#x27;application et PHP</h2>
+<h3>5.1 Fichier <code>.env</code></h3>
+<pre><code class="language-bash">sudo cp .env.example .env
+sudo sed -i &quot;s|^DB_PASS=.*|DB_PASS=$MDP|; s|^APP_URL=.*|APP_URL=https://erp.digimmat.ci|&quot; .env
+unset MDP
+</code></pre>
+<p>Contenu attendu (le mot de passe est déjà renseigné) :</p>
+<pre><code>DB_HOST=localhost
+DB_PORT=3306
+DB_NAME=stockapp
+DB_USER=stockapp
+DB_PASS=••••••••
+APP_URL=https://erp.digimmat.ci
+APP_TIMEZONE=Africa/Abidjan
+</code></pre>
+<p><code>deploy.sh</code> le passe ensuite en droits 640, propriétaire <code>www-data</code>.</p>
+<h3>5.2 Réglages PHP</h3>
+<p>Le fichier fourni règle la taille des imports (50 Mo), la mémoire (256 Mo),
+la durée maximale des exports (300 s), le fuseau horaire, et masque les
+erreurs à l'écran.</p>
+<pre><code class="language-bash">for d in fpm cli; do sudo cp docs/deploiement/php-stockapp.ini /etc/php/8.3/$d/conf.d/90-stockapp.ini; done
+sudo systemctl restart php8.3-fpm
+</code></pre>
+<p>Variante Apache avec <code>mod_php</code> : copier aussi dans <code>/etc/php/8.3/apache2/conf.d/</code>.</p>
+<hr>
+</section>
+<section id="s6"><h2><span class="n">6</span> Installer la base vide et le premier compte</h2>
+<pre><code class="language-bash">cd /var/www/stockapp &amp;&amp; sudo ./deploy.sh
+</code></pre>
+<p>Lors de la première installation, le script :</p>
+<ol>
+<li>sauvegarde la base (vide à ce stade) dans <code>/var/backups/stockapp/</code> ;</li>
+<li>lance <code>sql/installer_schema_mysql.sh</code>, qui joue <code>sql/stockapp.sql</code> puis
+   les 25 migrations <code>*_mysql.sql</code> dans l'ordre et vérifie le résultat
+   (≥ 116 tables, colonnes et tables récentes présentes) ;</li>
+<li><strong>vide toutes les tables</strong>, sauf les 19 référentiels ci-dessous, puis
+   vérifie qu'il ne reste ni utilisateur, ni bobine, ni ligne de journal ;</li>
+<li>applique le schéma des Demandes internes (sans effet s'il est déjà là) ;</li>
+<li>donne les fichiers à <code>www-data</code> et recharge le serveur web ;</li>
+<li><strong>demande les informations du super-administrateur</strong> : email, prénom,
+   nom et mot de passe. Le mot de passe est saisi deux fois, masqué. Il doit
+   compter au moins 8 caractères, dont une majuscule, un chiffre et un
+   caractère spécial.</li>
+</ol>
+<p><strong>Référentiels conservés</strong> (tout le reste repart vide) :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Domaine</th>
+<th>Tables</th>
+<th>Contenu</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Droits</td>
+<td><code>roles</code>, <code>permissions</code>, <code>defauts_affichage</code></td>
+<td>17 rôles, matrice des droits, affichage par rôle</td>
+</tr>
+<tr>
+<td>Opérations</td>
+<td><code>op_types_bobines</code>, <code>op_types_vehicule</code>, <code>op_types_pmma</code></td>
+<td>Types A001…, VP/Camion/Semi/Moto, types de PMMA</td>
+</tr>
+<tr>
+<td>Organisation</td>
+<td><code>sites</code>, <code>nomenclatures</code>, <code>configurations_site</code></td>
+<td>21 sites (sans responsable), 9 familles d'équipements, dotation type par site</td>
+</tr>
+<tr>
+<td>Demandes internes</td>
+<td><code>di_types</code>, <code>di_etapes</code>, <code>di_roles</code>, <code>di_plateformes</code></td>
+<td>Circuit de validation</td>
+</tr>
+<tr>
+<td>Achats</td>
+<td><code>achat_types</code>, <code>achat_paliers</code>, <code>achat_parametres</code>, <code>departements</code>, <code>familles_achat</code>, <code>lignes_budgetaires</code></td>
+<td>Paramétrage des achats</td>
+</tr>
+</tbody>
+</table></div>
+<p>Si le compte n'a pas été créé à l'étape 6 (session sans terminal, saisie
+refusée…) :</p>
+<pre><code class="language-bash">sudo -u www-data php tools/creer_superadmin.php
+</code></pre>
+<p>Ce script refuse de s'exécuter s'il existe déjà un super-administrateur
+actif. Les comptes suivants se créent dans l'application.</p>
+<hr>
+</section>
+<section id="s7"><h2><span class="n">7</span> Configurer le serveur web</h2>
+<h3>7.1 Nginx (conseillé)</h3>
+<pre><code class="language-bash">sudo cp docs/deploiement/nginx-stockapp.conf /etc/nginx/sites-available/stockapp
+sudo ln -s /etc/nginx/sites-available/stockapp /etc/nginx/sites-enabled/stockapp
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t &amp;&amp; sudo systemctl reload nginx
+</code></pre>
+<h3>7.2 Apache (variante)</h3>
+<pre><code class="language-bash">sudo cp docs/deploiement/apache-stockapp.conf /etc/apache2/sites-available/stockapp.conf
+sudo a2enmod rewrite &amp;&amp; sudo a2ensite stockapp &amp;&amp; sudo a2dissite 000-default
+sudo apache2ctl configtest &amp;&amp; sudo systemctl reload apache2
+</code></pre>
+<h3>7.3 Pourquoi ces fichiers et pas ceux de l'ancien guide</h3>
+<p>Avec la configuration Apache de l'ancien <code>DEPLOY-VPS-MYSQL.md</code>, les adresses
+suivantes étaient <strong>téléchargeables depuis Internet</strong> (vérifié) : <code>/.env</code>
+(mot de passe MySQL en clair), <code>/sql/stockapp.sql</code>, <code>/deploy.sh</code>,
+<code>/composer.json</code>, <code>/Dockerfile</code>, ainsi que les sauvegardes, que l'ancien
+<code>deploy.sh</code> rangeait dans le dossier publié. Les fichiers fournis bloquent :</p>
+<ul>
+<li>les fichiers cachés (<code>.env</code>, <code>.git/</code>…) ;</li>
+<li>les dossiers <code>includes</code>, <code>templates</code>, <code>cron</code>, <code>vendor</code>, <code>sql</code>, <code>tools</code>,
+  <code>docs</code>, <code>docker</code>, <code>backups</code>, <code>git</code> ;</li>
+<li>les extensions <code>.md .sh .yml .yaml .json .lock .sql .gz .log</code>, plus
+  <code>Dockerfile</code> ;</li>
+<li><code>migrate_site_id.php</code>, un script ponctuel protégé par un secret écrit en
+  clair dans le code ;</li>
+<li>tout script exécutable déposé dans <code>uploads/</code>.</li>
+</ul>
+<p>Ils limitent aussi la taille des envois à 55 Mo et laissent 300 s aux exports.</p>
+<hr>
+</section>
+<section id="s8"><h2><span class="n">8</span> Activer HTTPS</h2>
+<p>Les ports 80 et 443 doivent être ouverts et <code>erp.digimmat.ci</code> pointer vers
+le serveur.</p>
+<pre><code class="language-bash">sudo certbot --nginx -d erp.digimmat.ci
+</code></pre>
+<p>(Variante Apache : <code>sudo certbot --apache -d erp.digimmat.ci</code>.)</p>
+<p>Certbot ajoute la partie HTTPS au fichier de configuration et met en place
+le renouvellement automatique. Pour vérifier le renouvellement :</p>
+<pre><code class="language-bash">sudo certbot renew --dry-run
+</code></pre>
+<hr>
+</section>
+<section id="s9"><h2><span class="n">9</span> Tâches planifiées et sauvegardes</h2>
+<pre><code class="language-bash">sudo mkdir -p /var/log/stockapp &amp;&amp; sudo chown www-data: /var/log/stockapp
+sudo install -m 644 docs/deploiement/cron-stockapp /etc/cron.d/stockapp
+sudo install -m 644 docs/deploiement/logrotate-stockapp /etc/logrotate.d/stockapp
+</code></pre>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Tâche</th>
+<th>Fréquence</th>
+<th>Compte</th>
+<th>Effet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cron/check_alerts.php bobines</code></td>
+<td>toutes les 5 min</td>
+<td>www-data</td>
+<td>Passe en « épuisée » toute bobine à zéro film et zéro stock système</td>
+</tr>
+<tr>
+<td>Sauvegarde MySQL</td>
+<td>chaque nuit à 2 h 30</td>
+<td>root</td>
+<td><code>/var/backups/stockapp/quotidien_AAAA-MM-JJ.sql.gz</code>, conservée 14 jours</td>
+</tr>
+<tr>
+<td>Alertes quotidiennes</td>
+<td>—</td>
+<td>—</td>
+<td><strong>Désactivée</strong> : le script s'arrête en erreur (voir § 15)</td>
+</tr>
+</tbody>
+</table></div>
+<p>Le journal des tâches est <code>/var/log/stockapp/cron.log</code>, avec une rotation
+hebdomadaire sur 8 semaines.</p>
+<p><strong>Copier les sauvegardes hors du serveur.</strong> Une sauvegarde qui reste sur
+le serveur disparaît avec lui. Prévoir une copie régulière vers un autre
+emplacement (autre serveur, stockage de l'hébergeur).</p>
+<hr>
+</section>
+<section id="s10"><h2><span class="n">10</span> Contrôles avant ouverture</h2>
+<h3>10.1 Adresses sensibles</h3>
+<p>Chaque adresse doit répondre <strong>404</strong> (Nginx) ou <strong>403</strong> (Apache) :</p>
+<pre><code class="language-bash">for u in /.env /.git/config /sql/stockapp.sql /deploy.sh /composer.json /vendor/autoload.php /includes/db.php /docs/MANUEL_DEPLOIEMENT_VPS.md /tools/creer_superadmin.php /migrate_site_id.php /Dockerfile; do printf '%-36s %s\n' &quot;$u&quot; &quot;$(curl -s -o /dev/null -w '%{http_code}' https://erp.digimmat.ci$u)&quot;; done
+</code></pre>
+<p>Un seul <strong>200</strong> dans cette liste est bloquant : ne pas ouvrir l'application
+avant de l'avoir corrigé.</p>
+<h3>10.2 Application</h3>
+<ul>
+<li><code>https://erp.digimmat.ci/login.php</code> affiche la page « Connexion — ERP EMUCI ».</li>
+<li>La connexion du super-administrateur aboutit à l'accueil.</li>
+<li>Ouvrir le Tableau de bord, le Dashboard KPI, le Point EMUCI, les
+  Équipements et Administration → Utilisateurs : aucune page d'erreur.</li>
+<li>Lancer un export Excel (Vue stock bobines → Excel) : un fichier <code>.xlsx</code>
+  se télécharge.</li>
+<li><code>sudo tail /var/log/stockapp/cron.log</code> : une ligne <code>[OK]</code> toutes les
+  5 minutes.</li>
+<li><code>sudo ls -l /var/backups/stockapp/</code> le lendemain : une sauvegarde
+  <code>quotidien_…</code> présente.</li>
+</ul>
+<hr>
+</section>
+<section id="s11"><h2><span class="n">11</span> Premiers paramétrages dans l&#x27;application</h2>
+<p>La base étant vide, le super-administrateur doit, dans l'ordre :</p>
+<ol>
+<li>créer les comptes utilisateurs (Administration → Utilisateurs) et leur
+   attribuer rôle et site ;</li>
+<li>désigner le responsable de chaque site : les 21 sites conservés n'en ont
+   plus, puisque les comptes de recette ont été supprimés ;</li>
+<li>vérifier la matrice des droits (Administration → Permissions) ;</li>
+<li>saisir les stocks de départ (bobines, rivets, PMMA, consommables) et
+   enregistrer les équipements ;</li>
+<li>renseigner les catalogues d'achat (articles, consommables), vides au
+   départ.</li>
+</ol>
+<hr>
+</section>
+<section id="s12"><h2><span class="n">12</span> Mettre à jour l&#x27;application</h2>
+<pre><code class="language-bash">cd /var/www/stockapp &amp;&amp; sudo ./deploy.sh
+</code></pre>
+<p>Le script récupère la dernière version de la branche <code>vps-mysql</code>, sauvegarde
+la base, applique le schéma des Demandes internes et recharge le serveur web.
+<strong>Il ne recharge jamais le schéma de base sur une base existante</strong> : les
+données sont protégées.</p>
+<p><strong>Nouvelles migrations.</strong> Si la mise à jour apporte de nouveaux fichiers
+<code>sql/*_mysql.sql</code>, le script les liste après le <code>git pull</code> :</p>
+<pre><code>/!\ Nouvelles migrations SQL à jouer APRÈS lecture (voir docs/MANUEL_DEPLOIEMENT_VPS.md) :
+      sql/migration_xxx_mysql.sql
+</code></pre>
+<p>Elles ne sont pas jouées automatiquement. Pour chacune, lire le fichier puis :</p>
+<pre><code class="language-bash">sudo mysql --defaults-extra-file=/etc/mysql/stockapp-client.cnf stockapp &lt; sql/migration_xxx_mysql.sql
+</code></pre>
+<p>S'il y en a plusieurs, les jouer dans l'ordre de la liste. Une sauvegarde
+vient d'être faite par <code>deploy.sh</code> (§ 13 pour revenir en arrière).</p>
+<p>Options du script : <code>SKIP_BACKUP=1</code> (pas de sauvegarde), <code>SKIP_PULL=1</code> (pas
+de <code>git pull</code>), <code>RELOAD_WEB=0</code> (pas de rechargement), <code>APP_DIR=…</code>,
+<code>BACKUP_DIR=…</code>. Exemple : <code>sudo SKIP_PULL=1 ./deploy.sh</code>.</p>
+<hr>
+</section>
+<section id="s13"><h2><span class="n">13</span> Sauvegarde et restauration</h2>
+<p><strong>Sauvegarde manuelle :</strong></p>
+<pre><code class="language-bash">sudo sh -c 'mysqldump --defaults-extra-file=/etc/mysql/stockapp-client.cnf --no-tablespaces --single-transaction stockapp | gzip &gt; /var/backups/stockapp/manuel_$(date +%F_%H%M).sql.gz'
+</code></pre>
+<p><strong>Restauration</strong> (remplace tout le contenu de la base par celui de la
+sauvegarde ; prévenir les utilisateurs avant) :</p>
+<pre><code class="language-bash">sudo sh -c 'zcat /var/backups/stockapp/FICHIER.sql.gz | mysql --defaults-extra-file=/etc/mysql/stockapp-client.cnf stockapp'
+</code></pre>
+<p>Une restauration a été testée le 09/10/2026 : les 116 tables et leurs
+données ont été rechargées. Il est conseillé d'en refaire une à blanc chaque
+mois, dans une base de test.</p>
+<hr>
+</section>
+<section id="s14"><h2><span class="n">14</span> Retour arrière</h2>
+<p>Si une mise à jour pose problème :</p>
+<pre><code class="language-bash">cd /var/www/stockapp
+sudo git log --oneline -5
+sudo git checkout &lt;commit_précédent&gt;
+</code></pre>
+<p>Restaurer ensuite la sauvegarde que <code>deploy.sh</code> a faite juste avant la mise
+à jour (§ 13) : c'est la plus récente <code>stockapp_AAAAMMJJ_HHMMSS.sql.gz</code> de
+<code>/var/backups/stockapp/</code>. Recharger le serveur web
+(<code>sudo systemctl reload nginx php8.3-fpm</code>).</p>
+<p>Pour revenir ensuite à la branche : <code>sudo git checkout vps-mysql</code>.</p>
+<hr>
+</section>
+<section id="s15"><h2><span class="n">15</span> Limites connues</h2>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Point</th>
+<th>Effet</th>
+<th>Que faire</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Envoi d'emails non fonctionnel</strong></td>
+<td>La bibliothèque d'envoi (PHPMailer) n'est pas livrée et aucun serveur SMTP n'est configuré. « Mot de passe oublié » échoue.</td>
+<td>Les mots de passe se réinitialisent par un administrateur, dans Administration → Utilisateurs.</td>
+</tr>
+<tr>
+<td><strong>Alertes quotidiennes</strong> (fins de cycle, stocks bas)</td>
+<td><code>cron/check_alerts.php</code> appelle deux fonctions qui n'existent dans aucune version du code : la tâche s'arrête en erreur.</td>
+<td>Laissée désactivée dans <code>cron-stockapp</code>. À développer avant activation.</td>
+</tr>
+<tr>
+<td>Vues <code>v_cout_hebdo_site</code>, <code>v_cout_mensuel_site</code></td>
+<td>Héritées de l'ancien schéma, inutilisables avec le mode SQL par défaut de MySQL 8.</td>
+<td>Aucune page ne les utilise : sans effet.</td>
+</tr>
+<tr>
+<td>Serveur réel non encore vérifié</td>
+<td>Les identifiants SSH transmis sont refusés ; les ports 80 et 443 sont fermés.</td>
+<td>Voir l'annexe A ; reprendre les § 2 à 10 dès l'accès obtenu.</td>
+</tr>
+<tr>
+<td><code>/assets/</code> répond 403</td>
+<td>Les listes de fichiers sont désactivées.</td>
+<td>Normal : les feuilles de style et images restent servies.</td>
+</tr>
+</tbody>
+</table></div>
+<hr>
+</section>
+<section id="s16"><h2>Annexe A — Check-list à transmettre à l&#x27;hébergeur</h2>
+<ul>
+<li>☐ Nom d'utilisateur SSH et méthode de connexion (clé ou mot de passe) pour 169.58.104.110</li>
+<li>☐ Ce compte dispose de <code>sudo</code></li>
+<li>☐ Restrictions d'accès SSH éventuelles (adresses IP autorisées)</li>
+<li>☐ Ouverture des ports <strong>80</strong> et <strong>443</strong> en entrée</li>
+<li>☐ Port <strong>3306</strong> non exposé</li>
+<li>☐ Accès sortant HTTPS vers <code>github.com</code> et Let's Encrypt</li>
+<li>☐ Ubuntu 24.04 LTS confirmé ; logiciels déjà installés (serveur web, PHP, MySQL) et leurs versions</li>
+<li>☐ Ressources : vCPU, RAM, disque</li>
+<li>☐ Solution de copie des sauvegardes hors du serveur</li>
+</ul>
+</section>
+<section id="s17"><h2>Annexe B — Fichiers fournis</h2>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Fichier</th>
+<th>Rôle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deploy.sh</code></td>
+<td>Installation et mises à jour (sauvegarde, schéma, droits, rechargement)</td>
+</tr>
+<tr>
+<td><code>sql/installer_schema_mysql.sh</code></td>
+<td>Schéma complet sur base vide + suppression des données de démonstration</td>
+</tr>
+<tr>
+<td><code>tools/creer_superadmin.php</code></td>
+<td>Création du premier compte (ligne de commande uniquement)</td>
+</tr>
+<tr>
+<td><code>docs/deploiement/nginx-stockapp.conf</code></td>
+<td>Site Nginx</td>
+</tr>
+<tr>
+<td><code>docs/deploiement/apache-stockapp.conf</code></td>
+<td>Site Apache (variante)</td>
+</tr>
+<tr>
+<td><code>docs/deploiement/php-stockapp.ini</code></td>
+<td>Réglages PHP</td>
+</tr>
+<tr>
+<td><code>docs/deploiement/cron-stockapp</code></td>
+<td>Tâches planifiées → <code>/etc/cron.d/stockapp</code></td>
+</tr>
+<tr>
+<td><code>docs/deploiement/logrotate-stockapp</code></td>
+<td>Rotation des journaux → <code>/etc/logrotate.d/stockapp</code></td>
+</tr>
+</tbody>
+</table></div>
+</section>
+<section id="s18"><h2>Annexe C — Résultats des essais (09/10/2026)</h2>
+<p>Environnement : Ubuntu 24.04, Nginx 1.24 / Apache 2.4.58, PHP 8.3.6,
+MySQL 8.0.46 local, compte MySQL limité à sa base.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Essai</th>
+<th>Résultat</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Première installation par <code>deploy.sh</code></td>
+<td>116 tables, 5 contrôles de schéma OK, base vide (19 référentiels seulement)</td>
+</tr>
+<tr>
+<td>Création du super-administrateur</td>
+<td>Compte créé (bcrypt coût 12) ; second lancement, mot de passe faible et confirmation différente refusés</td>
+</tr>
+<tr>
+<td>Connexion + Accueil, Tableau de bord, Dashboard KPI, Point EMUCI, Équipements, Utilisateurs, Vue stock</td>
+<td>200, aucune erreur PHP ni SQL</td>
+</tr>
+<tr>
+<td>Export Excel</td>
+<td>Fichier <code>.xlsx</code> valide</td>
+</tr>
+<tr>
+<td>Adresses sensibles (<code>.env</code>, <code>.git</code>, <code>sql/</code>, sauvegardes, <code>deploy.sh</code>, <code>composer.json</code>, <code>vendor/</code>, <code>includes/</code>, <code>docs/</code>, <code>tools/</code>, <code>migrate_site_id.php</code>, <code>Dockerfile</code>, script dans <code>uploads/</code>)</td>
+<td>Nginx : toutes 404 — Apache : toutes 403</td>
+</tr>
+<tr>
+<td><code>tools/creer_superadmin.php</code> depuis le web</td>
+<td>404</td>
+</tr>
+<tr>
+<td>Réglages PHP vus par PHP-FPM</td>
+<td>50M / 55M / 256M / 300 s / Africa/Abidjan / erreurs masquées</td>
+</tr>
+<tr>
+<td>Tâche des 5 minutes (www-data) et sauvegarde nocturne (root)</td>
+<td>OK ; sauvegarde complète (114 tables + 2 vues)</td>
+</tr>
+<tr>
+<td>Restauration d'une sauvegarde par le compte de l'application</td>
+<td>116 tables rechargées</td>
+</tr>
+<tr>
+<td>Mise à jour par <code>deploy.sh</code> (dépôt appartenant à www-data)</td>
+<td><code>git pull</code> OK, nouvelle migration signalée, base préservée</td>
+</tr>
+</tbody>
+</table></div>
+<p>Deux défauts trouvés pendant ces essais et corrigés dans cette version :
+l'installation échouait avec un compte MySQL limité (vues déclarées
+<code>DEFINER=root</code>), et la sauvegarde signalait une erreur de droits
+(<code>--no-tablespaces</code> manquant). Avec l'ancien <code>deploy.sh</code>, la deuxième mise
+à jour aurait aussi échoué (Git refuse en root un dossier appartenant à
+<code>www-data</code>) : c'est corrigé.</p>
+</section>
+<footer><p>Document interne EMUCI — projet NSIIV.</p></footer>
+</main>
+</div>
+<div class="impr-pied" style="margin-top:10mm;padding-top:4mm;border-top:1px solid #c3ccdf;
+     font-size:9pt;color:#4d5876">
+  Manuel de déploiement — serveur VPS — ERP EMUCI — document interne. État du logiciel au commit
+  <code>1957743 (vps-mysql)</code>. Toute évolution fonctionnelle rend une section caduque :
+  vérifiez la version avant de vous y fier.<br>
+  Auteur : GAYE Emmanuel — gayerodrigue@gmail.com — <span style="white-space:nowrap">+225 01 03 55 96 52</span>
+</div>
+
+<script>document.body.dataset.pret = '1';</script>
+</body>
+</html>

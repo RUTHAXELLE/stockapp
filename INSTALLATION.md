@@ -1,3 +1,6 @@
+> **Obsolète pour le serveur VPS** — suivre [docs/MANUEL_DEPLOIEMENT_VPS.md](docs/MANUEL_DEPLOIEMENT_VPS.md).
+> Les prérequis ci-dessous (PHP 7.4, MySQL 5.7) ne sont plus valables : PHP 8.2 minimum, MySQL 8.0.
+
 # StockApp — Guide d'installation complet
 
 ## Prérequis

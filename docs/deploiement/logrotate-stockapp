@@ -1,0 +1,9 @@
+# À copier dans /etc/logrotate.d/stockapp
+/var/log/stockapp/*.log {
+    weekly
+    rotate 8
+    compress
+    missingok
+    notifempty
+    create 0640 www-data www-data
+}

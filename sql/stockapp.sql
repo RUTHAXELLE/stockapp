@@ -9685,7 +9685,7 @@ CREATE TABLE `v_cout_mensuel_site` (
 --
 DROP TABLE IF EXISTS `v_cout_hebdo_site`;
 
-CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v_cout_hebdo_site`  AS SELECT `s`.`id` AS `site_id`, `s`.`nom` AS `site_nom`, `s`.`type` AS `site_type`, year(`lc`.`date_livraison`) AS `annee`, week(`lc`.`date_livraison`,1) AS `semaine`, str_to_date(concat(year(`lc`.`date_livraison`),' ',week(`lc`.`date_livraison`,1),' Monday'),'%X %V %W') AS `debut_semaine`, coalesce(sum(`lc`.`prix_total`),0) AS `cout_total`, coalesce(sum(`lc`.`quantite`),0) AS `qte_total`, count(distinct `lc`.`consommable_id`) AS `nb_articles` FROM (`sites` `s` left join `livraisons_consommables` `lc` on(`lc`.`site_id` = `s`.`id`)) WHERE `s`.`actif` = 1 GROUP BY `s`.`id`, year(`lc`.`date_livraison`), week(`lc`.`date_livraison`,1) ;
+CREATE ALGORITHM=UNDEFINED SQL SECURITY DEFINER VIEW `v_cout_hebdo_site`  AS SELECT `s`.`id` AS `site_id`, `s`.`nom` AS `site_nom`, `s`.`type` AS `site_type`, year(`lc`.`date_livraison`) AS `annee`, week(`lc`.`date_livraison`,1) AS `semaine`, str_to_date(concat(year(`lc`.`date_livraison`),' ',week(`lc`.`date_livraison`,1),' Monday'),'%X %V %W') AS `debut_semaine`, coalesce(sum(`lc`.`prix_total`),0) AS `cout_total`, coalesce(sum(`lc`.`quantite`),0) AS `qte_total`, count(distinct `lc`.`consommable_id`) AS `nb_articles` FROM (`sites` `s` left join `livraisons_consommables` `lc` on(`lc`.`site_id` = `s`.`id`)) WHERE `s`.`actif` = 1 GROUP BY `s`.`id`, year(`lc`.`date_livraison`), week(`lc`.`date_livraison`,1) ;
 
 -- --------------------------------------------------------
 
@@ -9694,7 +9694,7 @@ CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW 
 --
 DROP TABLE IF EXISTS `v_cout_mensuel_site`;
 
-CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v_cout_mensuel_site`  AS SELECT `s`.`id` AS `site_id`, `s`.`nom` AS `site_nom`, `s`.`type` AS `site_type`, year(`lc`.`date_livraison`) AS `annee`, month(`lc`.`date_livraison`) AS `mois`, date_format(`lc`.`date_livraison`,'%Y-%m') AS `mois_label`, coalesce(sum(`lc`.`prix_total`),0) AS `cout_total`, coalesce(sum(`lc`.`quantite`),0) AS `qte_total`, count(distinct `lc`.`consommable_id`) AS `nb_articles` FROM (`sites` `s` left join `livraisons_consommables` `lc` on(`lc`.`site_id` = `s`.`id`)) WHERE `s`.`actif` = 1 GROUP BY `s`.`id`, year(`lc`.`date_livraison`), month(`lc`.`date_livraison`) ;
+CREATE ALGORITHM=UNDEFINED SQL SECURITY DEFINER VIEW `v_cout_mensuel_site`  AS SELECT `s`.`id` AS `site_id`, `s`.`nom` AS `site_nom`, `s`.`type` AS `site_type`, year(`lc`.`date_livraison`) AS `annee`, month(`lc`.`date_livraison`) AS `mois`, date_format(`lc`.`date_livraison`,'%Y-%m') AS `mois_label`, coalesce(sum(`lc`.`prix_total`),0) AS `cout_total`, coalesce(sum(`lc`.`quantite`),0) AS `qte_total`, count(distinct `lc`.`consommable_id`) AS `nb_articles` FROM (`sites` `s` left join `livraisons_consommables` `lc` on(`lc`.`site_id` = `s`.`id`)) WHERE `s`.`actif` = 1 GROUP BY `s`.`id`, year(`lc`.`date_livraison`), month(`lc`.`date_livraison`) ;
 
 --
 -- Index pour les tables déchargées
