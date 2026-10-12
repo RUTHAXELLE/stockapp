@@ -73,7 +73,8 @@ FICHIERS="stockapp.sql demandes_internes_mysql.sql agents_mysql.sql achats_mysql
  migration_preferences_affichage_mysql.sql migration_correction_point_emuci_mysql.sql
  migration_equipements_emplacement_mysql.sql migration_observations_suivi_mysql.sql
  migration_referentiels_capacites_mysql.sql migration_rivets_seuil_alerte_mysql.sql
- migration_tracabilite_endommagements_mysql.sql"
+ migration_tracabilite_endommagements_mysql.sql
+ migration_import_optotrace_corrections_saisie_mysql.sql"
 
 echo "==> Installation du schéma dans $DB_NAME@$DB_HOST"
 for f in $FICHIERS; do
@@ -97,6 +98,7 @@ verif "di_demandes.ticket_glpi et site_id" "SELECT COUNT(*) = 2 FROM information
 verif "rivets : un stock par site ET par type" "SELECT COUNT(*) = 0 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'op_stock_rivets' AND index_name = 'uq_site'"
 verif "tables d'octobre 2026 (endommagements, observations, corrections EMUCI, PMMA)" "SELECT COUNT(*) = 5 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('op_endommagements','op_observations','op_observation_relances','corrections_point_emuci','op_types_pmma')"
 verif "op_stock_rivets.seuil_alerte et equipements.emplacement" "SELECT COUNT(*) = 2 FROM information_schema.columns WHERE table_schema = DATABASE() AND ((table_name = 'op_stock_rivets' AND column_name = 'seuil_alerte') OR (table_name = 'equipements' AND column_name = 'emplacement'))"
+verif "import OptoTrace et corrections GSB acceptés en mode strict" "SELECT (SELECT is_nullable FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'import_optotrace' AND column_name = 'plate_number') = 'YES' AND (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'demandes_correction_saisie' AND column_name IN ('bobine_id','site_id','gsb_id','date_cible','films_pj','films_emuci','ecart','notes_gsb')) = 8"
 [ "$ECHEC" = "0" ] && echo "==> Schéma complet." || { echo "==> Schéma INCOMPLET : ne pas continuer."; exit 1; }
 
 if [ "$AVEC_DEMO" = "1" ]; then
