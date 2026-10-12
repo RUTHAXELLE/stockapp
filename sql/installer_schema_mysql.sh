@@ -35,9 +35,15 @@ AVEC_DEMO=0
 [ "${1:-}" = "--avec-demo" ] && AVEC_DEMO=1
 
 cd "$(dirname "$0")/.." || exit 1
-[ -f .env ] || { echo "ERREUR : .env manquant à la racine de l'application" >&2; exit 1; }
+# Une variable d'environnement DB_* l'emporte sur .env : c'est ce qui
+# permet à tools/verifier_vps.sh et à docker/schema.sh d'installer des
+# bases jetables. Sur le serveur, aucune n'est définie : seul .env compte.
+[ -f .env ] || [ -n "${DB_NAME:-}" ] || { echo "ERREUR : .env manquant à la racine de l'application" >&2; exit 1; }
 
-lire() { grep -E "^$1=" .env | head -1 | cut -d= -f2- | tr -d '\r' | sed -e 's/^["'\'']//' -e 's/["'\'']$//'; }
+lire() {
+    if [ -n "${!1:-}" ]; then printf '%s' "${!1}"; return; fi
+    [ -f .env ] && grep -E "^$1=" .env | head -1 | cut -d= -f2- | tr -d '\r' | sed -e 's/^["'\'']//' -e 's/["'\'']$//'
+}
 DB_HOST="$(lire DB_HOST)"; DB_HOST="${DB_HOST:-localhost}"
 DB_PORT="$(lire DB_PORT)"; DB_PORT="${DB_PORT:-3306}"
 DB_NAME="$(lire DB_NAME)"; DB_USER="$(lire DB_USER)"

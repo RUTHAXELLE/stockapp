@@ -1,5 +1,27 @@
 # ERP EMUCI — Contexte projet pour Claude Code
 
+## ⚠️ Cette branche : `vps-mysql` (production VPS, MySQL 8)
+
+Le reste de ce fichier décrit la branche `main` (PostgreSQL / Render). Sur
+`vps-mysql`, ce qui change :
+
+- **Dépôt / push :** `RUTHAXELLE/stockapp`, branche `vps-mysql` uniquement —
+  jamais `main` de RUTHAXELLE. Dossier de travail dédié : `Prod\stockapp-vps`.
+- **Production :** serveur VPS `erp.digimmat.ci` (Ubuntu 24.04, Nginx +
+  PHP-FPM 8.3, MySQL 8.0 strict), base installée vide le 09/10/2026.
+  Déploiement : `sudo ./deploy.sh` sur le serveur, puis les migrations
+  signalées — cf. `docs/MANUEL_DEPLOIEMENT_VPS.md`.
+- **SQL :** syntaxe MySQL uniquement (pas de `::date`, `ILIKE`,
+  `FILTER (WHERE…)`, `ON CONFLICT`, `||`, `CURRENT_DATE - n`…). Toute
+  évolution de schéma = `sql/migration_<sujet>_mysql.sql` rejouable, ajoutée
+  à la liste `FICHIERS` de `sql/installer_schema_mysql.sh`.
+- **Avant tout push :** `bash tools/verifier_vps.sh` doit réussir (rejoué
+  par GitHub Actions, `.github/workflows/verif-vps.yml`).
+- **Local :** `docker compose up -d --build` → http://localhost:8081, voir
+  `DEV_LOCAL.md`.
+
+---
+
 ## Présentation
 
 Application web de gestion de stock industriel (bobines, équipements, opérations terrain) pour EMU-CI dans le cadre du projet NSIIV (Nouveau Système d'Immatriculation des Véhicules).

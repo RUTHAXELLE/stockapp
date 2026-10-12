@@ -1,0 +1,27 @@
+# ============================================================
+#  Vérification de la branche vps-mysql à chaque push
+#
+#  Même contrôle qu'en local (bash tools/verifier_vps.sh) : MySQL 8 en
+#  mode strict, schéma installé comme en production avec un compte
+#  limité, puis syntaxe PHP, restes PostgreSQL, INSERT contre le schéma
+#  et ouverture de chaque écran. Un résultat rouge signale un push qui
+#  casserait la production : ne pas lancer deploy.sh sur le serveur.
+# ============================================================
+name: Vérification vps-mysql
+
+on:
+  push:
+    branches: [vps-mysql]
+  pull_request:
+    branches: [vps-mysql]
+  workflow_dispatch:
+
+jobs:
+  verifier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Contrôle complet (schéma de production + code)
+        run: bash tools/verifier_vps.sh

@@ -83,55 +83,12 @@ switch ($action) {
 
     // ── CRÉER
     case 'create':
-        require_permission('equipements', 'can_create');
-        $v = validate_input([
-            'nomenclature_id'       => 'int',
-            'numero_serie_origine'  => 'string',
-            'etat'                  => 'string',
-            'marque'                => 'string',
-            'modele'                => 'string',
-            'observations'          => 'string',
-            'site_id'               => 'nullable_int',
-            'utilisateur_id'        => 'nullable_int',
-            'date_acquisition'      => 'nullable_date',
-            'date_mise_en_service'  => 'nullable_date',
-        ]);
-        if (!$v['valid']) json_response(false, implode(' ', $v['errors']));
-        $d = $v['data'];
-
-        $nom = db_fetch_one("SELECT * FROM nomenclatures WHERE id = ?", [$d['nomenclature_id']]);
-        if (!$nom) json_response(false, 'Nomenclature introuvable.');
-
-        $d['date_fin_cycle'] = calc_fin_cycle($d['date_mise_en_service'], $nom['duree_vie_mois']);
-        $d['created_by']     = $user['id'];
-
-        db_begin();
-        try {
-            db_query(
-                "INSERT INTO equipements
-                 (nomenclature_id, numero_serie_origine, etat, marque, modele, observations,
-                  site_id, utilisateur_id, date_acquisition, date_mise_en_service, date_fin_cycle, created_by)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                [$d['nomenclature_id'], $d['numero_serie_origine'], $d['etat'],
-                 $d['marque'], $d['modele'], $d['observations'],
-                 $d['site_id'], $d['utilisateur_id'],
-                 $d['date_acquisition'], $d['date_mise_en_service'], $d['date_fin_cycle'], $d['created_by']]
-            );
-            $new_id = (int)db_last_id();
-            $eq     = db_fetch_one("SELECT numero_serie_interne FROM equipements WHERE id=?", [$new_id]);
-            db_query(
-                "INSERT INTO mouvements_equipements (equipement_id, type, site_dest_id, notes, created_by)
-                 VALUES (?, 'entree', ?, 'Entrée en stock initiale', ?)",
-                [$new_id, $d['site_id'], $user['id']]
-            );
-            audit_log($user['id'], 'CREATE', 'equipements', $new_id,
-                "Création équipement {$eq['numero_serie_interne']}", null, $d);
-            db_commit();
-            json_response(true, "Équipement {$eq['numero_serie_interne']} créé.", ['id' => $new_id, 'numero' => $eq['numero_serie_interne']]);
-        } catch (Exception $e) {
-            db_rollback();
-            json_response(false, 'Erreur : ' . $e->getMessage());
-        }
+        // Désactivée (12/10/2026) : aucun écran ne l'appelle — la création
+        // passe par pages/equipements.php, qui attribue le numéro interne
+        // (NOMENCLATURE-EMUCI-0001) et le numéro chrono. Cette version-ci
+        // ne les fournissait pas : MySQL 8 strict aurait refusé l'INSERT
+        // (numero_serie_interne et numero_chrono obligatoires).
+        json_response(false, "Création d'équipement : utiliser l'écran Équipements.");
         break;
 
     // ── MODIFIER

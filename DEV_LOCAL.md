@@ -1,10 +1,24 @@
-# Développement local
+# Développement local — branche `vps-mysql`
 
-Jusqu'ici le code ne pouvait être que relu : PHP n'est pas installé sur la
-machine, donc toute vérification passait par de l'analyse statique ou un banc
-de test HTML reconstitué. Plusieurs conclusions fausses en sont venues.
+Cette branche est celle du serveur de production (MySQL 8). On y travaille
+directement, dans son propre dossier (`Prod\stockapp-vps`), sans passer par
+`main` : les erreurs d'octobre 2026 venaient presque toutes de requêtes
+écrites pour PostgreSQL puis traduites après coup, sans être exécutées
+contre un vrai MySQL.
 
-L'application tourne maintenant en local, dans deux conteneurs.
+## Le circuit
+
+1. Modifier le code dans ce dossier.
+2. Tester sur <http://localhost:8081>.
+3. Lancer le contrôle complet : `bash tools/verifier_vps.sh` — il doit finir
+   par « ✅ Vérification réussie ».
+4. `git commit` puis `git push` (ce dossier ne pousse que vers
+   `RUTHAXELLE/stockapp`, branche `vps-mysql`).
+5. Sur GitHub, onglet **Actions** : le même contrôle se relance. Rouge = ne
+   pas déployer.
+6. Sur le serveur : `cd /var/www/stockapp && sudo ./deploy.sh`, puis jouer
+   les nouvelles migrations qu'il signale
+   (cf. `docs/MANUEL_DEPLOIEMENT_VPS.md` § 12).
 
 ## Démarrer
 
@@ -12,71 +26,76 @@ L'application tourne maintenant en local, dans deux conteneurs.
 docker compose up -d --build
 ```
 
-Puis <http://localhost:8080>. Dans VS Code, `Ctrl+Shift+B` fait la même chose,
-et les autres commandes sont dans **Tasks: Run Task**.
+Première fois : environ 2 minutes. Le service `schema` installe la base avec
+`sql/installer_schema_mysql.sh` — le même script qu'en production — puis
+s'arrête ; `docker compose logs schema` affiche son bilan. Ensuite
+<http://localhost:8081>.
 
 Le code est monté depuis le disque : un fichier enregistré est pris en compte
-au rechargement de la page, sans reconstruire l'image.
+au rechargement de la page. Les erreurs PHP : `docker compose logs -f app`.
 
-## Ce que contient la base
+Repartir d'une base neuve : `docker compose down -v && docker compose up -d`.
 
-Le dump `sql/stockapp_pg.sql` puis les migrations de `sql/`, dans l'ordre où
-elles ont été écrites — 71 tables, 17 rôles, 21 sites. Le chargement n'a lieu
-qu'à la création du volume. Pour repartir de zéro :
+## Ce qui est identique à la production
 
-```bash
-docker compose down -v && docker compose up -d
-```
+| | Production | Local |
+|---|---|---|
+| MySQL | 8.0, mode strict | 8.0 (image `mysql:8.0`), mode strict |
+| Schéma | `sql/installer_schema_mysql.sh` | le même script |
+| Compte MySQL de l'application | droits sur sa seule base | idem (`stockapp`, jamais root) |
+| PHP | 8.3 | 8.3 |
+| Données | base vide au départ | **jeu de démonstration** (`--avec-demo`) |
+| Serveur web | Nginx + PHP-FPM | serveur intégré de PHP |
 
-Le bilan du chargement s'affiche dans `docker compose logs db` : il indique le
-nombre de tables et les erreurs SQL éventuelles. Le lire, c'est là qu'on voit
-si une migration n'est pas passée.
+La différence de serveur web ne joue que sur le blocage des fichiers
+sensibles, contrôlé par la configuration Nginx du manuel de déploiement.
 
-## Comptes de test
+## Compte local
 
-Ils n'existent que dans la base locale et ne sont pas créés automatiquement :
-c'est volontaire, aucun compte à mot de passe connu ne doit pouvoir se
-retrouver en production. Pour les (re)créer, adapter et exécuter :
+`admin@stockapp.local` / `Admin@Local1` (super-administrateur du jeu de
+démonstration). Ce mot de passe est posé par `docker/schema.sh` dans la base
+locale uniquement : une installation de production (`deploy.sh`, sans
+`--avec-demo`) vide la table des utilisateurs.
 
-```bash
-docker compose exec -T app php <<'PHP'
-<?php
-require '/var/www/html/includes/db.php';
-$hash = password_hash('devlocal2026', PASSWORD_BCRYPT, ['cost' => 12]);
-$site = db_fetch_value("SELECT id FROM sites WHERE actif=1 ORDER BY id LIMIT 1");
-foreach ([['lecteur',4,null],['coord',6,$site],['superv',8,null],
-          ['gsb',13,null],['gestop',14,null],['super',1,null]] as [$n,$role,$sid]) {
-    $mail = "$n.dev@local.test";
-    $ex = db_fetch_value("SELECT id FROM users WHERE email=?", [$mail]);
-    if ($ex) db_query("UPDATE users SET password_hash=?,role_id=?,site_id=?,actif=1 WHERE id=?", [$hash,$role,$sid,$ex]);
-    else db_query("INSERT INTO users (nom,prenom,email,password_hash,role_id,site_id,actif) VALUES (?,?,?,?,?,?,1)",
-                  ['Dev',ucfirst($n),$mail,$hash,$role,$sid]);
-}
-PHP
-```
+Pour d'autres rôles, créer des comptes dans Administration → Utilisateurs.
 
-Le domaine doit avoir un point : `auth_login()` passe par
-`FILTER_VALIDATE_EMAIL`, qui refuse `@local`.
+## Modifier le schéma
+
+Toute évolution de structure passe par une migration :
+
+1. créer `sql/migration_<sujet>_mysql.sql`, **rejouable** (MySQL 8 n'a pas
+   `ADD COLUMN IF NOT EXISTS` : passer par `information_schema` et une
+   requête préparée, cf. `sql/migration_rivets_seuil_alerte_mysql.sql`) ;
+2. l'ajouter à la fin de la liste `FICHIERS` de
+   `sql/installer_schema_mysql.sh` — le contrôle échoue sinon ;
+3. `docker compose down -v && docker compose up -d` pour l'essayer sur une
+   base neuve, puis `bash tools/verifier_vps.sh`.
+
+En production, `deploy.sh` liste les nouvelles migrations après le
+`git pull` ; l'administrateur les joue (manuel, § 12).
+
+## Ce que vérifie `tools/verifier_vps.sh`
+
+Sur deux bases jetables (la base locale `stockapp` n'est pas touchée) :
+
+- installation comme en production (base vide) ;
+- installation avec le jeu de démonstration, puis `tools/verifier.php` :
+  1. syntaxe PHP de chaque fichier ;
+  2. restes de syntaxe PostgreSQL dans les requêtes (`::date`, `ILIKE`,
+     `FILTER (WHERE …)`, `ON CONFLICT`, `CURRENT_DATE - 30`…) ;
+  3. chaque `INSERT` confronté au schéma : table et colonnes existantes,
+     colonnes obligatoires fournies ; chaque migration MySQL jouée par
+     l'installateur ;
+  4. chaque écran de `pages/` ouvert en super-administrateur, sans erreur
+     fatale ni erreur SQL.
+
+Ce contrôle ne remplace pas un essai à l'écran : il ne voit ni les
+formulaires envoyés (POST), ni les écrans des autres rôles.
 
 ## Rendre une page en ligne de commande
 
-La connexion se fait en AJAX uniquement (`is_ajax()`), d'où l'en-tête :
-
 ```bash
-curl -s -c j.txt -o /dev/null http://localhost:8080/login.php
-curl -s -b j.txt -c j.txt -H 'X-Requested-With: XMLHttpRequest' \
-     -X POST -d 'email=super.dev@local.test&password=devlocal2026' \
-     http://localhost:8080/login.php
-curl -s -b j.txt http://localhost:8080/pages/dashboard.php > sortie.html
+docker compose exec -T app php tools/rendre_page.php pages/kpi_dashboard.php 1 > sortie.html
 ```
 
-## Viser Neon plutôt que la base locale
-
-Ne pas mettre d'identifiants Neon dans `docker-compose.yml`. Créer un `.env`
-(non versionné) et ajouter `env_file: [.env]` au service `app`. À faire avec
-prudence : le conteneur écrirait alors dans la base de production.
-
-## Ce que ce montage ne change pas
-
-Render déploie à partir du `Dockerfile` seul et ignore `docker-compose.yml`.
-Rien ici n'a d'effet sur la production.
+(le 2e argument est l'id de l'utilisateur connecté).

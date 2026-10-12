@@ -395,6 +395,11 @@ La base étant vide, le super-administrateur doit, dans l'ordre :
 
 ## 12. Mettre à jour l'application
 
+**Avant de mettre à jour**, vérifier sur GitHub (dépôt `RUTHAXELLE/stockapp`,
+onglet **Actions**, « Vérification vps-mysql ») que le dernier push sur
+`vps-mysql` est au vert. Rouge : ne pas déployer, la version casserait la
+production (détail du contrôle : `DEV_LOCAL.md`).
+
 ```bash
 cd /var/www/stockapp && sudo ./deploy.sh
 ```

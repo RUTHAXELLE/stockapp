@@ -1,9 +1,10 @@
-FROM php:8.2-cli
+FROM php:8.3-cli
 
-# Extensions PHP requises (MySQL — variante VPS, cf. DEPLOY-VPS-MYSQL.md)
-# Ce Dockerfile n'est pas utilise par le deploiement VPS reel (Apache +
-# PHP-FPM installes directement sur la machine, cf. le guide) — il sert
-# uniquement a tester localement cette branche contre un vrai MySQL.
+# Extensions PHP requises (MySQL — branche vps-mysql)
+# Ce Dockerfile n'est pas utilise par le serveur de production (Nginx +
+# PHP-FPM 8.3 installes sur la machine, cf. docs/MANUEL_DEPLOIEMENT_VPS.md)
+# — il sert a developper et verifier localement cette branche contre un
+# vrai MySQL, avec la meme version de PHP qu'en production.
 RUN apt-get update && apt-get install -y \
     libpng-dev libjpeg-dev libfreetype6-dev \
     libzip-dev libonig-dev libxml2-dev default-mysql-client \
@@ -39,7 +40,9 @@ RUN echo "variables_order = EGPCS" >> /usr/local/etc/php/php.ini \
     && echo "expose_php = Off" >> /usr/local/etc/php/php.ini \
     && echo "upload_max_filesize = 50M" >> /usr/local/etc/php/php.ini \
     && echo "post_max_size = 55M" >> /usr/local/etc/php/php.ini \
-    && echo "memory_limit = 256M" >> /usr/local/etc/php/php.ini
+    && echo "memory_limit = 256M" >> /usr/local/etc/php/php.ini \
+    && echo "max_execution_time = 300" >> /usr/local/etc/php/php.ini \
+    && echo "date.timezone = Africa/Abidjan" >> /usr/local/etc/php/php.ini
 
 # Installer Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer

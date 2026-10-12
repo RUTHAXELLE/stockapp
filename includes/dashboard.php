@@ -1880,7 +1880,7 @@ function dash_registre(): array {
                         COALESCE(SUM(nb_semi),0)    AS semi,
                         COALESCE(SUM(nb_moto),0)    AS mo
                  FROM op_points_journaliers
-                 WHERE date_point > CURRENT_DATE - 30 $ws
+                 WHERE date_point > CURRENT_DATE - INTERVAL 30 DAY $ws
                  GROUP BY date_point ORDER BY date_point", $as);
             $par = [];
             foreach ($rows as $r) $par[(string)$r['date_point']] = $r;

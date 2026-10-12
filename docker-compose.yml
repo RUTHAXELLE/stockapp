@@ -1,22 +1,22 @@
 # ============================================================
 #  Environnement de développement local — ERP EMUCI / StockApp
-#  Variante VPS (MySQL) — branche `vps-mysql`
+#  Branche `vps-mysql` (MySQL 8, comme le serveur de production)
 # ============================================================
 #
-#  Le déploiement VPS réel n'utilise pas Docker (Apache + PHP-FPM installés
-#  directement sur la machine, cf. DEPLOY-VPS-MYSQL.md). Ce fichier sert
-#  uniquement à faire tourner l'application localement contre un vrai MySQL,
-#  pour vérifier le code au lieu de le relire.
+#  Le serveur de production n'utilise pas Docker (Nginx + PHP-FPM + MySQL
+#  installés sur la machine, cf. docs/MANUEL_DEPLOIEMENT_VPS.md). Ce
+#  fichier reproduit localement ce qui compte pour le code : MySQL 8 en
+#  mode strict, schéma installé par sql/installer_schema_mysql.sh, et
+#  connexion avec un compte limité à sa base — pas root.
 #
-#    docker compose up -d --build     démarrer
+#    docker compose up -d --build     démarrer (1re fois : ~2 min)
 #    docker compose logs -f app       suivre les erreurs PHP
 #    docker compose down              arrêter (la base est conservée)
-#    docker compose down -v           arrêter et repartir d'une base vierge
+#    docker compose down -v           arrêter et repartir d'une base neuve
 #
-#  L'application écoute sur http://localhost:8081 (8080 est déjà pris par
-#  le sandbox PostgreSQL de `main`, cf. docker-compose.yml de cette branche
-#  vs celui de main — les deux peuvent tourner en parallèle).
-#  La base est joignable depuis la machine sur le port 33061.
+#  Application : http://localhost:8081 — compte local dans DEV_LOCAL.md.
+#  Base joignable depuis la machine sur le port 33061.
+#  Contrôle avant push : bash tools/verifier_vps.sh
 
 services:
   db:
@@ -25,24 +25,26 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: stockapp
+      # Compte de l'application : tous les droits sur sa base, aucun
+      # ailleurs — comme en production.
       MYSQL_USER: stockapp
       MYSQL_PASSWORD: stockapp
     ports:
       - "33061:3306"
     volumes:
       - db-data:/var/lib/mysql
-      - ./sql:/sql:ro
-      # Ne s'exécute qu'à la création de la base, jamais aux démarrages
-      # suivants : comportement standard de l'image mysql officielle.
-      - ./docker/initdb.sh:/docker-entrypoint-initdb.d/10-charger.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -uroot -proot --silent"]
+      # Par le réseau et avec le compte de l'application : pendant son
+      # initialisation, l'image fait tourner un serveur temporaire sans
+      # réseau, qui répondrait à un simple ping avant que le compte existe.
+      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -ustockapp -pstockapp -e 'SELECT 1' stockapp"]
       interval: 3s
       timeout: 3s
       retries: 40
 
-  app:
-    build: .
+  # Installe le schéma une fois (base vide), puis s'arrête.
+  schema:
+    image: mysql:8.0
     depends_on:
       db:
         condition: service_healthy
@@ -50,8 +52,24 @@ services:
       DB_HOST: db
       DB_PORT: "3306"
       DB_NAME: stockapp
-      DB_USER: root
-      DB_PASS: root
+      DB_USER: stockapp
+      DB_PASS: stockapp
+    volumes:
+      - .:/app:ro
+    entrypoint: ["bash", "/app/docker/schema.sh"]
+    restart: "no"
+
+  app:
+    build: .
+    depends_on:
+      schema:
+        condition: service_completed_successfully
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: stockapp
+      DB_USER: stockapp
+      DB_PASS: stockapp
       APP_URL: http://localhost:8081
       APP_TIMEZONE: Africa/Abidjan
       PORT: "8080"
@@ -60,11 +78,8 @@ services:
     volumes:
       # Le code est monté depuis la machine : un fichier enregistré dans
       # l'éditeur est pris en compte au rechargement de la page, sans
-      # reconstruire l'image.
+      # reconstruire l'image (vendor/ est committé dans cette branche).
       - .:/var/www/html
-      # vendor/ n'existe pas sur la machine (il est committé dans cette
-      # branche, cf. DEPLOY-VPS-MYSQL.md) — rien à masquer ici, pas de
-      # volume nommé nécessaire contrairement à la variante PostgreSQL.
 
 volumes:
   db-data:
