@@ -100,7 +100,7 @@ echo
 echo "## 1. Aperçu (ne modifie rien)"
 echo
 echo '```bash'
-echo "cd /var/www/stockapp && sudo git fetch -q origin vps-mysql && sudo git log --oneline HEAD..$C"
+echo "cd /var/www/stockapp && sudo git -c safe.directory=/var/www/stockapp fetch -q origin vps-mysql && sudo git -c safe.directory=/var/www/stockapp log --oneline HEAD..$C"
 echo '```'
 echo
 echo "La première ligne affichée doit être \`$C\`. Si la commande n'affiche rien ou une autre version, ne pas continuer et prévenir le demandeur."
@@ -137,11 +137,11 @@ fi
 echo
 echo "## 4. Vérifications"
 echo
-echo "- \`cd /var/www/stockapp && sudo git log --oneline -1\` doit afficher \`$C\`."
+echo "- \`cd /var/www/stockapp && sudo git -c safe.directory=/var/www/stockapp log --oneline -1\` doit afficher \`$C\`."
 if [ "$TRACE" = 1 ]; then
     echo "- \`sudo tail -1 /var/log/stockapp/deploiements.txt\` : la ligne doit indiquer \`version $C\`. **Renvoyer cette ligne au demandeur.**"
 else
-    echo "- **Renvoyer au demandeur la ligne affichée par \`git log --oneline -1\`.**"
+    echo "- **Renvoyer au demandeur la ligne affichée par cette commande.**"
     [ "$TRACE_CIBLE" = 1 ] && echo "  (La trace \`/var/log/stockapp/deploiements.txt\` arrive avec cette mise à jour : elle sera remplie à partir du déploiement suivant.)"
 fi
 echo "- Se connecter sur https://erp.digimmat.ci et ouvrir l'accueil : pas de page d'erreur."
@@ -149,10 +149,14 @@ echo
 echo "## 5. Retour arrière (en cas de problème)"
 echo
 echo '```bash'
-echo "cd /var/www/stockapp && sudo git checkout $A"
+echo "cd /var/www/stockapp && sudo git -c safe.directory=/var/www/stockapp checkout $A"
 echo '```'
 echo
-echo "Puis restaurer la sauvegarde indiquée dans la ligne de \`deploiements.txt\` (manuel de déploiement, § 13 et § 14), et prévenir le demandeur."
+if [ "$TRACE" = 1 ]; then
+    echo "Puis restaurer la sauvegarde indiquée dans la ligne de \`deploiements.txt\` (manuel de déploiement, § 13 et § 14), et prévenir le demandeur."
+else
+    echo "Puis restaurer la sauvegarde affichée par \`deploy.sh\` (ligne « Sauvegarde DB -> … », la plus récente de \`/var/backups/stockapp/\`) — manuel de déploiement, § 13 et § 14 — et prévenir le demandeur."
+fi
 echo
 echo "## Changements inclus ($(git rev-list --count "$A..$C") commit(s))"
 echo
