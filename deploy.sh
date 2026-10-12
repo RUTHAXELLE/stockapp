@@ -72,7 +72,9 @@ if [ "$SKIP_PULL" != "1" ]; then
   git pull --ff-only origin "$BRANCH"
   # Les migrations d'une mise à jour ne sont pas jouées automatiquement
   # (cf. en-tête) : on les nomme pour que l'administrateur ne les oublie pas.
-  NOUVELLES="$(git diff --name-only --diff-filter=A "$AVANT" HEAD -- 'sql/*_mysql.sql' | grep -v 'demandes_internes_mysql.sql' || true)"
+  # --no-renames : une migration renommée doit être signalée comme nouvelle
+  # (sinon Git la voit comme un « R » et --diff-filter=A l'écarte).
+  NOUVELLES="$(git diff --no-renames --name-only --diff-filter=A "$AVANT" HEAD -- 'sql/*_mysql.sql' | grep -v 'demandes_internes_mysql.sql' || true)"
   if [ -n "$NOUVELLES" ]; then
     warn "Nouvelles migrations SQL à jouer APRÈS lecture (voir docs/MANUEL_DEPLOIEMENT_VPS.md) :"
     printf '      %s\n' $NOUVELLES
