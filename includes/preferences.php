@@ -168,7 +168,7 @@ function vues_listees(string $ecran): array {
         return db_fetch_all(
             "SELECT v.id, v.nom, v.filtres, v.partagee, v.user_id,
                     (v.user_id = ?) AS mienne,
-                    TRIM(COALESCE(u.prenom,'') || ' ' || COALESCE(u.nom,'')) AS auteur
+                    TRIM(CONCAT(COALESCE(u.prenom,''), ' ', COALESCE(u.nom,''))) AS auteur
                FROM vues_enregistrees v
                JOIN users u ON u.id = v.user_id
               WHERE v.ecran = ? AND (v.user_id = ? OR v.partagee = 1)

@@ -89,7 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
 
                         db_query(
                             "INSERT INTO op_stock_rivets (site_id,type_rivet,quantite) VALUES (?,?,?)
-                             ON CONFLICT (site_id,type_rivet) DO UPDATE SET quantite=EXCLUDED.quantite, updated_at=CURRENT_TIMESTAMP",
+                             ON DUPLICATE KEY UPDATE quantite=VALUES(quantite), updated_at=CURRENT_TIMESTAMP",
                             [$site_id, $type_rivet, $qte_new]
                         );
                         $nb_ok++;

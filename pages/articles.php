@@ -141,7 +141,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
                         if ($site_id !== null) {
                             db_query(
                                 "INSERT INTO stock_site (article_id,site_id,quantite) VALUES (?,?,?)
-                                 ON CONFLICT (article_id,site_id) DO UPDATE SET quantite=EXCLUDED.quantite",
+                                 ON DUPLICATE KEY UPDATE quantite=VALUES(quantite)",
                                 [$article_id, $site_id, $qte_site]
                             );
                         }

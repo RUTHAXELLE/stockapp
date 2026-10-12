@@ -92,11 +92,16 @@ Sur deux bases jetables (la base locale `stockapp` n'est pas touchée) :
 
 - installation comme en production (base vide) ;
 - installation avec le jeu de démonstration, puis `tools/verifier.php` :
-  1. syntaxe PHP de chaque fichier ;
+  1. syntaxe PHP de chaque fichier, et appels à des fonctions qui
+     n'existent nulle part (`notify_role()`…) — quelques défauts connus,
+     listés dans `tools/verifier.php` avec leur raison, sont affichés sans
+     bloquer ;
   2. restes de syntaxe PostgreSQL dans les requêtes (`::date`, `ILIKE`,
-     `FILTER (WHERE …)`, `ON CONFLICT`, `CURRENT_DATE - 30`…) ;
+     `FILTER (WHERE …)`, `ON CONFLICT`, `||`, `~`, `CAST(… AS INTEGER)`,
+     `CURRENT_DATE - 30`…) ;
   3. chaque `INSERT` confronté au schéma : table et colonnes existantes,
-     colonnes obligatoires fournies ; chaque migration MySQL jouée par
+     colonnes obligatoires fournies ; valeurs écrites en dur comparées aux
+     listes fermées (ENUM) ; chaque migration MySQL jouée par
      l'installateur ;
   4. chaque écran de `pages/` ouvert en super-administrateur, sans erreur
      fatale ni erreur SQL.

@@ -123,9 +123,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
                 $prochain_numero = function (string $code) use (&$seq_par_code): string {
                     if (!isset($seq_par_code[$code])) {
                         $seq_par_code[$code] = (int)db_fetch_value(
-                            "SELECT COALESCE(MAX((regexp_replace(numero_serie_interne,'.*-',''))::int),0)
+                            "SELECT COALESCE(MAX(CAST(REGEXP_REPLACE(numero_serie_interne,'.*-','') AS UNSIGNED)),0)
                              FROM equipements
-                             WHERE numero_serie_interne ~ ('^' || ? || '-[A-Z]+-[0-9]+$')",
+                             WHERE numero_serie_interne REGEXP CONCAT('^', ?, '-[A-Z]+-[0-9]+$')",
                             [$code]
                         );
                     }
@@ -254,12 +254,17 @@ function _doublons_equipements(string $categorie): array {
             SELECT e.id, e.numero_serie_interne, e.numero_serie_origine, e.marque, e.modele,
                    e.emplacement, e.date_acquisition, e.prix_achat, e.created_at,
                    n.libelle AS type_lib, s.nom AS site_nom,
-                   CASE WHEN COALESCE(TRIM(e.numero_serie_origine),'') <> ''
-                        THEN 'S:' || LOWER(TRIM(e.numero_serie_origine))
-                        ELSE 'P:' || COALESCE(e.nomenclature_id::text,'') || '|' || LOWER(COALESCE(TRIM(e.marque),''))
-                             || '|' || LOWER(COALESCE(TRIM(e.modele),'')) || '|' || COALESCE(e.site_id::text,'')
-                             || '|' || LOWER(COALESCE(TRIM(e.emplacement),'')) || '|' || COALESCE(e.date_acquisition::text,'')
-                   END AS cle,
+                   -- MySQL : CONCAT() et CAST(… AS CHAR) — || y vaut OR, la clé
+                   -- valait 0/1 et tous les équipements passaient pour doublons.
+                   -- COLLATE explicite : sans lui, comparer la clé à elle-même
+                   -- dans le IN (SELECT cle FROM base …) échoue (« Illegal mix
+                   -- of collations », colonnes et CAST n'ont pas la même).
+                   (CASE WHEN COALESCE(TRIM(e.numero_serie_origine),'') <> ''
+                        THEN CONCAT('S:', LOWER(TRIM(e.numero_serie_origine)))
+                        ELSE CONCAT('P:', COALESCE(CAST(e.nomenclature_id AS CHAR),''), '|', LOWER(COALESCE(TRIM(e.marque),'')),
+                             '|', LOWER(COALESCE(TRIM(e.modele),'')), '|', COALESCE(CAST(e.site_id AS CHAR),''),
+                             '|', LOWER(COALESCE(TRIM(e.emplacement),'')), '|', COALESCE(CAST(e.date_acquisition AS CHAR),''))
+                   END) COLLATE utf8mb4_unicode_ci AS cle,
                    (SELECT COUNT(*) FROM affectations_equipements  x WHERE x.equipement_id=e.id)
                  + (SELECT COUNT(*) FROM mouvements_equipements    x WHERE x.equipement_id=e.id)
                  + (SELECT COUNT(*) FROM interventions_maintenance x WHERE x.equipement_id=e.id)

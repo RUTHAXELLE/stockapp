@@ -22,6 +22,32 @@ function notif_mark_read(int $notif_id, int $user_id): void {
 function notif_mark_all_read(int $user_id): void {
     db_query("UPDATE notifications SET lu = 1 WHERE user_id = ? OR user_id IS NULL", [$user_id]);
 }
+/**
+ * Notifie (type 'info') tous les utilisateurs actifs d'un rôle, plus les
+ * Support IT dont le sous-rôle actif correspond (un Support IT
+ * « gestionnaire_bobines » fait le travail d'un Gestionnaire Stock
+ * Bobines). Appelée par pages/operations/bobines.php (bobine perdue) sans
+ * avoir jamais été définie : la déclaration de perte était enregistrée,
+ * mais l'utilisateur recevait une erreur et personne n'était prévenu.
+ */
+function notify_role(string $role_slug, string $titre, string $message, string $lien = ''): void {
+    $sous_role = [
+        'gestionnaire_stock_bobines' => 'gestionnaire_bobines',
+        'controleur_production'      => 'controleur_production',
+        'maintenance_info'           => 'maintenance',
+    ][$role_slug] ?? null;
+    $ids = db_fetch_all(
+        "SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id
+          WHERE u.actif = 1 AND r.slug = ?
+         UNION
+         SELECT sr.user_id FROM support_it_roles sr JOIN users u ON u.id = sr.user_id
+          WHERE sr.actif = 1 AND u.actif = 1 AND sr.sous_role = ?",
+        [$role_slug, $sous_role ?? '']
+    );
+    foreach ($ids as $u) {
+        notif_create('info', $titre, $message, (int)$u['id'], $lien);
+    }
+}
 function mailer_send($to, string $subject, string $body): bool {
     $autoload = __DIR__ . '/../vendor/autoload.php';
     if (!file_exists($autoload)) { error_log('PHPMailer non installé'); return false; }

@@ -141,7 +141,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
                         db_query(
                             "INSERT INTO stock_pmma_site (site_id,type_pmma,quantite,seuil_alerte)
                              VALUES (?,?,?,?)
-                             ON CONFLICT (site_id,type_pmma) DO UPDATE SET quantite=EXCLUDED.quantite, updated_at=CURRENT_TIMESTAMP",
+                             ON DUPLICATE KEY UPDATE quantite=VALUES(quantite), updated_at=CURRENT_TIMESTAMP",
                             [$site_id, $type, $qte_new, $catalogue_pmma[$type]['seuil_defaut'] ?? 10]
                         );
                         if ($delta !== 0) {
