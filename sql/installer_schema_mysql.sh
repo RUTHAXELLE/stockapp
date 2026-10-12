@@ -80,7 +80,8 @@ FICHIERS="stockapp.sql demandes_internes_mysql.sql agents_mysql.sql achats_mysql
  migration_equipements_emplacement_mysql.sql migration_observations_suivi_mysql.sql
  migration_referentiels_capacites_mysql.sql migration_rivets_seuil_alerte_mysql.sql
  migration_tracabilite_endommagements_mysql.sql
- migration_import_optotrace_corrections_saisie_mysql.sql"
+ migration_import_optotrace_plate_number_mysql.sql
+ migration_demandes_correction_saisie_structure_mysql.sql"
 
 echo "==> Installation du schéma dans $DB_NAME@$DB_HOST"
 for f in $FICHIERS; do
