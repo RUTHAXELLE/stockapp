@@ -25,6 +25,90 @@ $role_slug_r = $user['role_slug'] ?? '';
 $site_force_r = ($role_slug_r === 'coordinateur_site' && $user['site_id']) ? (int)$user['site_id'] : 0;
 $sites_list  = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
 
+// ── IMPORT EN MASSE (Excel/CSV) — remplace le stock (photo exacte), pas
+// une addition. Form classique (pas AJAX), même principe que
+// pages/equipements.php et pages/pmma.php.
+require_once __DIR__ . '/../../includes/import_helpers.php';
+
+if (($_GET['modele'] ?? '') === '1') {
+    import_generer_modele(
+        ['Site', 'Type Rivet', 'Quantité'],
+        [$sites_list[0]['nom'] ?? '', 'Gonflable', 300],
+        'modele_rivets.xlsx'
+    );
+}
+
+$import_result = null;
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichier_import'])) {
+    if (!can('rivets', 'can_create')) {
+        $import_result = ['ok' => false, 'erreur' => 'Accès refusé.'];
+    } else {
+        $ext = strtolower(pathinfo($_FILES['fichier_import']['name'], PATHINFO_EXTENSION));
+        if (!in_array($ext, ['xlsx','xls','csv'], true)) {
+            $import_result = ['ok' => false, 'erreur' => 'Format invalide. Utilisez .xlsx, .xls ou .csv.'];
+        } else {
+            try {
+                $rows = import_lire_fichier($_FILES['fichier_import']['tmp_name']);
+                if (empty($rows)) throw new Exception('Fichier vide.');
+
+                $headers = array_map('trim', $rows[0]);
+                $col = array_flip($headers);
+                $required = ['Site', 'Type Rivet', 'Quantité'];
+                $missing  = array_filter($required, fn($r) => !isset($col[$r]));
+                if ($missing) throw new Exception('Colonnes manquantes : ' . implode(', ', $missing) . '. Colonnes détectées : ' . implode(', ', array_filter($headers)));
+
+                $get = fn(array $row, string $k): string => isset($col[$k]) ? trim((string)($row[$col[$k]] ?? '')) : '';
+
+                $nb_ok = 0; $erreurs = [];
+                db_begin();
+                try {
+                    for ($i = 1; $i < count($rows); $i++) {
+                        $row = $rows[$i];
+                        if (!array_filter($row, fn($v) => trim((string)$v) !== '')) continue;
+                        $ln = $i + 1;
+
+                        $site_nom = $get($row, 'Site');
+                        $site_id  = $site_nom !== '' ? import_resoudre_site($site_nom, $sites_list) : null;
+                        if (!$site_id) { $erreurs[] = "Ligne $ln : site \"$site_nom\" introuvable."; continue; }
+
+                        // Normaliser accents (éclaté → eclat), même règle que
+                        // pages/commandes.php pour rester cohérent.
+                        $type_raw  = $get($row, 'Type Rivet');
+                        $type_norm = strtolower(str_replace(
+                            ['é','è','ê','ë','É','È','Ê','Ë'], ['e','e','e','e','e','e','e','e'], $type_raw
+                        ));
+                        if (str_contains($type_norm, 'eclat')) $type_rivet = 'eclate';
+                        elseif (str_contains($type_norm, 'gonfl')) $type_rivet = 'gonflable';
+                        else { $erreurs[] = "Ligne $ln : type rivet \"$type_raw\" invalide (Gonflable/Éclaté)."; continue; }
+
+                        $qte_raw = $get($row, 'Quantité');
+                        if ($qte_raw === '' || !is_numeric($qte_raw) || (int)$qte_raw < 0) {
+                            $erreurs[] = "Ligne $ln : quantité \"$qte_raw\" invalide."; continue;
+                        }
+                        $qte_new = (int)$qte_raw;
+
+                        db_query(
+                            "INSERT INTO op_stock_rivets (site_id,type_rivet,quantite) VALUES (?,?,?)
+                             ON CONFLICT (site_id,type_rivet) DO UPDATE SET quantite=EXCLUDED.quantite, updated_at=CURRENT_TIMESTAMP",
+                            [$site_id, $type_rivet, $qte_new]
+                        );
+                        $nb_ok++;
+                    }
+                    audit_log($user['id'], 'UPDATE', 'operations', null,
+                        "Import en masse rivets : $nb_ok ligne(s), " . count($erreurs) . ' erreur(s)');
+                    db_commit();
+                    $import_result = ['ok' => true, 'nb_ok' => $nb_ok, 'erreurs' => array_slice($erreurs, 0, 50), 'nb_err' => count($erreurs)];
+                } catch (Exception $e) {
+                    db_rollback();
+                    throw $e;
+                }
+            } catch (Exception $e) {
+                $import_result = ['ok' => false, 'erreur' => $e->getMessage()];
+            }
+        }
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     header('Content-Type: application/json');
     $action = $_POST['action'] ?? '';
@@ -314,9 +398,53 @@ include __DIR__ . '/../../templates/header.php';
     <?php if($can_appro): ?>
     <button class="btn btn-primary" onclick="document.getElementById('mAppro').classList.add('open')">+ Approvisionner</button>
     <button class="btn btn-secondary" onclick="document.getElementById('mAjust').classList.add('open')"><i class="ph ph-scales" aria-hidden="true"></i> Ajustement</button>
+    <button class="btn btn-secondary" onclick="document.getElementById('modalImportRivets').style.display='flex'"><i class="ph-duotone ph-upload-simple"></i> Importer</button>
+    <a href="?modele=1" class="btn btn-secondary" style="display:flex;align-items:center;gap:6px"><i class="ph-duotone ph-download-simple"></i> Modèle</a>
     <?php endif; ?>
   </div>
 </div>
+
+<?php if($import_result): ?>
+<div class="alert alert-<?= $import_result['ok'] ? ($import_result['nb_err'] ? 'warning' : 'success') : 'danger' ?>" style="margin-bottom:16px">
+  <?php if(!$import_result['ok']): ?>
+    <i class="ph ph-x-circle" aria-hidden="true"></i> Import échoué : <?= h($import_result['erreur']) ?>
+  <?php else: ?>
+    <i class="ph ph-check-circle" aria-hidden="true"></i> Import terminé : <strong><?= $import_result['nb_ok'] ?></strong> ligne(s) de stock mise(s) à jour.
+    <?php if($import_result['nb_err']): ?>
+      <strong><?= $import_result['nb_err'] ?></strong> ligne(s) ignorée(s) :
+      <ul style="margin:8px 0 0;padding-left:20px">
+        <?php foreach($import_result['erreurs'] as $err): ?><li><?= h($err) ?></li><?php endforeach; ?>
+      </ul>
+      <?php if($import_result['nb_err'] > count($import_result['erreurs'])): ?>
+        <div style="margin-top:4px">… et <?= $import_result['nb_err'] - count($import_result['erreurs']) ?> autre(s).</div>
+      <?php endif; ?>
+    <?php endif; ?>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
+
+<?php if($can_appro): ?>
+<!-- MODAL IMPORT RIVETS -->
+<div id="modalImportRivets" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center;overflow-y:auto;padding:20px">
+  <div style="background:white;border-radius:20px;padding:28px;width:480px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h3 style="font-family:'Plus Jakarta Sans',sans-serif;font-size:16px;font-weight:800;color:var(--navy)">Importer le stock rivets</h3>
+      <button onclick="document.getElementById('modalImportRivets').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer"><i class="ph ph-x" aria-hidden="true"></i></button>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+      Fichier Excel (.xlsx/.xls) ou CSV. Colonnes : Site, Type Rivet (Gonflable/Éclaté), Quantité — téléchargez le modèle pour les exemples.
+      <strong>Chaque ligne remplace le stock actuel</strong> du site+type (ce n'est pas un ajout).
+    </p>
+    <form method="POST" enctype="multipart/form-data">
+      <input type="file" name="fichier_import" accept=".xlsx,.xls,.csv" required class="form-control" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:flex-end;gap:10px">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('modalImportRivets').style.display='none'">Annuler</button>
+        <button type="submit" class="btn btn-primary"><i class="ph ph-upload-simple" aria-hidden="true"></i> Importer</button>
+      </div>
+    </form>
+  </div>
+</div>
+<?php endif; ?>
 
 <!-- FILTRE BAR -->
 <div class="filter-bar">

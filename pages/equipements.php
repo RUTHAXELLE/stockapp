@@ -37,7 +37,7 @@ $f_statut_stock = trim($_GET['statut_stock'] ?? '');
 $f_fin_cycle    = !empty($_GET['fin_cycle']);
 
 $sites_list  = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
-$nomenclatures     = db_fetch_all("SELECT id,libelle,categorie,duree_vie_mois FROM nomenclatures WHERE categorie=? ORDER BY libelle", [$f_categorie]);
+$nomenclatures     = db_fetch_all("SELECT id,code,libelle,categorie,duree_vie_mois FROM nomenclatures WHERE categorie=? ORDER BY libelle", [$f_categorie]);
 $all_nomenclatures = db_fetch_all("SELECT id,libelle,categorie FROM nomenclatures ORDER BY categorie,libelle");
 $can_create  = can($perm_module,'can_create');
 $can_update  = can($perm_module,'can_update');
@@ -73,6 +73,248 @@ function _prochain_numero_serie(int $nomenclature_id): string {
     return $code . '-EMUCI-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
 }
 
+// ── IMPORT EN MASSE (Excel/CSV) — bouton "Importer" à côté de "Ajouter".
+// Form classique (pas AJAX) pour l'upload de fichier, comme
+// pages/import_emuci.php : plus simple qu'un fetch+FormData+JSON pour un
+// fichier, et permet d'afficher un rapport d'erreurs détaillé après
+// rechargement plutôt qu'un toast.
+require_once __DIR__ . '/../includes/import_helpers.php';
+
+if (($_GET['modele'] ?? '') === '1') {
+    require_once __DIR__ . '/../vendor/autoload.php';
+    import_generer_modele(
+        ['Marque','Modèle','Type','N° Série externe','Site','État','Date acquisition','Prix achat','Emplacement'],
+        ['HP','LaserJet Pro', $nomenclatures[0]['libelle'] ?? '', 'SN123456', $sites_list[0]['nom'] ?? '', 'neuf', date('d/m/Y'), '150000', 'Bureau RH, 2e étage'],
+        'modele_equipements_' . $f_categorie . '.xlsx'
+    );
+}
+
+$import_result = null;
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichier_import'])) {
+    if (!$can_create) {
+        $import_result = ['ok' => false, 'erreur' => 'Accès refusé.'];
+    } else {
+        $ext = strtolower(pathinfo($_FILES['fichier_import']['name'], PATHINFO_EXTENSION));
+        if (!in_array($ext, ['xlsx','xls','csv'], true)) {
+            $import_result = ['ok' => false, 'erreur' => 'Format invalide. Utilisez .xlsx, .xls ou .csv.'];
+        } else {
+            require_once __DIR__ . '/../vendor/autoload.php';
+            try {
+                $rows = import_lire_fichier($_FILES['fichier_import']['tmp_name']);
+                if (empty($rows)) throw new Exception('Fichier vide.');
+
+                $headers = array_map('trim', $rows[0]);
+                $col = array_flip($headers);
+                if (!isset($col['Type']))
+                    throw new Exception('Colonne manquante : "Type". Colonnes détectées : ' . implode(', ', array_filter($headers)));
+                if (!isset($col['Marque']) && !isset($col['Modèle']))
+                    throw new Exception('Colonnes manquantes : au moins "Marque" ou "Modèle". Colonnes détectées : ' . implode(', ', array_filter($headers)));
+
+                $get = fn(array $row, string $k): string => isset($col[$k]) ? trim((string)($row[$col[$k]] ?? '')) : '';
+
+                $nom_par_libelle = [];
+                foreach ($nomenclatures as $n) $nom_par_libelle[mb_strtolower(trim($n['libelle']))] = $n;
+
+                // Compteurs lus une fois puis incrémentés en mémoire — pas une
+                // requête par ligne, indispensable pour un fichier de plusieurs
+                // milliers de lignes.
+                $numero_chrono_next = (int)db_fetch_value("SELECT COALESCE(MAX(numero_chrono),0) FROM equipements");
+                $seq_par_code = [];
+                $prochain_numero = function (string $code) use (&$seq_par_code): string {
+                    if (!isset($seq_par_code[$code])) {
+                        $seq_par_code[$code] = (int)db_fetch_value(
+                            "SELECT COALESCE(MAX((regexp_replace(numero_serie_interne,'.*-',''))::int),0)
+                             FROM equipements
+                             WHERE numero_serie_interne ~ ('^' || ? || '-[A-Z]+-[0-9]+$')",
+                            [$code]
+                        );
+                    }
+                    $seq_par_code[$code]++;
+                    return $code . '-EMUCI-' . str_pad((string)$seq_par_code[$code], 4, '0', STR_PAD_LEFT);
+                };
+
+                // Anti-doublon sur le N° série externe (seul identifiant physique
+                // de l'équipement) : contre la base, toutes catégories et
+                // réformés compris, et contre les lignes déjà lues du fichier —
+                // réimporter le même fichier ne crée donc rien deux fois.
+                $nse_existants = [];
+                foreach (db_fetch_all(
+                    "SELECT LOWER(TRIM(numero_serie_origine)) AS k, numero_serie_interne
+                     FROM equipements
+                     WHERE numero_serie_origine IS NOT NULL AND TRIM(numero_serie_origine) <> ''"
+                ) as $r) $nse_existants[$r['k']] = $r['numero_serie_interne'];
+                $nse_fichier = [];
+
+                $duree_mois_cat = $ohada_durees[$f_categorie] ?? $ohada_durees['default'];
+                $etats_valides  = ['neuf','bon','usage','endommage','hs'];
+
+                $nb_ok = 0; $erreurs = [];
+                db_begin();
+                try {
+                    for ($i = 1; $i < count($rows); $i++) {
+                        $row = $rows[$i];
+                        if (!array_filter($row, fn($v) => trim((string)$v) !== '')) continue;
+                        $ln = $i + 1;
+
+                        $marque = $get($row, 'Marque');
+                        $modele = $get($row, 'Modèle');
+                        if (!$marque && !$modele) { $erreurs[] = "Ligne $ln : Marque ou Modèle obligatoire."; continue; }
+
+                        // nomenclature_id est NOT NULL en base (equipements) :
+                        // Type est donc obligatoire ici, pas optionnel comme le
+                        // reste des colonnes.
+                        $type_lib = $get($row, 'Type');
+                        if ($type_lib === '') { $erreurs[] = "Ligne $ln : Type obligatoire."; continue; }
+                        $n = $nom_par_libelle[mb_strtolower($type_lib)] ?? null;
+                        if (!$n) { $erreurs[] = "Ligne $ln : type \"$type_lib\" introuvable au catalogue."; continue; }
+                        $nom_id = (int)$n['id'];
+                        $code_nom = $n['code'] ?: 'EQP';
+
+                        $site_nom = $get($row, 'Site');
+                        $site_id = null;
+                        if ($site_nom !== '') {
+                            $site_id = import_resoudre_site($site_nom, $sites_list);
+                            if (!$site_id) { $erreurs[] = "Ligne $ln : site \"$site_nom\" introuvable."; continue; }
+                        }
+
+                        $etat = strtolower($get($row, 'État')) ?: 'neuf';
+                        if (!in_array($etat, $etats_valides, true)) {
+                            $erreurs[] = "Ligne $ln : état \"$etat\" invalide (neuf/bon/usage/endommage/hs)."; continue;
+                        }
+
+                        $date_raw = $get($row, 'Date acquisition');
+                        $date_achat = null;
+                        if ($date_raw !== '') {
+                            $dt = DateTime::createFromFormat('d/m/Y', $date_raw) ?: DateTime::createFromFormat('Y-m-d', $date_raw);
+                            if (!$dt) { $erreurs[] = "Ligne $ln : date \"$date_raw\" invalide (attendu JJ/MM/AAAA)."; continue; }
+                            $date_achat = $dt->format('Y-m-d');
+                        }
+
+                        $nse         = $get($row, 'N° Série externe');
+                        if ($nse !== '') {
+                            $k = mb_strtolower($nse);
+                            if (isset($nse_existants[$k])) {
+                                $erreurs[] = "Ligne $ln : doublon, le N° série \"$nse\" existe déjà ({$nse_existants[$k]})."; continue;
+                            }
+                            if (isset($nse_fichier[$k])) {
+                                $erreurs[] = "Ligne $ln : doublon, le N° série \"$nse\" est déjà en ligne {$nse_fichier[$k]} du fichier."; continue;
+                            }
+                            $nse_fichier[$k] = $ln;
+                        }
+                        $emplacement = $get($row, 'Emplacement');
+                        $prix_achat  = (float)str_replace([' ', ','], ['', '.'], $get($row, 'Prix achat') ?: '0');
+
+                        $statut_stock   = $etat === 'hs' ? 'hs' : (!$site_id ? 'en_stock' : 'affecte');
+                        $date_fin_cycle = $date_achat ? date('Y-m-d', strtotime($date_achat . " +{$duree_mois_cat} months")) : null;
+
+                        $numero_chrono_next++;
+                        $nsi = $prochain_numero($code_nom);
+
+                        db_query(
+                            "INSERT INTO equipements
+                             (marque,modele,categorie,nomenclature_id,numero_serie_interne,numero_chrono,numero_serie_origine,
+                              site_id,emplacement,etat,statut_stock,date_acquisition,prix_achat,date_fin_cycle,duree_amortissement_mois,actif)
+                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
+                            [$marque,$modele,$f_categorie,$nom_id,$nsi,$numero_chrono_next,$nse ?: null,
+                             $site_id,$emplacement ?: null,$etat,$statut_stock,$date_achat,$prix_achat,$date_fin_cycle,$duree_mois_cat]
+                        );
+                        $nb_ok++;
+                    }
+                    audit_log($user['id'], 'CREATE', 'equipements', null,
+                        "Import en masse ($f_categorie) : $nb_ok créés, " . count($erreurs) . ' erreurs');
+                    db_commit();
+                    $import_result = ['ok' => true, 'nb_ok' => $nb_ok, 'erreurs' => array_slice($erreurs, 0, 50), 'nb_err' => count($erreurs)];
+                } catch (Exception $e) {
+                    db_rollback();
+                    throw $e;
+                }
+            } catch (Exception $e) {
+                $import_result = ['ok' => false, 'erreur' => $e->getMessage()];
+            }
+        }
+    }
+}
+
+// ── NETTOYAGE DES DOUBLONS déjà en base (anciens imports, avant l'anti-
+// doublon ci-dessus). Deux sortes de groupes parmi les équipements actifs
+// de la catégorie :
+//  - « serie »  : même N° série externe → doublon certain, pré-coché ;
+//  - « probable »: sans N° série, mêmes type/marque/modèle/site/emplacement/
+//    date → peut être un vrai lot d'équipements identiques, jamais pré-coché.
+// Dans chaque groupe on garde celui qui a le plus d'historique (affectations,
+// mouvements, interventions, réceptions), puis le plus ancien. Un doublon qui
+// a lui-même un historique n'est pas supprimable ici (à traiter à la main).
+// Suppression = soft delete actif=0, comme l'action 'delete' de
+// api/equipements.php — réversible, aucune ligne liée n'est touchée.
+$can_delete = can($perm_module, 'can_delete');
+
+function _doublons_equipements(string $categorie): array {
+    $rows = db_fetch_all(
+        "WITH base AS (
+            SELECT e.id, e.numero_serie_interne, e.numero_serie_origine, e.marque, e.modele,
+                   e.emplacement, e.date_acquisition, e.prix_achat, e.created_at,
+                   n.libelle AS type_lib, s.nom AS site_nom,
+                   CASE WHEN COALESCE(TRIM(e.numero_serie_origine),'') <> ''
+                        THEN 'S:' || LOWER(TRIM(e.numero_serie_origine))
+                        ELSE 'P:' || COALESCE(e.nomenclature_id::text,'') || '|' || LOWER(COALESCE(TRIM(e.marque),''))
+                             || '|' || LOWER(COALESCE(TRIM(e.modele),'')) || '|' || COALESCE(e.site_id::text,'')
+                             || '|' || LOWER(COALESCE(TRIM(e.emplacement),'')) || '|' || COALESCE(e.date_acquisition::text,'')
+                   END AS cle,
+                   (SELECT COUNT(*) FROM affectations_equipements  x WHERE x.equipement_id=e.id)
+                 + (SELECT COUNT(*) FROM mouvements_equipements    x WHERE x.equipement_id=e.id)
+                 + (SELECT COUNT(*) FROM interventions_maintenance x WHERE x.equipement_id=e.id)
+                 + (SELECT COUNT(*) FROM receptions_site           x WHERE x.equipement_id=e.id) AS nb_hist
+            FROM equipements e
+            LEFT JOIN nomenclatures n ON n.id=e.nomenclature_id
+            LEFT JOIN sites s ON s.id=e.site_id
+            WHERE e.actif=1 AND e.categorie=?
+         )
+         SELECT * FROM base
+         WHERE cle IN (SELECT cle FROM base GROUP BY cle HAVING COUNT(*) > 1)
+         ORDER BY cle, nb_hist DESC, id",
+        [$categorie]
+    );
+    $groupes = [];
+    foreach ($rows as $r) {
+        $g = &$groupes[$r['cle']];
+        if (!$g) $g = ['certain' => str_starts_with($r['cle'], 'S:'), 'garde' => $r, 'autres' => []];
+        else     $g['autres'][] = $r;
+        unset($g);
+    }
+    return array_values($groupes);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_POST['supprimer_doublons'])) {
+    if (!$can_delete) { http_response_code(403); exit('Accès refusé.'); }
+    // Seuls les ids que le calcul serveur désigne comme doublons supprimables
+    // sont acceptés : jamais l'équipement gardé d'un groupe, jamais un
+    // équipement avec historique, quoi que le formulaire envoie.
+    $supprimables = [];
+    foreach (_doublons_equipements($f_categorie) as $g)
+        foreach ($g['autres'] as $r) if ((int)$r['nb_hist'] === 0) $supprimables[(int)$r['id']] = $g['garde']['numero_serie_interne'];
+    $nb = 0;
+    db_begin();
+    try {
+        foreach (array_unique(array_map('intval', (array)($_POST['ids'] ?? []))) as $id) {
+            if (!isset($supprimables[$id])) continue;
+            $eq = db_fetch_one("SELECT * FROM equipements WHERE id=? AND actif=1", [$id]);
+            if (!$eq) continue;
+            db_query("UPDATE equipements SET actif=0 WHERE id=?", [$id]);
+            audit_log($user['id'], 'DELETE', 'equipements', $id,
+                "Suppression doublon {$eq['numero_serie_interne']} (gardé : {$supprimables[$id]})");
+            $nb++;
+        }
+        db_commit();
+    } catch (Exception $e) {
+        db_rollback();
+        throw $e;
+    }
+    header('Location: ?categorie=' . urlencode($f_categorie) . '&doublons=1&nettoyes=' . $nb);
+    exit;
+}
+$voir_doublons = $can_delete && ($_GET['doublons'] ?? '') === '1';
+$doublons      = $voir_doublons ? _doublons_equipements($f_categorie) : [];
+
 // ── AJAX
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     header('Content-Type: application/json');
@@ -104,6 +346,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         else                  $statut_stock = 'affecte';
 
         if (!$marque && !$nsi) json_response(false,'Marque ou N° série interne obligatoire.');
+        // nomenclature_id est NOT NULL en base (equipements) : sans ce
+        // contrôle, l'INSERT/UPDATE plantait avec une erreur SQL brute au
+        // lieu d'un message clair.
+        if (!$nom_id) json_response(false,'Type obligatoire.');
 
         // Calcul fin cycle OHADA
         $duree_mois     = $ohada_durees[$f_categorie] ?? $ohada_durees['default'];
@@ -140,6 +386,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             audit_log($user['id'],'UPDATE','equipements',$id,"Modification équipement: $label");
             json_response(true,'Équipement mis à jour.');
         }
+    }
+
+    // Soft delete (actif=0), même effet que l'action 'delete' de
+    // api/equipements.php mais contrôlé sur le module de la catégorie
+    // (equipements / equipements_operationnel).
+    if ($action === 'supprimer') {
+        if (!$can_delete) json_response(false,'Accès refusé.');
+        $id = (int)($_POST['id'] ?? 0);
+        $eq = db_fetch_one("SELECT * FROM equipements WHERE id=? AND actif=1 AND categorie=?", [$id, $f_categorie]);
+        if (!$eq) json_response(false,'Équipement introuvable.');
+        db_query("UPDATE equipements SET actif=0 WHERE id=?", [$id]);
+        audit_log($user['id'],'DELETE','equipements',$id,"Suppression {$eq['numero_serie_interne']}");
+        json_response(true,'Équipement supprimé.');
     }
 
     json_response(false,'Action inconnue.');
@@ -310,12 +569,64 @@ include __DIR__ . '/../templates/header.php';
 .taux-ok{color:var(--success-d);font-weight:700} .taux-warn{color:#f39c12;font-weight:700} .taux-danger{color:var(--danger-d);font-weight:700}
 </style>
 
+<?php if($import_result): ?>
+<div class="alert alert-<?= $import_result['ok'] ? ($import_result['nb_err'] ? 'warning' : 'success') : 'danger' ?>" style="margin-bottom:16px">
+  <?php if(!$import_result['ok']): ?>
+    <i class="ph ph-x-circle" aria-hidden="true"></i> Import échoué : <?= h($import_result['erreur']) ?>
+  <?php else: ?>
+    <i class="ph ph-check-circle" aria-hidden="true"></i> Import terminé : <strong><?= $import_result['nb_ok'] ?></strong> équipement(s) créé(s).
+    <?php if($import_result['nb_err']): ?>
+      <strong><?= $import_result['nb_err'] ?></strong> ligne(s) ignorée(s) :
+      <ul style="margin:8px 0 0;padding-left:20px">
+        <?php foreach($import_result['erreurs'] as $err): ?><li><?= h($err) ?></li><?php endforeach; ?>
+      </ul>
+      <?php if($import_result['nb_err'] > count($import_result['erreurs'])): ?>
+        <div style="margin-top:4px">… et <?= $import_result['nb_err'] - count($import_result['erreurs']) ?> autre(s).</div>
+      <?php endif; ?>
+    <?php endif; ?>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
+
 <?php if($can_create): ?>
-<!-- ── LIGNE 1 : bouton Ajouter ── -->
+<!-- ── LIGNE 1 : boutons Ajouter / Importer ── -->
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;flex-wrap:wrap">
   <button type="button" class="btn btn-primary" onclick="ouvrirCreation()">
     <i class="ph-duotone ph-plus"></i> Ajouter
   </button>
+  <button type="button" class="btn btn-secondary" onclick="document.getElementById('modalImport').style.display='flex'">
+    <i class="ph-duotone ph-upload-simple"></i> Importer
+  </button>
+  <a class="btn btn-secondary" href="?categorie=<?= h($f_categorie) ?>&modele=1">
+    <i class="ph-duotone ph-download-simple"></i> Télécharger le modèle
+  </a>
+  <?php if($can_delete): ?>
+  <a class="btn btn-secondary" href="?categorie=<?= h($f_categorie) ?>&doublons=1">
+    <i class="ph-duotone ph-copy"></i> Doublons
+  </a>
+  <?php endif; ?>
+</div>
+
+<!-- MODAL IMPORT -->
+<div id="modalImport" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center;overflow-y:auto;padding:20px">
+  <div style="background:white;border-radius:20px;padding:28px;width:480px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h3 style="font-family:'Plus Jakarta Sans',sans-serif;font-size:16px;font-weight:800;color:var(--navy)">Importer des équipements</h3>
+      <button onclick="document.getElementById('modalImport').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer"><i class="ph ph-x" aria-hidden="true"></i></button>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+      Fichier Excel (.xlsx/.xls) ou CSV. Colonnes attendues : <strong>Type (obligatoire, doit exister au catalogue)</strong>, Marque ou Modèle (au moins l'un des deux), N° Série externe, Site, État, Date acquisition, Prix achat, Emplacement — téléchargez le modèle pour les exemples.
+      Une ligne dont le N° Série externe existe déjà (en base ou plus haut dans le fichier) est ignorée comme doublon.
+      Le numéro de série interne est généré automatiquement.
+    </p>
+    <form method="POST" enctype="multipart/form-data">
+      <input type="file" name="fichier_import" accept=".xlsx,.xls,.csv" required class="form-control" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:flex-end;gap:10px">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('modalImport').style.display='none'">Annuler</button>
+        <button type="submit" class="btn btn-primary"><i class="ph ph-upload-simple" aria-hidden="true"></i> Importer</button>
+      </div>
+    </form>
+  </div>
 </div>
 <?php endif; ?>
 
@@ -376,6 +687,71 @@ include __DIR__ . '/../templates/header.php';
   </a>
 </form>
 
+<?php if($voir_doublons): ?>
+<!-- DOUBLONS -->
+<?php if(isset($_GET['nettoyes'])): ?>
+<div class="alert alert-success" style="margin-bottom:16px">
+  <i class="ph ph-check-circle" aria-hidden="true"></i> <strong><?= (int)$_GET['nettoyes'] ?></strong> doublon(s) supprimé(s).
+</div>
+<?php endif; ?>
+<div class="card" style="margin-bottom:20px">
+  <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+    <h3><i class="ph-duotone ph-copy" style="color:var(--primary-d)"></i> Doublons
+      <span style="font-size:13px;font-weight:400;color:var(--muted)">(<?= count($doublons) ?> groupe(s))</span></h3>
+    <a class="btn btn-secondary" href="?categorie=<?= h($f_categorie) ?>">Fermer</a>
+  </div>
+  <?php if(!$doublons): ?>
+    <p style="padding:16px;color:var(--muted)">Aucun doublon dans cette catégorie.</p>
+  <?php else: ?>
+  <p style="padding:12px 16px 0;font-size:13px;color:var(--muted)">
+    Dans chaque groupe, la ligne <strong>Gardé</strong> est conservée (celle qui a le plus d'historique, sinon la plus ancienne).
+    Même N° série externe = doublon certain, coché d'office. Sans N° série = doublon <em>probable</em> (ce peut être un lot d'équipements identiques) : à cocher vous-même.
+    Un doublon qui a déjà un historique (affectation, mouvement, intervention) n'est pas supprimable ici.
+  </p>
+  <form method="POST" onsubmit="return confirm('Supprimer les doublons cochés ?')">
+    <input type="hidden" name="supprimer_doublons" value="1">
+    <div class="table-wrap" style="max-height:520px;overflow:auto">
+      <table>
+        <thead><tr>
+          <th></th><th>N° interne</th><th>N° série externe</th><th>Type</th><th>Marque / Modèle</th>
+          <th>Site</th><th>Date acq.</th><th>Créé le</th><th style="text-align:center">Historique</th>
+        </tr></thead>
+        <tbody>
+        <?php foreach($doublons as $gi => $g): ?>
+          <?php foreach(array_merge([$g['garde']], $g['autres']) as $k => $r): ?>
+          <tr style="<?= $gi % 2 ? 'background:#f8fafc' : '' ?><?= $k === 0 ? ';border-top:2px solid var(--border)' : '' ?>">
+            <td>
+              <?php if($k === 0): ?>
+                <span class="etat-badge etat-bon">Gardé</span>
+              <?php elseif((int)$r['nb_hist'] > 0): ?>
+                <span title="A un historique : à traiter à la main" style="color:var(--muted)"><i class="ph ph-lock-simple"></i></span>
+              <?php else: ?>
+                <input type="checkbox" name="ids[]" value="<?= (int)$r['id'] ?>" <?= $g['certain'] ? 'checked' : '' ?>>
+                <?php if(!$g['certain']): ?><span style="font-size:11px;color:#92400e">probable</span><?php endif; ?>
+              <?php endif; ?>
+            </td>
+            <td><?= h($r['numero_serie_interne']) ?></td>
+            <td><?= h($r['numero_serie_origine'] ?: '—') ?></td>
+            <td><?= h($r['type_lib'] ?? '') ?></td>
+            <td><?= h(trim(($r['marque'] ?? '') . ' ' . ($r['modele'] ?? ''))) ?></td>
+            <td><?= h($r['site_nom'] ?? 'Non affecté') ?><?php if(!empty($r['emplacement'])): ?><div style="font-size:12px;color:var(--muted)"><?= h($r['emplacement']) ?></div><?php endif; ?></td>
+            <td><?= fmt_date($r['date_acquisition']) ?></td>
+            <td><?= fmt_datetime($r['created_at']) ?></td>
+            <td style="text-align:center"><?= (int)$r['nb_hist'] ?></td>
+          </tr>
+          <?php endforeach; ?>
+        <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+    <div style="display:flex;justify-content:flex-end;padding:14px 16px">
+      <button type="submit" class="btn btn-danger"><i class="ph ph-trash" aria-hidden="true"></i> Supprimer les doublons cochés</button>
+    </div>
+  </form>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
+
 <!-- LISTE ÉQUIPEMENTS -->
 <div class="card" id="equipResultCard">
   <div class="card-header">
@@ -400,7 +776,7 @@ include __DIR__ . '/../templates/header.php';
         <th style="text-align:center">Valeur résid. (FCFA)</th>
         <th style="text-align:center">Fin cycle</th>
         <th style="text-align:center">Statut stock</th>
-        <?php if($can_update): ?><th style="text-align:center">Actions</th><?php endif; ?>
+        <?php if($can_update || $can_delete): ?><th style="text-align:center">Actions</th><?php endif; ?>
       </tr></thead>
       <tbody>
       <?php if(empty($equipements)): ?>
@@ -442,9 +818,14 @@ include __DIR__ . '/../templates/header.php';
               <?= ($e['statut_stock']??'affecte')==='en_stock'?'<i class="ph ph-package" aria-hidden="true"></i> Stock':'<i class="ph ph-check-circle" aria-hidden="true"></i> Affecté' ?>
             </span>
           </td>
-          <?php if($can_update): ?>
-          <td style="text-align:center">
+          <?php if($can_update || $can_delete): ?>
+          <td style="text-align:center;white-space:nowrap">
+            <?php if($can_update): ?>
             <button class="btn btn-secondary btn-sm" onclick="modifierEquip(<?= htmlspecialchars(json_encode($e),ENT_QUOTES) ?>)"><i class="ph ph-pencil-simple" aria-hidden="true"></i></button>
+            <?php endif; ?>
+            <?php if($can_delete): ?>
+            <button class="btn btn-danger btn-sm" title="Supprimer" onclick="supprimerEquip(<?= (int)$e['id'] ?>, <?= htmlspecialchars(json_encode($e['numero_serie_interne']),ENT_QUOTES) ?>)"><i class="ph ph-trash" aria-hidden="true"></i></button>
+            <?php endif; ?>
           </td>
           <?php endif; ?>
         </tr>
@@ -475,7 +856,7 @@ include __DIR__ . '/../templates/header.php';
         <input type="text" class="form-control" id="eModele" placeholder="ex: LaserJet Pro, C650...">
       </div>
       <div class="form-group">
-        <label>Type (nomenclature)</label>
+        <label>Type (nomenclature) *</label>
         <select class="form-control" id="eNom_id">
           <option value="">— Sélectionner —</option>
           <?php foreach($nomenclatures as $n): ?>
@@ -542,6 +923,14 @@ include __DIR__ . '/../templates/header.php';
 <?php endif; ?>
 
 <script>
+async function supprimerEquip(id, numero){
+  if (!confirm(`Supprimer l'équipement ${numero} ?`)) return;
+  try {
+    const d = await ap({action:'supprimer', id});
+    toast(d.message, d.success ? 'success' : 'error');
+    if (d.success) setTimeout(() => location.reload(), 800);
+  } catch(err) { toast(err.message, 'error'); }
+}
 function ap(d){return fetch(window.location.href,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(d)}).then(achParseJson);}
 
 // ── Filtres sans rechargement de page : remplace les KPI et le tableau par
@@ -631,6 +1020,10 @@ document.getElementById('eNom_id').addEventListener('change', async function(){
   if (d.success) document.getElementById('eNsi').value = d.data.numero;
 });
 async function sauvegarder(){
+  if (!document.getElementById('eNom_id').value) {
+    document.getElementById('eAlert').innerHTML = '<div class="alert alert-danger">Le type (nomenclature) est obligatoire.</div>';
+    return;
+  }
   const btn = document.getElementById('btnSave');
   btn.disabled = true;
   btn.textContent = '⏳ Enregistrement…';

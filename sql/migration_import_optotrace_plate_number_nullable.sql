@@ -1,0 +1,15 @@
+-- ============================================================
+--  import_optotrace.plate_number : colonne legacy (heritee de MySQL,
+--  "Numero de plaque") absente de l'INSERT d'import OptoTrace actuel
+--  (pages/import_emuci.php, stock bobines) — en MySQL, un INSERT sans
+--  cette colonne etait tolere (remplie par '' silencieusement) ; en
+--  PostgreSQL, NOT NULL sans DEFAULT rejette l'INSERT.
+--
+--  Meme bug deja corrige le 2026-07-22 (commit a2eebd0) directement dans
+--  le dump sql/stockapp_pg.sql, jamais comme migration autonome — donc
+--  jamais rejoue sur une base de prod recreee/restauree depuis ce dump
+--  dans un etat anterieur. Recidive en prod le 2026-10-12.
+--
+--  Idempotente (DROP NOT NULL ne fait rien si deja nullable).
+-- ============================================================
+ALTER TABLE import_optotrace ALTER COLUMN plate_number DROP NOT NULL;

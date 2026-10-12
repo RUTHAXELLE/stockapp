@@ -42,6 +42,131 @@ foreach (db_fetch_all("SELECT DISTINCT TRIM(type_pmma) AS t FROM stock_pmma_site
 }
 sort($types_connus);
 
+// Capacité carton par type (ex: 25, 50) — pour afficher le stock à la fois
+// en unités et en cartons, demandé après une confusion où une sortie de
+// "50" a été comprise comme 50 cartons alors que la quantité saisie est
+// toujours en unités (cf. $action==='sortie' plus bas).
+$type_capacites = [];
+foreach ($types_connus as $t) $type_capacites[$t] = capacite_carton_pmma($t);
+
+// ── IMPORT EN MASSE (Excel/CSV) — remplace le stock (photo exacte), pas
+// une addition : un réimport (fichier corrigé) ne double jamais le stock.
+// Form classique (pas AJAX), même principe que pages/equipements.php.
+require_once __DIR__ . '/../includes/import_helpers.php';
+
+if (($_GET['modele'] ?? '') === '1') {
+    import_generer_modele(
+        ['Site', 'Type PMMA', 'Cartons', 'Unités en vrac'],
+        [$sites_list[0]['nom'] ?? '', $types_connus[0] ?? 'Type D', 10, 0],
+        'modele_pmma.xlsx'
+    );
+}
+
+$import_result = null;
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichier_import'])) {
+    if (!$can_saisie) {
+        $import_result = ['ok' => false, 'erreur' => 'Accès refusé.'];
+    } else {
+        $ext = strtolower(pathinfo($_FILES['fichier_import']['name'], PATHINFO_EXTENSION));
+        if (!in_array($ext, ['xlsx','xls','csv'], true)) {
+            $import_result = ['ok' => false, 'erreur' => 'Format invalide. Utilisez .xlsx, .xls ou .csv.'];
+        } else {
+            try {
+                $rows = import_lire_fichier($_FILES['fichier_import']['tmp_name']);
+                if (empty($rows)) throw new Exception('Fichier vide.');
+
+                $headers = array_map('trim', $rows[0]);
+                $col = array_flip($headers);
+                // Saisie en cartons (ce que l'on compte physiquement), les unités
+                // sont calculées avec la capacité carton du type (op_types_pmma).
+                // L'ancienne colonne « Quantité (unités) » reste acceptée pour
+                // les fichiers déjà préparés avec le premier modèle.
+                $required = ['Site', 'Type PMMA'];
+                $missing  = array_filter($required, fn($r) => !isset($col[$r]));
+                if (!isset($col['Cartons']) && !isset($col['Quantité (unités)'])) $missing[] = 'Cartons';
+                if ($missing) throw new Exception('Colonnes manquantes : ' . implode(', ', $missing) . '. Colonnes détectées : ' . implode(', ', array_filter($headers)));
+
+                $get = fn(array $row, string $k): string => isset($col[$k]) ? trim((string)($row[$col[$k]] ?? '')) : '';
+
+                // Entier positif ou nul, espaces de milliers tolérés ; null sinon.
+                $entier = function (string $v): ?int {
+                    $v = str_replace([' ', "\u{a0}", "\u{202f}"], '', $v);
+                    return preg_match('/^\d+$/', $v) ? (int)$v : null;
+                };
+
+                // Correspondance insensible à la casse vers la forme canonique
+                // du type (évite de créer "type d" à côté de "Type D").
+                $types_lookup = [];
+                foreach ($types_connus as $t) $types_lookup[mb_strtolower(trim($t))] = $t;
+
+                $nb_ok = 0; $erreurs = [];
+                db_begin();
+                try {
+                    for ($i = 1; $i < count($rows); $i++) {
+                        $row = $rows[$i];
+                        if (!array_filter($row, fn($v) => trim((string)$v) !== '')) continue;
+                        $ln = $i + 1;
+
+                        $site_nom = $get($row, 'Site');
+                        $site_id  = $site_nom !== '' ? import_resoudre_site($site_nom, $sites_list) : null;
+                        if (!$site_id) { $erreurs[] = "Ligne $ln : site \"$site_nom\" introuvable."; continue; }
+
+                        $type_raw = $get($row, 'Type PMMA');
+                        $type = $types_lookup[mb_strtolower(trim($type_raw))] ?? null;
+                        if (!$type) { $erreurs[] = "Ligne $ln : type PMMA \"$type_raw\" inconnu au catalogue."; continue; }
+
+                        $cap         = $type_capacites[$type] ?? capacite_carton_pmma($type);
+                        $cartons_raw = $get($row, 'Cartons');
+                        $vrac_raw    = $get($row, 'Unités en vrac');
+                        $qte_raw     = $get($row, 'Quantité (unités)');
+                        if ($cartons_raw !== '' || $vrac_raw !== '') {
+                            $cartons = $cartons_raw === '' ? 0 : $entier($cartons_raw);
+                            if ($cartons === null) { $erreurs[] = "Ligne $ln : nombre de cartons \"$cartons_raw\" invalide (nombre entier attendu)."; continue; }
+                            $vrac = $vrac_raw === '' ? 0 : $entier($vrac_raw);
+                            if ($vrac === null) { $erreurs[] = "Ligne $ln : unités en vrac \"$vrac_raw\" invalide (nombre entier attendu)."; continue; }
+                            if ($vrac >= $cap) { $erreurs[] = "Ligne $ln : $vrac unités en vrac = au moins un carton plein ($cap u. pour $type), à compter dans Cartons."; continue; }
+                            $qte_new = $cartons * $cap + $vrac;
+                        } elseif ($qte_raw !== '') {
+                            $qte_new = $entier($qte_raw);
+                            if ($qte_new === null) { $erreurs[] = "Ligne $ln : quantité \"$qte_raw\" invalide."; continue; }
+                        } else {
+                            $erreurs[] = "Ligne $ln : nombre de cartons manquant."; continue;
+                        }
+
+                        $qte_old = (int)(db_fetch_value(
+                            "SELECT quantite FROM stock_pmma_site WHERE site_id=? AND type_pmma=?", [$site_id, $type]
+                        ) ?? 0);
+                        $delta = $qte_new - $qte_old;
+
+                        db_query(
+                            "INSERT INTO stock_pmma_site (site_id,type_pmma,quantite,seuil_alerte)
+                             VALUES (?,?,?,?)
+                             ON CONFLICT (site_id,type_pmma) DO UPDATE SET quantite=EXCLUDED.quantite, updated_at=CURRENT_TIMESTAMP",
+                            [$site_id, $type, $qte_new, $catalogue_pmma[$type]['seuil_defaut'] ?? 10]
+                        );
+                        if ($delta !== 0) {
+                            db_query(
+                                "INSERT INTO stock_pmma (site_id,type_pmma,quantite,type_mouvement,notes,created_by) VALUES (?,?,?,?,?,?)",
+                                [$site_id, $type, abs($delta), $delta > 0 ? 'entree' : 'sortie', 'Import stock', $user['id']]
+                            );
+                        }
+                        $nb_ok++;
+                    }
+                    audit_log($user['id'], 'UPDATE', 'pmma', null,
+                        "Import en masse PMMA : $nb_ok ligne(s), " . count($erreurs) . ' erreur(s)');
+                    db_commit();
+                    $import_result = ['ok' => true, 'nb_ok' => $nb_ok, 'erreurs' => array_slice($erreurs, 0, 50), 'nb_err' => count($erreurs)];
+                } catch (Exception $e) {
+                    db_rollback();
+                    throw $e;
+                }
+            } catch (Exception $e) {
+                $import_result = ['ok' => false, 'erreur' => $e->getMessage()];
+            }
+        }
+    }
+}
+
 // ── AJAX (Entrée/Sortie manuelle — GSB/admin uniquement)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     header('Content-Type: application/json');
@@ -89,7 +214,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $stock_actuel = (int)db_fetch_value(
             "SELECT quantite FROM stock_pmma_site WHERE site_id=? AND type_pmma=?", [$site_id, $type]
         );
-        if ($stock_actuel < $quantite) json_response(false, "Stock insuffisant. Disponible : $stock_actuel");
+        if ($stock_actuel < $quantite) {
+            $cap = capacite_carton_pmma($type);
+            $msg = "Stock insuffisant. Disponible : $stock_actuel unité(s)";
+            if ($stock_actuel > 0) {
+                $nb_cart = intdiv($stock_actuel, $cap);
+                $reste   = $stock_actuel % $cap;
+                $msg .= " (" . $nb_cart . " carton(s)" . ($reste ? " + $reste u." : '') . ")";
+            }
+            json_response(false, $msg);
+        }
         db_query("INSERT INTO stock_pmma (site_id,type_pmma,quantite,type_mouvement,bobine_id,notes,created_by) VALUES (?,?,?,'sortie',?,?,?)",
             [$site_id, $type, $quantite, $bobine_id ?: null, 'Utilisation production', $user['id']]);
         db_query("UPDATE stock_pmma_site SET quantite=quantite-? WHERE site_id=? AND type_pmma=?",
@@ -502,9 +636,58 @@ include __DIR__ . '/../templates/header.php';
       style="background:#e8f4f9;color:var(--blue);border:1.5px solid var(--blue);font-size:13px">
       <i class="ph-duotone ph-upload-simple"></i> Sortie PMMA
     </button>
+    <button class="btn btn-secondary" style="font-size:13px" onclick="document.getElementById('modalImportPmma').style.display='flex'">
+      <i class="ph-duotone ph-upload-simple"></i> Importer
+    </button>
+    <a href="?modele=1" class="btn btn-secondary" style="font-size:13px;display:flex;align-items:center;gap:6px">
+      <i class="ph-duotone ph-download-simple"></i> Modèle
+    </a>
     <?php endif; ?>
   </div>
 </div>
+
+<?php if($import_result): ?>
+<div class="alert alert-<?= $import_result['ok'] ? ($import_result['nb_err'] ? 'warning' : 'success') : 'danger' ?>" style="margin-bottom:16px">
+  <?php if(!$import_result['ok']): ?>
+    <i class="ph ph-x-circle" aria-hidden="true"></i> Import échoué : <?= h($import_result['erreur']) ?>
+  <?php else: ?>
+    <i class="ph ph-check-circle" aria-hidden="true"></i> Import terminé : <strong><?= $import_result['nb_ok'] ?></strong> ligne(s) de stock mise(s) à jour.
+    <?php if($import_result['nb_err']): ?>
+      <strong><?= $import_result['nb_err'] ?></strong> ligne(s) ignorée(s) :
+      <ul style="margin:8px 0 0;padding-left:20px">
+        <?php foreach($import_result['erreurs'] as $err): ?><li><?= h($err) ?></li><?php endforeach; ?>
+      </ul>
+      <?php if($import_result['nb_err'] > count($import_result['erreurs'])): ?>
+        <div style="margin-top:4px">… et <?= $import_result['nb_err'] - count($import_result['erreurs']) ?> autre(s).</div>
+      <?php endif; ?>
+    <?php endif; ?>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
+
+<?php if($can_saisie): ?>
+<!-- MODAL IMPORT PMMA -->
+<div id="modalImportPmma" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center;overflow-y:auto;padding:20px">
+  <div style="background:white;border-radius:20px;padding:28px;width:480px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h3 style="font-family:'Plus Jakarta Sans',sans-serif;font-size:16px;font-weight:800;color:var(--navy)">Importer le stock PMMA</h3>
+      <button onclick="document.getElementById('modalImportPmma').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer"><i class="ph ph-x" aria-hidden="true"></i></button>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+      Fichier Excel (.xlsx/.xls) ou CSV. Colonnes : Site, Type PMMA, <strong>Cartons</strong>, Unités en vrac (facultatif, carton entamé) — téléchargez le modèle pour les exemples.
+      Les unités sont calculées automatiquement : cartons × capacité du type<?php if($type_capacites): ?> (<?= h(implode(', ', array_map(fn($t, $c) => "$t : $c", array_keys($type_capacites), $type_capacites))) ?>)<?php endif; ?> + vrac.
+      <strong>Chaque ligne remplace le stock actuel</strong> du site+type (ce n'est pas un ajout).
+    </p>
+    <form method="POST" enctype="multipart/form-data">
+      <input type="file" name="fichier_import" accept=".xlsx,.xls,.csv" required class="form-control" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:flex-end;gap:10px">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('modalImportPmma').style.display='none'">Annuler</button>
+        <button type="submit" class="btn btn-primary"><i class="ph ph-upload-simple" aria-hidden="true"></i> Importer</button>
+      </div>
+    </form>
+  </div>
+</div>
+<?php endif; ?>
 
 <!-- FILTRE BAR -->
 <div class="filter-bar">
@@ -612,17 +795,22 @@ include __DIR__ . '/../templates/header.php';
       <div class="pmma-site"><i class="ph-duotone ph-map-pin"></i> <?= h($site_nom) ?></div>
     </div>
     <div class="pmma-body">
-      <?php foreach ($items as $item): if (!$item['type_pmma']) continue; ?>
+      <?php foreach ($items as $item): if (!$item['type_pmma']) continue;
+        $cap_item  = $type_capacites[$item['type_pmma']] ?? capacite_carton_pmma($item['type_pmma']);
+        $nb_cart   = intdiv((int)$item['quantite'], $cap_item);
+        $reste_u   = (int)$item['quantite'] % $cap_item;
+      ?>
       <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
         <div>
           <div style="font-size:13px;font-weight:600;color:var(--navy)"><?= h($item['type_pmma']) ?></div>
-          <div style="font-size:12px;color:var(--muted)">Seuil : <?= (int)($item['seuil_alerte'] ?? 10) ?></div>
+          <div style="font-size:12px;color:var(--muted)">Seuil : <?= (int)($item['seuil_alerte'] ?? 10) ?> · carton de <?= $cap_item ?></div>
         </div>
         <div style="text-align:right">
           <div style="font-family:'Montserrat',sans-serif;font-size:26px;font-weight:900;color:<?= $item['quantite'] < ($item['seuil_alerte'] ?? 10) ? 'var(--danger-d)' : 'var(--blue)' ?>">
             <?= (int)$item['quantite'] ?>
           </div>
           <div style="font-size:12px;color:var(--muted)">unités</div>
+          <div style="font-size:11.5px;color:var(--muted)">≈ <?= $nb_cart ?> carton(s)<?= $reste_u ? " + $reste_u u." : '' ?></div>
         </div>
       </div>
       <?php if ($item['quantite'] < ($item['seuil_alerte'] ?? 10)): ?>
@@ -642,18 +830,21 @@ include __DIR__ . '/../templates/header.php';
     <table class="pmma-matrix">
       <thead><tr>
         <th>Site</th>
-        <?php foreach ($pmma_types as $t): ?><th><?= h($t) ?></th><?php endforeach; ?>
-        <th>Total</th>
+        <?php foreach ($pmma_types as $t): ?><th><?= h($t) ?> <span style="font-weight:400;color:var(--muted)">(carton de <?= $type_capacites[$t] ?? capacite_carton_pmma($t) ?>)</span></th><?php endforeach; ?>
+        <th>Total <span style="font-weight:400;color:var(--muted)">(unités)</span></th>
       </tr></thead>
       <tbody>
       <?php foreach ($site_names_order as $sid => $site_nom): $site_total = 0; ?>
         <tr>
           <td style="font-weight:600;color:var(--navy)"><?= h($site_nom) ?></td>
-          <?php foreach ($pmma_types as $t): $cell = $pmma_matrix[$sid][$t] ?? null; if ($cell) $site_total += $cell['quantite']; ?>
+          <?php foreach ($pmma_types as $t): $cell = $pmma_matrix[$sid][$t] ?? null; if ($cell) $site_total += $cell['quantite'];
+            $cap_t = $type_capacites[$t] ?? capacite_carton_pmma($t);
+          ?>
           <td>
-            <?php if ($cell): $bas = $cell['quantite'] < $cell['seuil']; ?>
+            <?php if ($cell): $bas = $cell['quantite'] < $cell['seuil']; $nb_c = intdiv($cell['quantite'], $cap_t); $rst = $cell['quantite'] % $cap_t; ?>
             <span style="font-weight:700;color:<?= $bas ? 'var(--danger-d)' : 'var(--navy)' ?>"><?= $cell['quantite'] ?></span>
             <?php if ($bas): ?><i class="ph-duotone ph-warning" style="color:var(--danger-d);margin-left:3px" title="Stock bas"></i><?php endif; ?>
+            <div style="font-size:11px;color:var(--muted)"><?= $nb_c ?> carton(s)<?= $rst ? "+$rst" : '' ?></div>
             <?php else: ?><span style="color:var(--muted)">—</span><?php endif; ?>
           </td>
           <?php endforeach; ?>
@@ -749,10 +940,10 @@ include __DIR__ . '/../templates/header.php';
         </div>
         <?php else: ?><input type="hidden" id="eSiteId" value="<?= $site_force ?>"><?php endif; ?>
         <div class="form-group"><label>Type PMMA</label>
-          <select class="form-control" id="eTypePmma">
+          <select class="form-control" id="eTypePmma" onchange="majCartonsHint('e')">
             <option value="">— choisir —</option>
             <?php foreach ($types_connus as $t): ?>
-            <option value="<?= h($t) ?>"><?= h($t) ?><?php
+            <option value="<?= h($t) ?>" data-cap="<?= $type_capacites[$t] ?? capacite_carton_pmma($t) ?>"><?= h($t) ?><?php
               if (isset($catalogue_pmma[$t])):
                 ?> — carton de <?= (int)$catalogue_pmma[$t]['unites_par_carton'] ?><?php
               endif; ?></option>
@@ -760,8 +951,9 @@ include __DIR__ . '/../templates/header.php';
           </select>
         </div>
       </div>
-      <div class="form-group" style="margin-bottom:14px"><label>Quantité *</label>
-        <input type="number" class="form-control" id="eQteEntree" min="1" value="1">
+      <div class="form-group" style="margin-bottom:14px"><label>Quantité * <span style="font-weight:400;color:var(--muted)">(en unités)</span></label>
+        <input type="number" class="form-control" id="eQteEntree" min="1" value="1" oninput="majCartonsHint('e')">
+        <div id="eQteCartonsHint" style="font-size:12px;color:var(--muted);margin-top:4px"></div>
       </div>
       <div class="form-group"><label>Notes</label>
         <input type="text" class="form-control" id="eNotesEntree" placeholder="Fournisseur, N° BL…">
@@ -793,10 +985,10 @@ include __DIR__ . '/../templates/header.php';
         </div>
         <?php else: ?><input type="hidden" id="sSiteId" value="<?= $site_force ?>"><?php endif; ?>
         <div class="form-group"><label>Type PMMA</label>
-          <select class="form-control" id="sTypePmma">
+          <select class="form-control" id="sTypePmma" onchange="majCartonsHint('s')">
             <option value="">— choisir —</option>
             <?php foreach ($types_connus as $t): ?>
-            <option value="<?= h($t) ?>"><?= h($t) ?><?php
+            <option value="<?= h($t) ?>" data-cap="<?= $type_capacites[$t] ?? capacite_carton_pmma($t) ?>"><?= h($t) ?><?php
               if (isset($catalogue_pmma[$t])):
                 ?> — carton de <?= (int)$catalogue_pmma[$t]['unites_par_carton'] ?><?php
               endif; ?></option>
@@ -805,8 +997,9 @@ include __DIR__ . '/../templates/header.php';
         </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-        <div class="form-group"><label>Quantité *</label>
-          <input type="number" class="form-control" id="sQteSortie" min="1" value="1">
+        <div class="form-group"><label>Quantité * <span style="font-weight:400;color:var(--muted)">(en unités)</span></label>
+          <input type="number" class="form-control" id="sQteSortie" min="1" value="1" oninput="majCartonsHint('s')">
+          <div id="sQteCartonsHint" style="font-size:12px;color:var(--muted);margin-top:4px"></div>
         </div>
         <div class="form-group"><label>Bobine associée</label>
           <select class="form-control" id="sBobineId">
@@ -826,6 +1019,21 @@ include __DIR__ . '/../templates/header.php';
 <?php endif; ?>
 
 <script>
+// Conversion unités -> cartons en direct dans les modals Entrée/Sortie,
+// pour éviter la confusion "j'ai saisi 50 en pensant 50 cartons" (la
+// quantité est toujours stockée/comparée en unités côté serveur).
+function majCartonsHint(prefix){
+  const typeSel = document.getElementById(prefix+'TypePmma');
+  const qteEl   = document.getElementById(prefix+'Qte'+(prefix==='e'?'Entree':'Sortie'));
+  const hintEl  = document.getElementById(prefix+'QteCartonsHint');
+  if(!typeSel||!qteEl||!hintEl) return;
+  const opt = typeSel.options[typeSel.selectedIndex];
+  const cap = opt ? parseInt(opt.dataset.cap||'0',10) : 0;
+  const qte = parseInt(qteEl.value||'0',10);
+  if(!cap || !qte){ hintEl.textContent=''; return; }
+  const nbCartons = Math.floor(qte/cap), reste = qte%cap;
+  hintEl.textContent = '≈ '+nbCartons+' carton(s)'+(reste?' + '+reste+' u.':'');
+}
 function ap(d){
     const fd=new FormData();
     for(const[k,v] of Object.entries(d)) if(v!==undefined) fd.append(k,v);

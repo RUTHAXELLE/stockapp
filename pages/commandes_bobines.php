@@ -268,11 +268,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $lignes = db_fetch_all(
             "SELECT cbl.*, b.films_restants, b.qte_initiale,
                     -- Quantité livrée = films au moment du transfert (mouvement le plus récent)
-                    COALESCE((
+                    -- plafonnée à qte_initiale (correction de la quantité initiale)
+                    LEAST(COALESCE((
                         SELECT m.stock_avant FROM mouvements_bobines m
                         WHERE m.bobine_id=cbl.bobine_id AND m.type='transfert'
                         ORDER BY m.created_at DESC LIMIT 1
-                    ), b.qte_initiale) AS qte_livree,
+                    ), b.qte_initiale), b.qte_initiale) AS qte_livree,
                     cbl.statut AS statut_ligne
              FROM commandes_bobines_lignes cbl
              LEFT JOIN op_bobines b ON b.id=cbl.bobine_id
