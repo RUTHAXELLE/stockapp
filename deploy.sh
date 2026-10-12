@@ -20,6 +20,12 @@
 #     SKIP_PULL=1            ne pas faire de git pull
 #     RELOAD_WEB=0           ne pas recharger le serveur web
 #                            (RELOAD_APACHE=0, ancien nom, reste accepté)
+#     DEPLOY_JOURNAL=/chemin trace des déploiements
+#                            (défaut /var/log/stockapp/deploiements.txt)
+#
+#  Chaque déploiement ajoute une ligne à la trace (date, version déployée,
+#  version précédente, sauvegarde, migrations signalées) :
+#     sudo tail -1 /var/log/stockapp/deploiements.txt
 #
 #  Les nouvelles migrations *_mysql.sql d'une mise à jour ne sont PAS jouées
 #  automatiquement sur une base existante : voir docs/MANUEL_DEPLOIEMENT_VPS.md.
@@ -80,6 +86,7 @@ if [ "$SKIP_PULL" != "1" ]; then
     printf '      %s\n' $NOUVELLES
   fi
 else
+  AVANT="$(git rev-parse HEAD 2>/dev/null || true)"
   log "git pull ignoré (SKIP_PULL=1)"
 fi
 
@@ -142,6 +149,27 @@ if [ "${PREMIERE_INSTALL:-0}" = "1" ]; then
   else
     warn "Aucun compte : lancer  sudo -u $APP_USER php tools/creer_superadmin.php"
   fi
+fi
+
+# ── 6. Trace du déploiement ─────────────────────────────────
+# Une ligne par déploiement : c'est elle que l'administrateur renvoie au
+# demandeur, et d'elle que part la fiche suivante (tools/fiche_mise_a_jour.sh).
+# Extension .txt et non .log : logrotate (/var/log/stockapp/*.log) l'aurait
+# effacée au bout de huit semaines.
+VERSION="$(git rev-parse --short HEAD 2>/dev/null || echo inconnue)"
+PRECEDENTE="$(git rev-parse --short "${AVANT:-HEAD}" 2>/dev/null || echo inconnue)"
+SUJET="$(git log -1 --format=%s 2>/dev/null | cut -c1-100)"
+JOURNAL="${DEPLOY_JOURNAL:-/var/log/stockapp/deploiements.txt}"
+if [ "$(id -u)" = "0" ]; then
+  mkdir -p "$(dirname "$JOURNAL")"
+  printf '%s | version %s | précédente %s | par %s | sauvegarde %s | migrations signalées : %s | %s\n' \
+    "$(date '+%Y-%m-%d %H:%M:%S')" "$VERSION" "$PRECEDENTE" "${SUDO_USER:-$(id -un)}" \
+    "${BK:-aucune}" "$(echo ${NOUVELLES:-aucune})" "$SUJET" >> "$JOURNAL"
+  log "Trace ajoutée à $JOURNAL"
+fi
+log "Version déployée : $VERSION — $SUJET (précédente : $PRECEDENTE)"
+if [ "$VERSION" != "$PRECEDENTE" ]; then
+  log "Retour arrière si besoin : sudo git checkout $PRECEDENTE, puis restaurer ${BK:-la dernière sauvegarde} (manuel § 14)"
 fi
 
 log "✅ Déploiement terminé."

@@ -15,6 +15,9 @@ Le reste de ce fichier décrit la branche `main` (PostgreSQL / Render). Sur
   `FILTER (WHERE…)`, `ON CONFLICT`, `||`, `CURRENT_DATE - n`…). Toute
   évolution de schéma = `sql/migration_<sujet>_mysql.sql` rejouable, ajoutée
   à la liste `FICHIERS` de `sql/installer_schema_mysql.sh`.
+- **Déploiement :** fait par l'administrateur de BD. Lui transmettre la fiche
+  `bash tools/fiche_mise_a_jour.sh <version_en_prod>` (version = dernière
+  ligne de `/var/log/stockapp/deploiements.txt`, qu'il renvoie).
 - **Avant tout push :** `bash tools/verifier_vps.sh` doit réussir (rejoué
   par GitHub Actions, `.github/workflows/verif-vps.yml`).
 - **Local :** `docker compose up -d --build` → http://localhost:8081, voir

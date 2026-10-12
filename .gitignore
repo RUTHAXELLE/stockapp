@@ -55,3 +55,6 @@ Thumbs.db
 # Fichiers de travail temporaires
 .mien_*.tmp
 .di_css.tmp
+
+# Fiches de mise à jour générées par tools/fiche_mise_a_jour.sh
+fiches_mise_a_jour/

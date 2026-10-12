@@ -16,9 +16,21 @@ contre un vrai MySQL.
    `RUTHAXELLE/stockapp`, branche `vps-mysql`).
 5. Sur GitHub, onglet **Actions** : le même contrôle se relance. Rouge = ne
    pas déployer.
-6. Sur le serveur : `cd /var/www/stockapp && sudo ./deploy.sh`, puis jouer
-   les nouvelles migrations qu'il signale
-   (cf. `docs/MANUEL_DEPLOIEMENT_VPS.md` § 12).
+6. Préparer la fiche de l'administrateur de base de données, qui déploie :
+
+   ```bash
+   bash tools/fiche_mise_a_jour.sh <version_en_production>
+   ```
+
+   `<version_en_production>` est la « version » de la dernière ligne de
+   trace qu'il a renvoyée (`sudo tail -1 /var/log/stockapp/deploiements.txt`
+   sur le serveur). La fiche — écrite dans `fiches_mise_a_jour/`, non
+   versionné — donne la version cible et son contrôle GitHub, l'aperçu,
+   `sudo ./deploy.sh`, les migrations à jouer dans l'ordre avec leur
+   commande, les vérifications et le retour arrière. Le script refuse
+   (code 2) tant que le contrôle GitHub n'est pas au vert.
+7. L'administrateur déploie, puis renvoie la nouvelle ligne de trace : elle
+   sert de point de départ à la fiche suivante.
 
 ## Démarrer
 

@@ -409,6 +409,21 @@ la base, applique le schéma des Demandes internes et recharge le serveur web.
 **Il ne recharge jamais le schéma de base sur une base existante** : les
 données sont protégées.
 
+Chaque mise à jour est accompagnée d'une **fiche** préparée par le
+demandeur (`tools/fiche_mise_a_jour.sh`) : version à déployer, migrations
+dans l'ordre avec leur commande, vérifications, retour arrière. La suivre
+dans l'ordre.
+
+**Trace des déploiements.** À la fin, le script affiche « Version
+déployée : xxxxxxx » et ajoute une ligne à
+`/var/log/stockapp/deploiements.txt` (date, version, version précédente,
+sauvegarde faite, migrations signalées). Renvoyer cette ligne au
+demandeur :
+
+```bash
+sudo tail -1 /var/log/stockapp/deploiements.txt
+```
+
 **Nouvelles migrations.** Si la mise à jour apporte de nouveaux fichiers
 `sql/*_mysql.sql`, le script les liste après le `git pull` :
 
