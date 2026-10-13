@@ -208,7 +208,7 @@ function _auto_valider_stock(string $date_import, int $user_id): array {
             // Écarts détectés → notifier le GSB pour validation manuelle
             // Ne pas créer de record refuse automatique : c'est au GSB de décider
             $gsb_users = db_fetch_all(
-                "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug IN ('gsb','admin','superadmin') AND u.actif=1"
+                "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug IN ('gestionnaire_stock_bobines','admin','superadmin') AND u.actif=1"
             );
             foreach ($gsb_users as $gsb) {
                 db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",

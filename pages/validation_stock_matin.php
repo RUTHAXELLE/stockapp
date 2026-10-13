@@ -804,7 +804,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             // Notifier les GSB
             $gsb_list = db_fetch_all(
                 "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id
-                 WHERE r.slug IN ('gsb','admin','superadmin') AND u.actif=1"
+                 WHERE r.slug IN ('gestionnaire_stock_bobines','admin','superadmin') AND u.actif=1"
             );
             $site_nom  = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$site_id]) ?? "site #$site_id";
             $coord_nom = trim(($user['prenom'] ?? '').' '.($user['nom'] ?? ''));

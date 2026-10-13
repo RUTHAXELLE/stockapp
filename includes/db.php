@@ -87,17 +87,15 @@ function get_db(): PDO {
 
 function db_query(string $sql, array $params = []): PDOStatement {
     $stmt = get_db()->prepare($sql);
-    try {
-        $stmt->execute($params);
-    } catch (PDOException $e) {
-        // SQLSTATE classe 01xxx = warnings MySQL (ex: 01000 = troncature) :
-        // la requête a quand même été exécutée, on logue et on continue.
-        if (substr((string)$e->getCode(), 0, 2) === '01') {
-            error_log('DB warning (ignored): ' . $e->getMessage());
-        } else {
-            throw $e;
-        }
-    }
+    // Toute exception est remontée. Les SQLSTATE 01xxx étaient ignorés
+    // (juin 2026, MariaDB non strict, où la ligne était quand même écrite) :
+    // en MySQL 8 strict, « Data truncated » (1265, SQLSTATE 01000) signifie
+    // que la requête a ÉCHOUÉ et que rien n'est écrit. Ignorer l'exception
+    // faisait croire à un succès — validation du stock du matin « réussie »
+    // sans mouvement de stock, sans trace d'écart ni notification (constaté
+    // le 13/10/2026). PDO ne lève jamais d'exception pour un simple
+    // avertissement : une exception est toujours un échec.
+    $stmt->execute($params);
     return $stmt;
 }
 function db_fetch_all(string $sql, array $params = []): array {
