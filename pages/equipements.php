@@ -234,6 +234,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
         }
     }
 }
+$import_result = import_apres_envoi($import_result, 'equipements');   // Post/Redirect/Get : un rechargement ne rejoue pas l'import
 
 // ── NETTOYAGE DES DOUBLONS déjà en base (anciens imports, avant l'anti-
 // doublon ci-dessus). Deux sortes de groupes parmi les équipements actifs

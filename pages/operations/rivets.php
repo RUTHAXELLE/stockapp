@@ -108,6 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
         }
     }
 }
+$import_result = import_apres_envoi($import_result, 'rivets');   // Post/Redirect/Get : un rechargement ne rejoue pas l'import
 
 if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     header('Content-Type: application/json');

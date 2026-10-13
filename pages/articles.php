@@ -161,6 +161,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
         }
     }
 }
+$import_result = import_apres_envoi($import_result, 'articles');   // Post/Redirect/Get : un rechargement ne rejoue pas l'import
 
 // ============================================================
 //  AJAX
