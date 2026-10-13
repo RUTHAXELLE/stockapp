@@ -87,21 +87,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             foreach ($sites as $site_id) {
                 try {
                     inv_creer_mensuel($site_id, $debut, $session_id, $user['id']);
+                } catch (PDOException $e) {
+                    throw $e;   // erreur SQL : à signaler, pas un site « sans stock »
                 } catch (Exception $e) {
                     $sites_sans_bobine[] = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$site_id]);
                 }
                 try {
                     inv_creer_rivets($site_id, $debut, $session_id, $user['id']);
+                } catch (PDOException $e) {
+                    throw $e;   // erreur SQL : à signaler, pas un site « sans stock »
                 } catch (Exception $e) {
                     $sites_sans_rivet[] = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$site_id]);
                 }
                 try {
                     inv_creer_pmma($site_id, $debut, $session_id, $user['id']);
+                } catch (PDOException $e) {
+                    throw $e;   // erreur SQL : à signaler, pas un site « sans stock »
                 } catch (Exception $e) {
                     $sites_sans_pmma[] = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$site_id]);
                 }
                 try {
                     inv_creer_equipements($site_id, $debut, $session_id, $user['id']);
+                } catch (PDOException $e) {
+                    throw $e;   // erreur SQL : à signaler, pas un site « sans stock »
                 } catch (Exception $e) {
                     $sites_sans_equip[] = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$site_id]);
                 }

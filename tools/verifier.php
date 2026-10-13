@@ -183,6 +183,53 @@ foreach ($fichiers as $f) {
 }
 echo "  $n_ins INSERT vérifiés, $n_pb problème(s)\n";
 
+// UPDATE : table et colonnes affectées (SET col = …) existantes. Les UPDATE
+// multi-tables (JOIN, alias) ne sont contrôlés que sur leur table.
+// Trouvé ainsi : cron/check_alerts.php écrivait op_bobines.updated_at,
+// colonne inexistante — la tâche des 5 minutes plantait à chaque bobine
+// épuisée.
+$n_upd = 0; $n_upd_pb = 0;
+foreach ($fichiers as $f) {
+    $src = file_get_contents($f);
+    if (!preg_match_all('/UPDATE\s+`?([a-z_]+)`?((?:\s+(?:AS\s+)?[a-z]{1,3})?\s+(?:(?:LEFT\s+)?JOIN\b.*?)?)SET\s+(.*?)(?:\s+WHERE\b|"|$)/is',
+                        $src, $m, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) continue;
+    foreach ($m as $x) {
+        $table = $x[1][0];
+        if (in_array(strtolower($table), ['set', 'ignore', 'of', 'cascade'], true)) continue;
+        $ligne = substr_count($src, "\n", 0, $x[0][1]) + 1;
+        $n_upd++;
+        if (!isset($colonnes[$table])) { signaler("$f:$ligne — UPDATE d'une table inexistante : $table"); $n_upd_pb++; continue; }
+        if (preg_match('/\bJOIN\b/i', $x[2][0])) continue;
+        preg_match_all('/(?:^|,)\s*(?:[a-z]{1,3}\.)?`?([a-z_][a-z0-9_]*)`?\s*=/i', $x[3][0], $c);
+        foreach (array_unique($c[1]) as $col) {
+            if (!isset($colonnes[$table][$col])) { signaler("$f:$ligne — UPDATE $table : colonne inexistante $col"); $n_upd_pb++; }
+        }
+    }
+}
+echo "  $n_upd UPDATE vérifiés, $n_upd_pb problème(s)\n";
+
+// Modules de droits utilisés par le code sans aucune ligne en base : tout
+// rôle hors admin/superadmin y reçoit « Accès refusé ». C'était le cas de
+// « Nouvelle demande », « À valider », « Traitements IT »… (migrations de
+// main non traduites, 12/10/2026).
+$modules_base = array_column(db_fetch_all("SELECT DISTINCT module FROM permissions"), 'module');
+$modules_admin = [   // réservés aux administrateurs par choix, comme sur main
+    'agents'              => 'annuaire des agents : aucun droit prévu sur main (sql/agents_pg.sql)',
+    'inventaire_sessions' => 'géré par délégation (Administration → Délégations), jamais par la table permissions',
+];
+$vus_mod = [];
+foreach ($fichiers as $f) {
+    $src = file_get_contents($f);
+    if (!preg_match_all("/(?:\bcan|require_permission)\s*\(\s*'([a-z_]+)'|'perm'\s*=>\s*\[\s*'([a-z_]+)'/", $src, $m, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) continue;
+    foreach ($m as $x) {
+        $mod = $x[1][0] !== '' ? $x[1][0] : $x[2][0];
+        if (isset($vus_mod[$mod]) || in_array($mod, $modules_base, true) || isset($modules_admin[$mod])) continue;
+        $vus_mod[$mod] = true;
+        signaler("$f:" . (substr_count($src, "\n", 0, $x[0][1]) + 1) . " — module de droits « $mod » sans aucune ligne dans permissions (Accès refusé hors admin)");
+    }
+}
+echo "  " . count($vus_mod) . " module(s) de droits sans aucune ligne en base\n";
+
 // ── 3 bis. Valeurs écrites en dur contre les listes fermées (ENUM) ──
 // PostgreSQL stockait ces colonnes en texte libre : un nouveau type de
 // mouvement y passait sans rien changer au schéma. En MySQL strict, une

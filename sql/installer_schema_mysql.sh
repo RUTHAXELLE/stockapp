@@ -82,7 +82,8 @@ FICHIERS="stockapp.sql demandes_internes_mysql.sql agents_mysql.sql achats_mysql
  migration_tracabilite_endommagements_mysql.sql
  migration_import_optotrace_plate_number_mysql.sql
  migration_demandes_correction_saisie_structure_mysql.sql
- migration_commandes_depot_source_mysql.sql migration_enums_en_texte_mysql.sql"
+ migration_commandes_depot_source_mysql.sql migration_enums_en_texte_mysql.sql
+ migration_permissions_modules_scindes_mysql.sql"
 
 echo "==> Installation du schéma dans $DB_NAME@$DB_HOST"
 for f in $FICHIERS; do
@@ -109,6 +110,7 @@ verif "op_stock_rivets.seuil_alerte et equipements.emplacement" "SELECT COUNT(*)
 verif "import OptoTrace et corrections GSB acceptés en mode strict" "SELECT (SELECT is_nullable FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'import_optotrace' AND column_name = 'plate_number') = 'YES' AND (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'demandes_correction_saisie' AND column_name IN ('bobine_id','site_id','gsb_id','date_cible','films_pj','films_emuci','ecart','notes_gsb')) = 8"
 verif "commandes.depot_source_id (dépôt source des livraisons)" "SELECT COUNT(*) = 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'commandes' AND column_name = 'depot_source_id'"
 verif "plus aucune liste fermée (ENUM) hors colonnes calculées, comme sur main" "SELECT COUNT(*) = 0 FROM information_schema.columns WHERE table_schema = DATABASE() AND data_type = 'enum' AND extra NOT LIKE '%GENERATED%'"
+verif "droits des modules scindés (Nouvelle demande, À valider, Traitements IT, Vignette…)" "SELECT COUNT(DISTINCT module) = 5 FROM permissions WHERE module IN ('demandes_new','demandes_valider','demandes_it','equipements_operationnel','vignette')"
 [ "$ECHEC" = "0" ] && echo "==> Schéma complet." || { echo "==> Schéma INCOMPLET : ne pas continuer."; exit 1; }
 
 if [ "$AVEC_DEMO" = "1" ]; then

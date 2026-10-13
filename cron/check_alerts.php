@@ -32,7 +32,9 @@ if ($mode === 'all' || $mode === 'bobines') {
     $nb_terminees = 0;
     foreach ($bobines_epuisees as $b) {
         db_query(
-            "UPDATE op_bobines SET statut='epuisee', updated_at=NOW() WHERE id=?",
+            // op_bobines n'a pas de colonne updated_at (ni en MySQL ni sur main) :
+            // la tâche plantait dès la première bobine épuisée (13/10/2026).
+            "UPDATE op_bobines SET statut='epuisee' WHERE id=?",
             [$b['id']]
         );
         db_query(
