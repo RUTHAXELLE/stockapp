@@ -50,6 +50,17 @@ $sf_p = $site_id ? "AND p.site_id = $site_id" : "";   // table aliasée p
 $sf_s = $site_id ? "AND s.id = $site_id"      : "";   // table sites aliasée s
 $sf_b = $site_id ? "AND b.site_id = $site_id" : "";   // table op_bobines aliasée b
 
+// Colonnes Duplicatas/Post-Immat présentes en base ? (migration
+// sql/migration_operation_sites_duplicata_postimmat.sql) — ignorées tant
+// qu'elle n'est pas passée, pour ne pas casser la vue PDG.
+$reimmat_migration_ok = db_colonne_existe('op_points_journaliers', 'nb_vp_duplicata')
+    && db_colonne_existe('sites', 'operation');
+$reimmat_cols_select = $reimmat_migration_ok ? ",
+            COALESCE(SUM(total_engins_duplicata),0) AS total_engins_dup,
+            COALESCE(SUM(total_plaques_duplicata),0) AS total_plaques_dup,
+            COALESCE(SUM(total_engins_postimmat),0) AS total_engins_pi,
+            COALESCE(SUM(total_plaques_postimmat),0) AS total_plaques_pi" : "";
+
 // ── OPÉRATIONS mois courant
 $ops = db_fetch_one(
     "SELECT COUNT(*) AS total_points,
@@ -60,6 +71,7 @@ $ops = db_fetch_one(
             COALESCE(SUM(total_plaques),0) AS total_plaques,
             COALESCE(SUM(rivets_utilises),0) AS rivets_utilises,
             COALESCE(ROUND(AVG(NULLIF(moyenne_prod,0)),1),0) AS moy_prod
+            $reimmat_cols_select
      FROM op_points_journaliers
      WHERE DATE_FORMAT(date_point,'$date_fmt')=? AND statut != 'brouillon' $sf",
     [$periode_val]
@@ -69,6 +81,7 @@ $ops = db_fetch_one(
 $ops_prec = db_fetch_one(
     "SELECT COALESCE(SUM(total_engins),0) AS total_engins,
             COALESCE(SUM(total_plaques),0) AS total_plaques
+            $reimmat_cols_select
      FROM op_points_journaliers
      WHERE DATE_FORMAT(date_point,'$date_fmt')=? AND statut != 'brouillon' $sf",
     [$periode_val_prec]
@@ -77,6 +90,33 @@ $engins_curr = (int)($ops['total_engins'] ?? 0);
 $engins_prev = (int)($ops_prec['total_engins'] ?? 0);
 $engins_delta = $engins_curr - $engins_prev;
 $engins_trend = $engins_prev > 0 ? round($engins_delta / $engins_prev * 100, 1) : null;
+
+// ── DUPLICATAS / POST-IMMAT — uniquement les sites dont l'opération est
+// reimmat_post. Totaux jamais mélangés aux chiffres Primo ci-dessus.
+$engins_dup_curr = (int)($ops['total_engins_dup'] ?? 0);
+$engins_dup_prev = (int)($ops_prec['total_engins_dup'] ?? 0);
+$engins_dup_trend = $engins_dup_prev > 0 ? round(($engins_dup_curr - $engins_dup_prev) / $engins_dup_prev * 100, 1) : null;
+$engins_pi_curr  = (int)($ops['total_engins_pi'] ?? 0);
+$engins_pi_prev  = (int)($ops_prec['total_engins_pi'] ?? 0);
+$engins_pi_trend = $engins_pi_prev > 0 ? round(($engins_pi_curr - $engins_pi_prev) / $engins_pi_prev * 100, 1) : null;
+
+$prod_par_site_reimmat = [];
+if ($reimmat_migration_ok) {
+    $prod_par_site_reimmat = db_fetch_all(
+        "SELECT s.nom,
+                COALESCE(SUM(p.total_engins_duplicata),0)  AS engins_dup,
+                COALESCE(SUM(p.total_plaques_duplicata),0) AS plaques_dup,
+                COALESCE(SUM(p.total_engins_postimmat),0)  AS engins_pi,
+                COALESCE(SUM(p.total_plaques_postimmat),0) AS plaques_pi
+         FROM sites s
+         LEFT JOIN op_points_journaliers p ON p.site_id=s.id
+                    AND TO_CHAR(p.date_point,'$date_fmt')=? AND p.statut != 'brouillon'
+         WHERE s.actif=1 AND s.operation='reimmat_post' $sf_s
+         GROUP BY s.id, s.nom ORDER BY (engins_dup+engins_pi) DESC",
+        [$periode_val]
+    );
+}
+$has_reimmat = !empty($prod_par_site_reimmat);
 
 // ── SITES — performance par site
 $prod_par_site = db_fetch_all(
@@ -1118,6 +1158,50 @@ include __DIR__ . '/../templates/header.php';
   </div>
 </div><!-- /.pfw-evol-row -->
 
+<?php if ($has_reimmat): ?>
+<!-- ══════════ DUPLICATAS & POST-IMMAT (sites reimmat_post) ══════════ -->
+<div class="biz-card" style="margin-bottom:20px">
+  <div class="card-ttl">Duplicatas &amp; Post-Immat</div>
+  <div class="card-sub">Sites Re-Immatriculation · <?= h($mois_display) ?> · totaux séparés du Primo</div>
+  <div class="kpi-mini">
+    <div class="kpi-m">
+      <div class="kpi-m-val" style="color:#6b21a8"><?= number_format($engins_dup_curr,0,',',' ') ?></div>
+      <div class="kpi-m-lbl">Duplicatas posés</div>
+    </div>
+    <div class="kpi-m">
+      <div class="kpi-m-val" style="color:<?= $engins_dup_trend===null?'#5a6678':($engins_dup_trend>=0?'#15803d':'#dc2626') ?>">
+        <?= $engins_dup_trend===null ? '—' : (($engins_dup_trend>=0?'+':'').$engins_dup_trend.'%') ?>
+      </div>
+      <div class="kpi-m-lbl">vs <?= h($mois_prec_lbl) ?></div>
+    </div>
+    <div class="kpi-m">
+      <div class="kpi-m-val" style="color:#9a3412"><?= number_format($engins_pi_curr,0,',',' ') ?></div>
+      <div class="kpi-m-lbl">Post-Immat posés</div>
+    </div>
+    <div class="kpi-m">
+      <div class="kpi-m-val" style="color:<?= $engins_pi_trend===null?'#5a6678':($engins_pi_trend>=0?'#15803d':'#dc2626') ?>">
+        <?= $engins_pi_trend===null ? '—' : (($engins_pi_trend>=0?'+':'').$engins_pi_trend.'%') ?>
+      </div>
+      <div class="kpi-m-lbl">vs <?= h($mois_prec_lbl) ?></div>
+    </div>
+  </div>
+  <table class="dtbl">
+    <thead><tr><th>Site</th><th style="text-align:right">Duplicatas</th><th style="text-align:right">Plaques dup.</th><th style="text-align:right">Post-Immat</th><th style="text-align:right">Plaques PI</th></tr></thead>
+    <tbody>
+    <?php foreach ($prod_par_site_reimmat as $spr): ?>
+      <tr>
+        <td style="font-weight:700;color:var(--navy,#06033A)"><?= h($spr['nom']) ?></td>
+        <td style="text-align:right"><?= number_format((int)$spr['engins_dup'],0,',',' ') ?></td>
+        <td style="text-align:right;color:#5a6678"><?= number_format((int)$spr['plaques_dup'],0,',',' ') ?></td>
+        <td style="text-align:right"><?= number_format((int)$spr['engins_pi'],0,',',' ') ?></td>
+        <td style="text-align:right;color:#5a6678"><?= number_format((int)$spr['plaques_pi'],0,',',' ') ?></td>
+      </tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table>
+</div>
+<?php endif; ?>
+
 <!-- ══════════ POINT DU PARC MATÉRIEL ══════════ -->
 <div class="biz-card eq" style="margin-bottom:20px">
   <div class="eq-hd">
@@ -1876,13 +1960,21 @@ function hexRgba(hex, a) {
     return `rgba(${r},${g},${b},${a})`;
 }
 function rrect(ctx, x, y, w, h, r) {
+    // Barre sans surface (site sans données, graphe très étroit) : on
+    // ouvre un chemin vide pour que le fill()/clip() de l'appelant ne
+    // reprenne pas l'ancien tracé, et on s'arrête là.
+    ctx.beginPath();
+    if (!(w > 0 && h > 0)) return;
+    // arcTo() lève une IndexSizeError sur un rayon négatif, ce qui
+    // interrompait tout le dessin du graphe : on borne chaque rayon
+    // entre 0 et la demi-largeur/demi-hauteur.
+    const borne = v => Math.max(0, Math.min(v, w/2, h/2));
     let tl, tr, br, bl;
     if (Array.isArray(r)) {
-        [tl, tr, br, bl] = r.map(v => Math.min(v, w/2, h/2));
+        [tl, tr, br, bl] = r.map(borne);
     } else {
-        tl = tr = br = bl = Math.min(r, w/2, h/2);
+        tl = tr = br = bl = borne(r);
     }
-    ctx.beginPath();
     ctx.moveTo(x+tl, y);
     ctx.lineTo(x+w-tr, y);   ctx.arcTo(x+w, y,   x+w, y+tr,  tr);
     ctx.lineTo(x+w, y+h-br); ctx.arcTo(x+w, y+h, x+w-br, y+h, br);

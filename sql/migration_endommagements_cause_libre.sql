@@ -1,0 +1,12 @@
+-- ============================================================
+--  Cause d'endommagement en saisie libre (point journalier)
+--  Idempotente. 2026-10-13
+-- ============================================================
+--  La cause était un code (manipulation | defaut_materiel |
+--  incident_externe | autre) en varchar(30). Elle devient un texte libre
+--  saisi par le coordinateur : on élargit la colonne. Les anciens codes
+--  restent valides et s'affichent toujours en clair.
+--  Tant que cette migration n'est pas passée, l'application limite la
+--  cause à 30 caractères (taille lue dans information_schema).
+-- ============================================================
+ALTER TABLE public.op_endommagements ALTER COLUMN cause TYPE varchar(255);

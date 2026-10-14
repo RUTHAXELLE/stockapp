@@ -114,3 +114,15 @@ function db_last_id(?string $seq = null): string { return get_db()->lastInsertId
 function db_begin(): void    { get_db()->beginTransaction(); }
 function db_commit(): void   { get_db()->commit(); }
 function db_rollback(): void { if (get_db()->inTransaction()) get_db()->rollBack(); }
+
+/**
+ * La colonne existe-t-elle en base ? Le code part en production dès le push,
+ * les migrations SQL sont lancées à la main sur Neon ensuite : une page qui
+ * écrit dans une nouvelle colonne doit continuer à marcher sans elle.
+ */
+function db_colonne_existe(string $table, string $colonne): bool {
+    static $cache = [];
+    return $cache["$table.$colonne"] ??= (bool)db_fetch_value(
+        "SELECT COUNT(*) FROM information_schema.columns WHERE table_name=? AND column_name=?",
+        [$table, $colonne]);
+}

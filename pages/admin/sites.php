@@ -40,12 +40,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $ville   = trim($_POST['ville']           ?? '');
         $resp_id = (int)($_POST['responsable_id'] ?? 0) ?: null;
         $opt_caisse = in_array($type, ['entrepot','siege','magasin']) ? 0 : (int)($_POST['option_caisse'] ?? 0);
+        // Colonne sites.operation présente ? (sql/migration_operation_sites_duplicata_postimmat.sql)
+        // — ignorée tant qu'elle n'est pas passée, pour ne pas casser la création de site.
+        $operation_ok = db_colonne_existe('sites', 'operation');
+        $operation = in_array($type, ['saisie','pose','mixte']) && trim($_POST['operation'] ?? '') === 'reimmat_post'
+            ? 'reimmat_post' : 'primo';
         if (!$code || !$nom || !$type) json_response(false, 'Code, nom et type sont obligatoires.');
         if (db_fetch_value("SELECT COUNT(*) FROM sites WHERE code=?", [$code]) > 0)
             json_response(false, "Le code site $code existe déjà.");
         db_query(
-            "INSERT INTO sites (code,nom,type,option_caisse,adresse,ville,responsable_id) VALUES (?,?,?,?,?,?,?)",
-            [$code, $nom, $type, $opt_caisse, $adresse, $ville, $resp_id]
+            "INSERT INTO sites (code,nom,type,option_caisse" . ($operation_ok ? ',operation' : '') . ",adresse,ville,responsable_id)
+             VALUES (?,?,?,?" . ($operation_ok ? ',?' : '') . ",?,?,?)",
+            array_merge([$code, $nom, $type, $opt_caisse], $operation_ok ? [$operation] : [], [$adresse, $ville, $resp_id])
         );
         $id = (int)db_last_id();
         audit_log($user['id'], 'CREATE', 'sites', $id, "Création site $code — $nom");
@@ -63,10 +69,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $actif      = (int)($_POST['actif']          ?? 1);
         $resp_id    = (int)($_POST['responsable_id'] ?? 0) ?: null;
         $opt_caisse = in_array($type, ['entrepot','siege','magasin']) ? 0 : (int)($_POST['option_caisse'] ?? 0);
+        $operation_ok = db_colonne_existe('sites', 'operation');
+        $operation = in_array($type, ['saisie','pose','mixte']) && trim($_POST['operation'] ?? '') === 'reimmat_post'
+            ? 'reimmat_post' : 'primo';
         if (!$nom || !$type) json_response(false, 'Nom et type obligatoires.');
         $old = db_fetch_one("SELECT * FROM sites WHERE id=?", [$id]);
-        db_query("UPDATE sites SET nom=?,type=?,option_caisse=?,adresse=?,ville=?,responsable_id=?,actif=? WHERE id=?",
-            [$nom, $type, $opt_caisse, $adresse, $ville, $resp_id, $actif, $id]);
+        db_query("UPDATE sites SET nom=?,type=?,option_caisse=?" . ($operation_ok ? ',operation=?' : '') . ",adresse=?,ville=?,responsable_id=?,actif=? WHERE id=?",
+            array_merge([$nom, $type, $opt_caisse], $operation_ok ? [$operation] : [], [$adresse, $ville, $resp_id, $actif, $id]));
         audit_log($user['id'], 'UPDATE', 'sites', $id, "Modification site {$old['code']}");
         json_response(true, 'Site mis à jour.');
     }
@@ -595,6 +604,9 @@ $type_colors = [
               <?php if (!empty($s['option_caisse'])): ?>
               <span style="font-size:12px;background:#e8f5e9;color:#2e7d32;padding:1px 6px;border-radius:8px;margin-left:3px"><i class="ph ph-currency-circle-dollar" aria-hidden="true"></i></span>
               <?php endif; ?>
+              <?php if (($s['operation'] ?? 'primo') === 'reimmat_post'): ?>
+              <span style="font-size:11px;background:#ede9fe;color:#5b21b6;padding:1px 6px;border-radius:8px;margin-left:3px;font-weight:700">Re-Immatriculation</span>
+              <?php endif; ?>
             </span>
           </td>
           <td style="font-size:13px;color:var(--muted)"><?= $s['ville'] ? h($s['ville']) : '—' ?></td>
@@ -672,12 +684,19 @@ $type_colors = [
           <input type="text" class="form-control" id="sCode" placeholder="ABJ-01" oninput="this.value=this.value.toUpperCase()">
         </div>
         <div class="form-group"><label>Type *</label>
-          <select class="form-control" id="sType" onchange="toggleCaisse(this.value)">
+          <select class="form-control" id="sType" onchange="toggleCaisse(this.value);toggleOperationField(this.value)">
             <?php foreach ($types_labels as $k => $l): ?>
             <option value="<?= $k ?>"><?= $l ?></option>
             <?php endforeach; ?>
           </select>
         </div>
+      </div>
+      <div class="form-group" id="sOperationWrap" style="display:none;margin-bottom:14px"><label>Opération</label>
+        <select class="form-control" id="sOperation">
+          <option value="primo">Primo</option>
+          <option value="reimmat_post">Re-Immatriculation</option>
+        </select>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">Re-Immatriculation ajoute les catégories Duplicatas et Post-Immat sur le point journalier et les tableaux de bord de ce site.</div>
       </div>
       <div class="form-group" style="margin-bottom:14px"><label>Nom du site *</label>
         <input type="text" class="form-control" id="sNom" placeholder="Agence Cocody">
@@ -816,16 +835,24 @@ function toggleCaisse(type){
   w.style.display=nonC.includes(type)?'none':'block';
   if(nonC.includes(type))document.getElementById('sCaisse').checked=false;
 }
+function toggleOperationField(type){
+  const calculables=['saisie','pose','mixte'];
+  const w=document.getElementById('sOperationWrap');
+  w.style.display=calculables.includes(type)?'block':'none';
+  if(!calculables.includes(type))document.getElementById('sOperation').value='primo';
+}
 function openMS(){
   ['sId','sCode','sNom','sVille','sAdresse'].forEach(i=>document.getElementById(i).value='');
   document.getElementById('sType').value='saisie';
   document.getElementById('sResp').value='';
   document.getElementById('sCaisse').checked=false;
+  document.getElementById('sOperation').value='primo';
   document.getElementById('sActifWrap').style.display='none';
   document.getElementById('sCode').disabled=false;
   document.getElementById('mSAlert').innerHTML='';
   document.getElementById('mST').textContent='Nouveau site';
   toggleCaisse('saisie');
+  toggleOperationField('saisie');
   document.getElementById('mS').classList.add('open');
 }
 function editS(id){
@@ -844,7 +871,9 @@ function editS(id){
     document.getElementById('sActifWrap').style.display='block';
     document.getElementById('sActif').checked=r.actif==1;
     document.getElementById('sCaisse').checked=r.option_caisse==1;
+    document.getElementById('sOperation').value=r.operation||'primo';
     toggleCaisse(r.type);
+    toggleOperationField(r.type);
     document.getElementById('mS').classList.add('open');
   });
 }
@@ -859,6 +888,7 @@ function saveS(){
     adresse:document.getElementById('sAdresse').value,
     responsable_id:document.getElementById('sResp').value,
     option_caisse:document.getElementById('sCaisse').checked?1:0,
+    operation:document.getElementById('sOperation').value,
     actif:document.getElementById('sActif').checked?1:0,
   }).then(d=>{
     btn.disabled=false;btn.textContent='Enregistrer';
@@ -905,7 +935,7 @@ function viewS(id){
       </div>`).join('')||'<p style="color:var(--muted);font-size:13px">Aucun utilisateur.</p>';
     document.getElementById('sdB').innerHTML=`
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px 18px;margin-bottom:18px">
-        ${[['Code',r.code],['Type',r.type],['Ville',r.ville||'—'],['Responsable',r.responsable_nom||'—'],['Adresse',r.adresse||'—'],['Statut',r.actif==1?'<i class="ph ph-check-circle" aria-hidden="true"></i> Actif':'<i class="ph ph-x-circle" aria-hidden="true"></i> Inactif']].map(([l,v])=>`<div style="padding:6px 0;border-bottom:1px solid var(--border)"><div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">${l}</div><div style="font-size:13px">${v}</div></div>`).join('')}
+        ${[['Code',r.code],['Type',r.type],['Opération',r.operation==='reimmat_post'?'Re-Immatriculation':'Primo'],['Ville',r.ville||'—'],['Responsable',r.responsable_nom||'—'],['Adresse',r.adresse||'—'],['Statut',r.actif==1?'<i class="ph ph-check-circle" aria-hidden="true"></i> Actif':'<i class="ph ph-x-circle" aria-hidden="true"></i> Inactif']].map(([l,v])=>`<div style="padding:6px 0;border-bottom:1px solid var(--border)"><div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">${l}</div><div style="font-size:13px">${v}</div></div>`).join('')}
       </div>
       <h4 style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;margin-bottom:8px">Équipements (${r.equip_par_type.reduce((s,e)=>s+parseInt(e.total),0)})</h4>
       ${equips}

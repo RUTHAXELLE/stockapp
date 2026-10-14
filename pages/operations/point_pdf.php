@@ -13,8 +13,10 @@ $user = current_user();
 $point_id = (int)($_GET['id'] ?? 0);
 if (!$point_id) { http_response_code(400); exit('Identifiant manquant.'); }
 
+$sites_operation_ok = db_colonne_existe('sites', 'operation');
 $point = db_fetch_one(
-    "SELECT p.*, s.nom AS site_nom, CONCAT(u.prenom,' ',u.nom) AS agent
+    "SELECT p.*, s.nom AS site_nom, " . ($sites_operation_ok ? "s.operation AS site_operation," : "'primo' AS site_operation,") . "
+            CONCAT(u.prenom,' ',u.nom) AS agent
      FROM op_points_journaliers p
      JOIN sites s ON s.id=p.site_id
      LEFT JOIN users u ON u.id=p.created_by
@@ -51,9 +53,9 @@ if (!empty($point['observations'])) {
     }
 }
 
-$pmma  = db_fetch_all("SELECT type_pmma, utilises, endommages FROM op_pmma_utilises WHERE point_id=? ORDER BY type_pmma", [$point_id]);
+$pmma  = db_fetch_all("SELECT * FROM op_pmma_utilises WHERE point_id=? ORDER BY type_pmma", [$point_id]);
 $films = db_fetch_all(
-    "SELECT b.numero AS bobine_num, b.type_code, fu.films_utilises, fu.films_endommages
+    "SELECT fu.*, b.numero AS bobine_num, b.type_code
      FROM op_films_utilises fu
      JOIN op_bobines b ON b.id=fu.bobine_id
      WHERE fu.point_id=? ORDER BY b.numero",
@@ -223,7 +225,7 @@ ob_start();
 
   <!-- Véhicules -->
   <div class="section">
-    <div class="section-title">Répartition des véhicules</div>
+    <div class="section-title"><?= ($point['site_operation'] ?? 'primo') === 'reimmat_post' ? 'Re-Immatriculation' : 'Répartition des véhicules' ?></div>
     <table class="veh">
       <thead>
         <tr>
@@ -254,11 +256,65 @@ ob_start();
     </table>
   </div>
 
+  <!-- Duplicatas / Post-Immat (sites reimmat_post) — totaux separes du Primo -->
+  <?php
+  $reimmat_cats = [
+      ['Duplicatas', '#6b21a8', '#f3e8ff', (int)($point['nb_vp_duplicata'] ?? 0), (int)($point['nb_camion_duplicata'] ?? 0),
+       (int)($point['nb_semi_duplicata'] ?? 0), (int)($point['nb_moto_duplicata'] ?? 0),
+       (int)($point['total_engins_duplicata'] ?? 0), (int)($point['total_plaques_duplicata'] ?? 0)],
+      ['Post-Immat', '#9a3412', '#fff3e0', (int)($point['nb_vp_postimmat'] ?? 0), (int)($point['nb_camion_postimmat'] ?? 0),
+       (int)($point['nb_semi_postimmat'] ?? 0), (int)($point['nb_moto_postimmat'] ?? 0),
+       (int)($point['total_engins_postimmat'] ?? 0), (int)($point['total_plaques_postimmat'] ?? 0)],
+  ];
+  foreach ($reimmat_cats as [$lbl, $color, $bg, $r_vp, $r_cam, $r_semi, $r_moto, $r_engins, $r_plaques]):
+      if ($r_engins <= 0) continue;
+  ?>
+  <div class="section">
+    <div class="section-title" style="color:<?= $color ?>"><?= h($lbl) ?></div>
+    <table class="veh">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th style="text-align:center">Nombre</th>
+          <th style="text-align:center">Plaques</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php if($r_vp>0): ?>
+        <tr><td>🚗 Véhicule Particulier</td><td style="text-align:center"><?= $r_vp ?></td><td style="text-align:center"><?= $r_vp*2 ?></td></tr>
+        <?php endif; ?>
+        <?php if($r_cam>0): ?>
+        <tr><td>🚛 Camion</td><td style="text-align:center"><?= $r_cam ?></td><td style="text-align:center"><?= $r_cam*2 ?></td></tr>
+        <?php endif; ?>
+        <?php if($r_semi>0): ?>
+        <tr><td>🚚 Semi-remorque</td><td style="text-align:center"><?= $r_semi ?></td><td style="text-align:center"><?= $r_semi ?></td></tr>
+        <?php endif; ?>
+        <?php if($r_moto>0): ?>
+        <tr><td>🏍️ Moto</td><td style="text-align:center"><?= $r_moto ?></td><td style="text-align:center"><?= $r_moto ?></td></tr>
+        <?php endif; ?>
+        <tr class="total">
+          <td>TOTAL</td>
+          <td style="text-align:center"><?= $r_engins ?></td>
+          <td style="text-align:center"><?= $r_plaques ?></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <?php endforeach; ?>
+
   <!-- Rivets -->
   <?php
   $gonfl  = (int)($point['rivets_gonflables'] ?? 0);
   $eclate = (int)($point['rivets_eclates']    ?? 0);
   $endomm = (int)($point['rivets_endommages'] ?? 0);
+  // Répartition par type (sql/migration_rivets_endommages_par_type.sql) ;
+  // anciens points : seul le total est connu.
+  $g_end = (int)($point['rivets_gonflables_end'] ?? 0);
+  $e_end = (int)($point['rivets_eclates_end']    ?? 0);
+  $endomm_detail = $g_end + $e_end === $endomm
+      ? implode(' · ', array_filter([$g_end ? "$g_end gonflable" . ($g_end > 1 ? 's' : '') : '',
+                                     $e_end ? "$e_end éclaté"   . ($e_end > 1 ? 's' : '') : '']))
+      : 'type non précisé';
   if ($gonfl + $eclate + $endomm > 0):
   ?>
   <div class="section">
@@ -281,6 +337,7 @@ ob_start();
         <td style="text-align:center;padding:8px;background:#fff3e0;border-radius:6px">
           <div style="font-size:18px;font-weight:bold;color:#e65100"><?= $endomm ?></div>
           <div style="font-size:9px;color:#e65100;text-transform:uppercase;margin-top:2px">Endommagés</div>
+          <div style="font-size:9px;color:#e65100;margin-top:2px"><?= h($endomm_detail) ?></div>
         </td>
         <?php endif; ?>
       </tr>
@@ -298,6 +355,7 @@ ob_start();
           <th>Type PMMA</th>
           <th style="text-align:center">Utilisés</th>
           <th style="text-align:center">Endommagés</th>
+          <th style="text-align:center">Non conformes</th>
           <th style="text-align:center">Total</th>
         </tr>
       </thead>
@@ -307,7 +365,8 @@ ob_start();
           <td><?= h($pm['type_pmma']) ?></td>
           <td style="text-align:center;color:#1565c0;font-weight:bold"><?= (int)$pm['utilises'] ?></td>
           <td style="text-align:center;color:#e65100;font-weight:bold"><?= (int)$pm['endommages'] ?></td>
-          <td style="text-align:center;font-weight:bold"><?= (int)$pm['utilises']+(int)$pm['endommages'] ?></td>
+          <td style="text-align:center;color:#7c3aed;font-weight:bold"><?= (int)($pm['non_conformes'] ?? 0) ?></td>
+          <td style="text-align:center;font-weight:bold"><?= (int)$pm['utilises']+(int)$pm['endommages']+(int)($pm['non_conformes'] ?? 0) ?></td>
         </tr>
         <?php endforeach; ?>
       </tbody>
@@ -326,6 +385,7 @@ ob_start();
           <th>Code</th>
           <th style="text-align:center">Films utilisés</th>
           <th style="text-align:center">Films endommagés</th>
+          <th style="text-align:center">Non conformes</th>
         </tr>
       </thead>
       <tbody>
@@ -335,6 +395,7 @@ ob_start();
           <td><?= h($f['type_code'] ?? '—') ?></td>
           <td style="text-align:center;font-weight:bold"><?= (int)$f['films_utilises'] ?></td>
           <td style="text-align:center;color:<?= (int)$f['films_endommages']>0?'#e65100':'#94a3b8' ?>;font-weight:bold"><?= (int)$f['films_endommages'] ?></td>
+          <td style="text-align:center;color:<?= (int)($f['non_conformes'] ?? 0)>0?'#7c3aed':'#94a3b8' ?>;font-weight:bold"><?= (int)($f['non_conformes'] ?? 0) ?></td>
         </tr>
         <?php endforeach; ?>
       </tbody>

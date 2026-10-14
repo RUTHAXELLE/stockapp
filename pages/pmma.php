@@ -285,11 +285,15 @@ if ($f_type !== '') {
     $ws_type = 'AND pu.type_pmma = ?';
     $conso_params[] = $f_type;
 }
+// Non conformes (PMMA reçus hors règles) : colonne ajoutée par
+// sql/migration_pmma_non_conformes.sql, lue à 0 tant qu'elle n'existe pas.
+$nc_sql = db_colonne_existe('op_pmma_utilises', 'non_conformes') ? 'pu.non_conformes' : '0';
 $conso = db_fetch_all(
     "SELECT p.date_point, p.site_id, s.nom AS site_nom, pu.type_pmma,
             SUM(pu.utilises) AS utilises,
             SUM(pu.endommages) AS endommages,
-            SUM(pu.utilises + pu.endommages) AS total_sortis
+            SUM($nc_sql) AS non_conformes,
+            SUM(pu.utilises + pu.endommages + $nc_sql) AS total_sortis
      FROM op_pmma_utilises pu
      JOIN op_points_journaliers p ON p.id = pu.point_id
      JOIN sites s ON s.id = p.site_id
@@ -314,7 +318,7 @@ foreach ($stock_par_site as $sp) {
 
 // ── SYNTHÈSE PAR TYPE SUR LA PÉRIODE
 $totaux_type = [];
-$grand_total  = ['utilises' => 0, 'endommages' => 0, 'total' => 0];
+$grand_total  = ['utilises' => 0, 'endommages' => 0, 'non_conformes' => 0, 'total' => 0];
 foreach ($conso as $c) {
     $k = $c['type_pmma'] ?: 'Standard';
     if (!isset($totaux_type[$k])) $totaux_type[$k] = ['utilises' => 0, 'endommages' => 0, 'total' => 0];
@@ -323,6 +327,7 @@ foreach ($conso as $c) {
     $totaux_type[$k]['total']      += (int)$c['total_sortis'];
     $grand_total['utilises']       += (int)$c['utilises'];
     $grand_total['endommages']     += (int)$c['endommages'];
+    $grand_total['non_conformes']  += (int)$c['non_conformes'];
     $grand_total['total']          += (int)$c['total_sortis'];
 }
 
@@ -765,6 +770,12 @@ include __DIR__ . '/../templates/header.php';
     <div class="kpi-lbl">Endommagés sur la période</div>
   </div>
   <?php endif; ?>
+  <?php if ($grand_total['non_conformes'] > 0): ?>
+  <div class="kpi" data-kpi-group="conso" style="border-color:#c4b5fd">
+    <div class="kpi-val" style="color:#7c3aed"><?= fmt_number($grand_total['non_conformes']) ?></div>
+    <div class="kpi-lbl">Non conformes sur la période</div>
+  </div>
+  <?php endif; ?>
 </div>
 
 <!-- ONGLETS -->
@@ -880,12 +891,13 @@ include __DIR__ . '/../templates/header.php';
         <th>Type PMMA</th>
         <th style="text-align:center">Utilisés</th>
         <th style="text-align:center">Endommagés</th>
+        <th style="text-align:center">Non conformes</th>
         <th style="text-align:center">Total sorti</th>
         <th style="text-align:center">Stock restant</th>
       </tr></thead>
       <tbody>
       <?php if (empty($conso)): ?>
-        <tr><td colspan="<?= $site_force ? 6 : 7 ?>" style="text-align:center;padding:30px;color:var(--muted)">
+        <tr><td colspan="<?= $site_force ? 7 : 8 ?>" style="text-align:center;padding:30px;color:var(--muted)">
           Aucune consommation sur cette période.
         </td></tr>
       <?php else: foreach ($conso as $c): ?>
@@ -900,6 +912,9 @@ include __DIR__ . '/../templates/header.php';
           <td style="text-align:center;font-weight:600;color:<?= $c['endommages'] > 0 ? 'var(--danger-d)' : 'var(--muted)' ?>">
             <?= (int)$c['endommages'] ?: '—' ?>
           </td>
+          <td style="text-align:center;font-weight:600;color:<?= $c['non_conformes'] > 0 ? '#7c3aed' : 'var(--muted)' ?>">
+            <?= (int)$c['non_conformes'] ?: '—' ?>
+          </td>
           <td style="text-align:center;font-family:'Montserrat',sans-serif;font-weight:800;font-size:15px"><?= (int)$c['total_sortis'] ?></td>
           <td style="text-align:center;font-weight:700;color:<?= is_int($restant) && $restant < 10 ? 'var(--danger-d)' : 'var(--navy)' ?>">
             <?= is_int($restant) ? $restant : $restant ?>
@@ -911,6 +926,7 @@ include __DIR__ . '/../templates/header.php';
           <td colspan="<?= $site_force ? 2 : 3 ?>" style="font-weight:700;color:var(--navy)">TOTAL PÉRIODE</td>
           <td style="text-align:center;font-family:'Montserrat',sans-serif;font-weight:900;color:var(--blue)"><?= $grand_total['utilises'] ?></td>
           <td style="text-align:center;font-family:'Montserrat',sans-serif;font-weight:900;color:var(--danger-d)"><?= $grand_total['endommages'] ?: '—' ?></td>
+          <td style="text-align:center;font-family:'Montserrat',sans-serif;font-weight:900;color:#7c3aed"><?= $grand_total['non_conformes'] ?: '—' ?></td>
           <td style="text-align:center;font-family:'Montserrat',sans-serif;font-weight:900;font-size:16px;color:var(--navy)"><?= $grand_total['total'] ?></td>
           <td></td>
         </tr>

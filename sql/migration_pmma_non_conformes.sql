@@ -1,0 +1,11 @@
+-- ============================================================
+--  PMMA non conformes dans le point journalier
+--  Idempotente. 2026-10-13
+-- ============================================================
+--  En plus des PMMA utilisés et endommagés, le coordinateur déclare les
+--  PMMA reçus qui ne respectent pas les règles (non conformes). Ils sortent
+--  du stock utilisable du site comme les endommagés.
+--  Tant que cette migration n'est pas passée, l'application ignore la
+--  saisie « Non conformes » (le reste du point s'enregistre normalement).
+-- ============================================================
+ALTER TABLE public.op_pmma_utilises ADD COLUMN IF NOT EXISTS non_conformes integer NOT NULL DEFAULT 0;

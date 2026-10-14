@@ -227,8 +227,8 @@ if ($periode === 'hebdomadaire') {
              'du_p'=>$C['du_b'], 'au_p'=>$C['au_b_complet'], 'n_a'=>12, 'n_b'=>12];
 }
 
-/** Somme des plaques par sous-periode, sur un intervalle de dates. */
-function kpi_serie(string $sfmt, string $du, string $au, string $filtre): array {
+/** Somme d'une colonne par sous-periode, sur un intervalle de dates. */
+function kpi_serie(string $sfmt, string $du, string $au, string $filtre, string $col = 'p.total_plaques'): array {
     // MySQL n'a pas de jeton DATE_FORMAT pour le jour de semaine ISO
     // (Postgres 'ID', 1=lundi..7=dimanche) : WEEKDAY() rend 0=lundi..6=
     // dimanche, +1 reproduit la meme numerotation. Les autres jetons
@@ -238,7 +238,7 @@ function kpi_serie(string $sfmt, string $du, string $au, string $filtre): array 
         : "DATE_FORMAT(p.date_point,'" . strtr($sfmt, ['YYYY'=>'%Y','MM'=>'%m','DD'=>'%d']) . "')";
     $out = [];
     foreach (db_fetch_all(
-        "SELECT $expr AS b, COALESCE(SUM(p.total_plaques),0) AS v
+        "SELECT $expr AS b, COALESCE(SUM($col),0) AS v
            FROM op_points_journaliers p
           WHERE p.date_point BETWEEN ? AND ?
             AND p.statut <> 'brouillon' $filtre
@@ -296,6 +296,72 @@ if ($sous) {
     $serie_note = $avec_b
         ? 'quatorze jours menant au ' . fmt_date($fin, 'd/m/Y') . ' contre ceux menant au ' . fmt_date($fin_b, 'd/m/Y')
         : 'quatorze jours menant au ' . fmt_date($fin, 'd/m/Y');
+}
+
+// ── DUPLICATAS / POST-IMMAT — sites operation='reimmat_post' uniquement.
+// Même traitement A/B que Production (kpi_somme_ab, courbe, classement),
+// jamais mélangé aux totaux Primo ci-dessus. Colonnes présentes en base ?
+// (sql/migration_operation_sites_duplicata_postimmat.sql) — ignorées tant
+// qu'elle n'est pas passée, pour ne pas casser le tableau de bord.
+$reimmat_migration_ok = db_colonne_existe('sites', 'operation')
+    && db_colonne_existe('op_points_journaliers', 'nb_vp_duplicata');
+$has_reimmat_sites = $reimmat_migration_ok && (bool)db_fetch_value(
+    "SELECT COUNT(*) FROM sites s WHERE s.actif=1 AND s.operation='reimmat_post' " . pref_clause_in('s.id', $sites_sel));
+$serie_dup_a = []; $serie_dup_b = []; $serie_pi_a = []; $serie_pi_b = [];
+$classement_reimmat = []; $plaques_reimmat_max = 0;
+if ($has_reimmat_sites) {
+    [$plaques_dup, $plaques_dup_p] = kpi_somme_ab('p.total_plaques_duplicata', $depuis_points, $C);
+    [$engins_dup,  $engins_dup_p]  = kpi_somme_ab('p.total_engins_duplicata',  $depuis_points, $C);
+    [$plaques_pi,  $plaques_pi_p]  = kpi_somme_ab('p.total_plaques_postimmat', $depuis_points, $C);
+    [$engins_pi,   $engins_pi_p]   = kpi_somme_ab('p.total_engins_postimmat',  $depuis_points, $C);
+
+    if ($sous) {
+        $ca_dup = kpi_serie($sous['fmt'], $sous['du'],   $sous['au'],   $sf_p, 'p.total_plaques_duplicata');
+        $cb_dup = kpi_serie($sous['fmt'], $sous['du_p'], $sous['au_p'], $sf_p, 'p.total_plaques_duplicata');
+        $ca_pi  = kpi_serie($sous['fmt'], $sous['du'],   $sous['au'],   $sf_p, 'p.total_plaques_postimmat');
+        $cb_pi  = kpi_serie($sous['fmt'], $sous['du_p'], $sous['au_p'], $sf_p, 'p.total_plaques_postimmat');
+        foreach ($sous['cles'] as $k) {
+            $serie_dup_a[] = $ca_dup[$k] ?? 0; $serie_dup_b[] = $cb_dup[$k] ?? 0;
+            $serie_pi_a[]  = $ca_pi[$k]  ?? 0; $serie_pi_b[]  = $cb_pi[$k]  ?? 0;
+        }
+    } else {
+        $fin_r = $C['du_a']; $deb_r = date('Y-m-d', strtotime($fin_r.' -13 days'));
+        $c_dup = kpi_serie('YYYY-MM-DD', $deb_r, $fin_r, $sf_p, 'p.total_plaques_duplicata');
+        $c_pi  = kpi_serie('YYYY-MM-DD', $deb_r, $fin_r, $sf_p, 'p.total_plaques_postimmat');
+        $avec_b_r = $C['mode'] !== 'precedente';
+        if ($avec_b_r) {
+            $fin_b_r = $C['du_b']; $deb_b_r = date('Y-m-d', strtotime($fin_b_r.' -13 days'));
+            $cb_dup = kpi_serie('YYYY-MM-DD', $deb_b_r, $fin_b_r, $sf_p, 'p.total_plaques_duplicata');
+            $cb_pi  = kpi_serie('YYYY-MM-DD', $deb_b_r, $fin_b_r, $sf_p, 'p.total_plaques_postimmat');
+        }
+        for ($i = 13; $i >= 0; $i--) {
+            $d_r = date('Y-m-d', strtotime($fin_r." -$i days"));
+            $serie_dup_a[] = $c_dup[$d_r] ?? 0;
+            $serie_pi_a[]  = $c_pi[$d_r]  ?? 0;
+            if ($avec_b_r) {
+                $d_br = date('Y-m-d', strtotime($fin_b_r." -$i days"));
+                $serie_dup_b[] = $cb_dup[$d_br] ?? 0;
+                $serie_pi_b[]  = $cb_pi[$d_br]  ?? 0;
+            }
+        }
+    }
+
+    // Classement par site reimmat_post — période A uniquement.
+    $fa_reimmat = "FILTER (WHERE p.date_point BETWEEN ?::date AND ?::date)";
+    $classement_reimmat = db_fetch_all(
+        "SELECT s.nom,
+                COALESCE(SUM(p.total_plaques_duplicata) $fa_reimmat,0) AS plaques_dup,
+                COALESCE(SUM(p.total_plaques_postimmat) $fa_reimmat,0) AS plaques_pi
+           FROM sites s
+           LEFT JOIN op_points_journaliers p ON p.site_id = s.id AND p.statut <> 'brouillon'
+          WHERE s.actif = 1 AND s.operation = 'reimmat_post' " . pref_clause_in('s.id', $sites_sel) . "
+          GROUP BY s.id, s.nom
+          HAVING COALESCE(SUM(p.total_plaques_duplicata) $fa_reimmat,0) > 0
+              OR COALESCE(SUM(p.total_plaques_postimmat) $fa_reimmat,0) > 0
+          ORDER BY plaques_dup DESC, plaques_pi DESC",
+        [$C['du_a'], $C['au_a'], $C['du_a'], $C['au_a'], $C['du_a'], $C['au_a'], $C['du_a'], $C['au_a']]);
+    foreach ($classement_reimmat as $c)
+        $plaques_reimmat_max = max($plaques_reimmat_max, (int)$c['plaques_dup'], (int)$c['plaques_pi']);
 }
 
 // ── BOBINES
@@ -630,7 +696,7 @@ usort($endo_top, function ($a, $b) {
 // pas détaillés : la part restante est dite plutôt que tue.
 $ENDO_CAUSES = ['manipulation' => 'Manipulation incorrecte', 'defaut_materiel' => 'Défaut matériel',
                 'incident_externe' => 'Incident externe', 'autre' => 'Autre'];
-$ENDO_ETAPES = ['pose' => 'à la pose', 'impression' => "à l'impression", 'transport' => 'au transport',
+$ENDO_ETAPES = ['pose' => 'à la pose', 'impression' => "à l'impression", 'lamination' => 'à la lamination', 'transport' => 'au transport',
                 'stockage' => 'au stockage', 'autre' => 'autre étape'];
 $endo_causes = []; $endo_etapes = []; $endo_detailles = 0;
 foreach (db_fetch_all(
@@ -638,6 +704,7 @@ foreach (db_fetch_all(
        FROM op_endommagements e
        JOIN op_points_journaliers p ON p.id = e.point_id
       WHERE p.statut <> 'brouillon' AND p.date_point BETWEEN ? AND ?
+        " . (db_colonne_existe('op_endommagements', 'objet') ? "AND COALESCE(e.objet,'film') = 'film'" : '') . "
         " . pref_clause_in('e.site_id', $sites_sel) . "
       GROUP BY e.cause, e.etape", [$C['du_a'], $C['au_a']]) as $r) {
     $endo_causes[$r['cause']] = ($endo_causes[$r['cause']] ?? 0) + (int)$r['n'];
@@ -1235,6 +1302,82 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
                    $P['libelle'], $serie_b ? $C['libelle_b_long'] : '', 'plaques',
                    $serie_borne, $serie_borne_b) ?>
   </section>
+
+  <?php if ($has_reimmat_sites): ?>
+  <!-- ══ DUPLICATAS & POST-IMMAT (sites reimmat_post) ══ -->
+  <section class="kp kp--sites" aria-labelledby="kp-reimmat">
+    <div class="kp-h">
+      <span class="kp-ic"><i class="ph ph-copy" aria-hidden="true"></i></span>
+      <h3 class="kp-t" id="kp-reimmat">Duplicatas &amp; Post-Immat<em>sites Re-Immatriculation — totaux séparés du Primo</em></h3>
+    </div>
+    <div class="kc-row">
+      <div class="kc">
+        <div class="kc-l">Duplicatas — plaques posées</div>
+        <div class="kc-v"><?= fmt_number((int)$plaques_dup) ?></div>
+        <?= kpi_delta(kpi_var($plaques_dup, $plaques_dup_p)) ?>
+        <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number((int)$plaques_dup_p) ?>)</div>
+      </div>
+      <div class="kc">
+        <div class="kc-l">Duplicatas — engins traités</div>
+        <div class="kc-v"><?= fmt_number((int)$engins_dup) ?></div>
+        <?= kpi_delta(kpi_var($engins_dup, $engins_dup_p)) ?>
+        <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number((int)$engins_dup_p) ?>)</div>
+      </div>
+      <div class="kc">
+        <div class="kc-l">Post-Immat — plaques posées</div>
+        <div class="kc-v"><?= fmt_number((int)$plaques_pi) ?></div>
+        <?= kpi_delta(kpi_var($plaques_pi, $plaques_pi_p)) ?>
+        <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number((int)$plaques_pi_p) ?>)</div>
+      </div>
+      <div class="kc">
+        <div class="kc-l">Post-Immat — engins traités</div>
+        <div class="kc-v"><?= fmt_number((int)$engins_pi) ?></div>
+        <?= kpi_delta(kpi_var($engins_pi, $engins_pi_p)) ?>
+        <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number((int)$engins_pi_p) ?>)</div>
+      </div>
+    </div>
+    <div class="kp-sep"></div>
+    <div class="kp-st" title="<?= h(ucfirst($serie_note)) ?>">Évolution Duplicatas (plaques)</div>
+    <?= kpi_courbe($serie_lbl, $serie_dup_a, $serie_dup_b,
+                   $P['libelle'], $serie_dup_b ? $C['libelle_b_long'] : '', 'plaques',
+                   $serie_borne, $serie_borne_b) ?>
+    <div class="kp-sep"></div>
+    <div class="kp-st" title="<?= h(ucfirst($serie_note)) ?>">Évolution Post-Immat (plaques)</div>
+    <?= kpi_courbe($serie_lbl, $serie_pi_a, $serie_pi_b,
+                   $P['libelle'], $serie_pi_b ? $C['libelle_b_long'] : '', 'plaques',
+                   $serie_borne, $serie_borne_b) ?>
+    <?php if (!empty($classement_reimmat)): ?>
+    <div class="kp-sep"></div>
+    <div class="kp-st">Production par site (sites Re-Immatriculation), <?= h($P['libelle']) ?></div>
+    <div class="kp-2c">
+      <div>
+        <div class="kp-st">Duplicatas par site</div>
+        <div class="kv">
+          <?php foreach (array_slice($classement_reimmat, 0, 8) as $c): ?>
+          <div class="kv-c">
+            <span class="kv-v"><?= fmt_number((int)$c['plaques_dup']) ?></span>
+            <span class="kv-b"><i style="height:<?= $plaques_reimmat_max > 0 ? round((int)$c['plaques_dup'] / $plaques_reimmat_max * 100, 1) : 0 ?>%"></i></span>
+            <span class="kv-l" title="<?= h($c['nom']) ?>"><?= h($c['nom']) ?></span>
+          </div>
+          <?php endforeach; ?>
+        </div>
+      </div>
+      <div>
+        <div class="kp-st">Post-Immat par site</div>
+        <div class="kv">
+          <?php foreach (array_slice($classement_reimmat, 0, 8) as $c): ?>
+          <div class="kv-c">
+            <span class="kv-v"><?= fmt_number((int)$c['plaques_pi']) ?></span>
+            <span class="kv-b"><i style="height:<?= $plaques_reimmat_max > 0 ? round((int)$c['plaques_pi'] / $plaques_reimmat_max * 100, 1) : 0 ?>%"></i></span>
+            <span class="kv-l" title="<?= h($c['nom']) ?>"><?= h($c['nom']) ?></span>
+          </div>
+          <?php endforeach; ?>
+        </div>
+      </div>
+    </div>
+    <?php endif; ?>
+  </section>
+  <?php endif; ?>
 
   <!-- ══ BOBINES ══ -->
   <section class="kp kp--bob" aria-labelledby="kp-bob">

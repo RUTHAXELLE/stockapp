@@ -77,12 +77,12 @@ if ($mode === 'all' || $mode === 'bobines') {
 // ── ALERTES QUOTIDIENNES ───────────────────────────────────────────────────
 if ($mode === 'all') {
     // Alertes fin de cycle équipements
-    notif_check_fin_cycles();
-    echo "[OK] Fin de cycles vérifiés.\n";
+    $nb = notif_check_fin_cycles();
+    echo "[OK] Fin de cycles vérifiés ($nb notification(s)).\n";
 
-    // Alertes stock bas consommables
-    notif_check_stock_bas();
-    echo "[OK] Stocks bas vérifiés.\n";
+    // Alertes stock bas (articles, rivets, PMMA)
+    $nb = notif_check_stock_bas();
+    echo "[OK] Stocks bas vérifiés ($nb notification(s)).\n";
 
     audit_log(null, 'CREATE', 'cron', null, 'Exécution des alertes automatiques quotidiennes');
 }
