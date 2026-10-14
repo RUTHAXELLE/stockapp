@@ -49,8 +49,11 @@ function inv_creer_mensuel(int $site_id, string $date, ?int $session_id, int $us
     );
     if ($exist) throw new Exception("Un inventaire mensuel existe déjà pour ce site à cette date.");
 
+    // Référence de l'inventaire : la quantité ERP (films_restants), celle
+    // que le comptage corrige — pas stock_systeme, qui n'est plus que le
+    // relevé OptoTrace (cf. inv_valider_bobines()).
     $bobines = db_fetch_all(
-        "SELECT b.id, b.numero, b.type_code, b.serie, b.stock_systeme
+        "SELECT b.id, b.numero, b.type_code, b.serie, b.films_restants
          FROM op_bobines b
          WHERE b.site_id=? AND b.statut NOT IN ('retiree','epuisee')
          ORDER BY b.serie, b.type_code, b.numero",
@@ -58,7 +61,7 @@ function inv_creer_mensuel(int $site_id, string $date, ?int $session_id, int $us
     );
     if (empty($bobines)) throw new Exception('Aucune bobine active sur ce site.');
 
-    $total_systeme = array_sum(array_column($bobines, 'stock_systeme'));
+    $total_systeme = array_sum(array_column($bobines, 'films_restants'));
     try {
         $films_emuci = (int)db_fetch_value(
             "SELECT COALESCE(SUM(plaques_posees),0) FROM points_emuci WHERE site_id=? AND date_point=?",
@@ -85,11 +88,112 @@ function inv_creer_mensuel(int $site_id, string $date, ?int $session_id, int $us
         db_query(
             "INSERT INTO inventaire_details_bobines (inventaire_id,bobine_id,stock_systeme,qte_temps_reel,stock_physique,ecart,ecart_connu_avant,conso_quotidienne_moy)
              VALUES (?,?,?,?,0,0,?,?)",
-            [$inv_id, $b['id'], (int)$b['stock_systeme'], (int)$b['stock_systeme'], $ecart_connu, round($conso_moy, 2)]
+            [$inv_id, $b['id'], (int)$b['films_restants'], (int)$b['films_restants'], $ecart_connu, round($conso_moy, 2)]
         );
     }
 
     return ['id' => $inv_id, 'nb' => count($bobines)];
+}
+
+// ── Valide un inventaire de bobines : chaque bobine comptée prend son stock
+//    physique comme quantité ERP (films_restants) et OptoTrace
+//    (stock_systeme). Partagée par la liste des inventaires et la fiche
+//    détail, qui divergeaient : la liste n'appliquait que les lignes à
+//    écart non nul — écart mesuré contre OptoTrace, si bien qu'une bobine
+//    comptée au chiffre d'OptoTrace gardait sa quantité ERP fausse
+//    (« Inventaire validé » affiché, rien d'appliqué) ; la fiche, elle,
+//    traçait l'ajustement contre OptoTrace et non contre l'ERP. L'écart
+//    tracé est désormais celui de la quantité ERP, la seule que
+//    l'inventaire corrige. À appeler dans la transaction de l'appelant.
+function inv_valider_bobines(array $inv, int $user_id): array {
+    $inv_id = (int)$inv['id'];
+    $lignes = db_fetch_all("SELECT * FROM inventaire_details_bobines WHERE inventaire_id=?", [$inv_id]);
+    $nb_ecarts = 0;
+    $total_physique = 0;
+    foreach ($lignes as $l) {
+        // Ligne jamais saisie : stock_physique est NOT NULL (0 à la
+        // création), seul un écart stocké distingue « compté à zéro » de
+        // « pas compté » — une bobine non comptée garde son stock.
+        if ((int)$l['stock_physique'] <= 0 && (int)$l['ecart'] == 0) continue;
+        $bob = db_fetch_one("SELECT films_restants FROM op_bobines WHERE id=?", [$l['bobine_id']]);
+        if (!$bob) continue;
+        $phy       = (int)$l['stock_physique'];
+        $erp_avant = (int)$bob['films_restants'];
+        $total_physique += $phy;
+
+        // Statut : même règle que l'import OptoTrace (entamée = en_cours).
+        db_query(
+            "UPDATE op_bobines SET films_restants=?, stock_systeme=?,
+             statut = CASE WHEN statut='retiree' THEN 'retiree'
+                           WHEN ? <= 0 THEN 'epuisee'
+                           WHEN ? < qte_initiale THEN 'en_cours'
+                           ELSE 'en_stock' END
+             WHERE id=?",
+            [$phy, $phy, $phy, $phy, $l['bobine_id']]
+        );
+        db_query(
+            "UPDATE ecarts_bobines SET statut='resolu', resolu_at=NOW(), resolu_par=?, resolution_notes=?
+             WHERE bobine_id=? AND statut='ouvert'",
+            [$user_id, "Résolu par inventaire #$inv_id", $l['bobine_id']]
+        );
+
+        $ecart = $phy - $erp_avant;
+        if ($ecart !== 0) {
+            $nb_ecarts++;
+            db_query(
+                "INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,ref_id,created_by)
+                 VALUES (?,?,?,?,?,?,?,?)",
+                [$l['bobine_id'], 'ajustement_inventaire', $ecart, $erp_avant, $phy,
+                 "Inventaire #$inv_id ({$inv['type_inventaire']})", $inv_id, $user_id]
+            );
+            db_query(
+                "INSERT INTO ecarts_bobines (bobine_id,date_constat,stock_systeme,stock_physique,ecart,motif,source,inventaire_id,statut,resolu_at,resolu_par,created_by)
+                 VALUES (?,?,?,?,?,?,'inventaire',?,'resolu',NOW(),?,?)",
+                [$l['bobine_id'], $inv['date_inventaire'], $erp_avant, $phy, $ecart,
+                 $l['notes'] ?? '', $inv_id, $user_id, $user_id]
+            );
+        }
+    }
+    if ($inv['type_inventaire'] === 'mensuel') {
+        $mois = date('Y-m', strtotime($inv['date_inventaire']));
+        db_query(
+            "INSERT INTO bilans_mensuels_bobines (site_id,mois,inventaire_id,stock_fin_mois,nb_ajustements,statut,valide_par,valide_at)
+             VALUES (?,?,?,?,?,'valide',?,NOW())
+             ON DUPLICATE KEY UPDATE stock_fin_mois=VALUES(stock_fin_mois),nb_ajustements=nb_ajustements+VALUES(nb_ajustements),
+                                     statut='valide',valide_par=VALUES(valide_par),valide_at=NOW()",
+            [$inv['site_id'], $mois, $inv_id, $total_physique, $nb_ecarts, $user_id]
+        );
+    }
+    db_query(
+        "UPDATE inventaires_bobines SET statut='valide',nb_ecarts=?,total_films_physique=?,valide_par=?,valide_at=NOW() WHERE id=?",
+        [$nb_ecarts, $total_physique, $user_id, $inv_id]
+    );
+    return ['nb_ecarts' => $nb_ecarts, 'total_physique' => $total_physique];
+}
+
+// ── Garde-fou : un inventaire de bobines validé fait foi pour le stock de
+//    son site. Le comptage du jour J (le matin, avant la production) tient
+//    déjà compte de tout ce qui a été consommé jusqu'à J-1 : une opération
+//    datée d'avant J qui toucherait encore aux films restants fausserait la
+//    quantité comptée — un réajustement la remplacerait par une valeur
+//    d'avant, un point saisi après coup déduirait des films déjà absents
+//    au comptage, un brouillon supprimé en remettrait.
+//    Renvoie la date du dernier inventaire validé du site postérieur à
+//    $date, ou null si rien n'a été recompté depuis.
+function inv_bobines_recompte_apres(int $site_id, string $date): ?string {
+    if ($site_id <= 0 || $date === '') return null;
+    $d = db_fetch_value(
+        "SELECT MAX(date_inventaire) FROM inventaires_bobines
+          WHERE site_id = ? AND statut = 'valide' AND date_inventaire > ?",
+        [$site_id, $date]
+    );
+    return $d ? (string)$d : null;
+}
+
+// ── Phrase commune aux messages du garde-fou.
+function inv_bobines_msg_recompte(string $date_inv): string {
+    return "le stock des bobines de ce site a été recompté par l'inventaire validé du "
+         . date('d/m/Y', strtotime($date_inv));
 }
 
 // ── Crée l'inventaire mensuel des rivets d'un site (+ ses lignes détail,

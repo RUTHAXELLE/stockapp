@@ -8,6 +8,7 @@ require_once __DIR__ . '/../includes/session.php';
 require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
+require_once __DIR__ . '/../includes/inventaire.php';
 
 require_auth();
 
@@ -340,6 +341,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!in_array($decision,['autorise_ecart','reajuste','refuse']))
             json_response(false,'Décision invalide.');
         if (!$commentaire) json_response(false,'Le commentaire est obligatoire.');
+        // Garde-fou inventaire : réajuster un jour d'avant le comptage
+        // remplacerait la quantité comptée par une valeur antérieure.
+        if ($decision === 'reajuste' && ($inv_recompte = inv_bobines_recompte_apres($site_id, $date)))
+            json_response(false, 'Réajustement impossible : ' . inv_bobines_msg_recompte($inv_recompte)
+                . '. Un réajustement daté d\'avant remplacerait la quantité comptée. Choisissez « Autoriser l\'écart » pour clore cette validation.');
 
         $ecarts = json_decode($ecarts_json, true) ?: [];
         if (empty($ecarts)) json_response(false,'Aucune bobine sélectionnée pour cette décision.');
@@ -530,12 +536,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             [$site_id, $date]
         );
         if (empty($corrections)) json_response(false, 'Aucune correction de coordinateur trouvée.');
+        // Garde-fou inventaire : jour d'avant le comptage — les corrections
+        // sont closes, la quantité comptée reste (pas de valeur antérieure).
+        $inv_recompte = inv_bobines_recompte_apres($site_id, $date);
 
         db_begin();
         try {
             foreach ($corrections as $c) {
                 $stock_av = (int)db_fetch_value("SELECT films_restants FROM op_bobines WHERE id=?", [$c['bobine_id']]);
-                $nouveau  = (int)$c['films_final'];
+                $nouveau  = $inv_recompte !== null ? $stock_av : (int)$c['films_final'];
                 $diff     = $nouveau - $stock_av;
                 db_query("UPDATE op_bobines SET films_restants=? WHERE id=?", [$nouveau, $c['bobine_id']]);
                 if ($diff !== 0) {
@@ -564,7 +573,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             }
             audit_log($user['id'],'UPDATE','validations_stock_matin',0,"Validation corrections coord site:$site_id $date");
             db_commit();
-            json_response(true,'Corrections du coordinateur validées. Stock confirmé.');
+            json_response(true, $inv_recompte !== null
+                ? 'Corrections du coordinateur closes sans modifier le stock : ' . inv_bobines_msg_recompte($inv_recompte) . '.'
+                : 'Corrections du coordinateur validées. Stock confirmé.');
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 
@@ -605,6 +616,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $decisions_raw = $_POST['decisions_json'] ?? '[]';
         $decisions     = json_decode($decisions_raw, true) ?: [];
         if (!$site_id || empty($decisions)) json_response(false, 'Données manquantes.');
+        // Garde-fou inventaire, cf. valider_corrections_coord.
+        $inv_recompte = inv_bobines_recompte_apres($site_id, $date);
 
         db_begin();
         try {
@@ -626,7 +639,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
                 if ($action_bob === 'valider') {
                     $stock_av = (int)db_fetch_value("SELECT films_restants FROM op_bobines WHERE id=?", [$bobine_id]);
-                    $nouveau  = (int)$corr['films_final'];
+                    $nouveau  = $inv_recompte !== null ? $stock_av : (int)$corr['films_final'];
                     $diff     = $nouveau - $stock_av;
                     // Appliquer la valeur corrigée au stock physique
                     db_query("UPDATE op_bobines SET films_restants=? WHERE id=?", [$nouveau, $bobine_id]);
@@ -646,7 +659,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                          (bobine_id,date_constat,stock_systeme,stock_physique,ecart,motif,source,statut,resolu_at,resolu_par,resolution_notes,created_by)
                          VALUES (?,?,?,?,0,?,'validation_stock','resolu',NOW(),?,'Correction coordinateur appliquée',?)",
                         [$bobine_id, $date, $nouveau, $nouveau,
-                         "Stock réconcilié : $nouveau films (correction coord. validée par GSB)",
+                         $inv_recompte !== null
+                            ? "Correction close sans modifier le stock : " . inv_bobines_msg_recompte($inv_recompte)
+                            : "Stock réconcilié : $nouveau films (correction coord. validée par GSB)",
                          $user['id'], $user['id']]
                     );
                     db_query("UPDATE corrections_bobines SET statut='valide',traite_at=NOW() WHERE id=?", [(int)$corr['id']]);
@@ -730,8 +745,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             db_commit();
 
             $msg_retour = $nb_refuses === 0
-                ? "Toutes les corrections validées. Stock confirmé."
+                ? ($inv_recompte !== null ? "Toutes les corrections closes." : "Toutes les corrections validées. Stock confirmé.")
                 : "$nb_valides correction(s) validée(s), $nb_refuses refusée(s). Le coordinateur doit re-soumettre les bobines refusées.";
+            if ($inv_recompte !== null && $nb_valides > 0)
+                $msg_retour .= " Stock des bobines inchangé : " . inv_bobines_msg_recompte($inv_recompte) . ".";
             json_response(true, $msg_retour);
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }

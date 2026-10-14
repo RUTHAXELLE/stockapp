@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/helpers.php';
 require_once __DIR__ . '/../../includes/notifications.php';
 require_once __DIR__ . '/../../includes/point_emuci_corrections.php';
+require_once __DIR__ . '/../../includes/inventaire.php';
 
 require_auth();
 require_permission('operations', 'can_read');
@@ -82,11 +83,14 @@ function _pj_msg_manquants(array $manque): string {
 // $deja_remis : point rejeté, dont le rejet a déjà rendu films restants,
 // rivets et PMMA — on ne fait plus que décompter les compteurs « consommés »
 // des bobines, que le rejet ne touche pas, sans rien remettre une 2e fois.
-function _pj_restaurer_stock(int $point_id, int $site_id, int $riv_gonfl, int $riv_eclate, bool $deja_remis = false): void {
+// $films_recomptes : point daté d'avant un inventaire de bobines validé du
+// site — ses films ne sont pas rendus aux bobines, le comptage en a déjà
+// tenu compte (cf. inv_bobines_recompte_apres()) ; rivets et PMMA, eux, si.
+function _pj_restaurer_stock(int $point_id, int $site_id, int $riv_gonfl, int $riv_eclate, bool $deja_remis = false, bool $films_recomptes = false): void {
     $old_films = db_fetch_all("SELECT * FROM op_films_utilises WHERE point_id=?", [$point_id]);
     foreach ($old_films as $of) {
         $total_restore = (int)$of['films_utilises'] + (int)$of['films_endommages'] + (int)($of['non_conformes'] ?? 0);
-        if ($total_restore > 0 && $deja_remis) {
+        if ($total_restore > 0 && ($deja_remis || $films_recomptes)) {
             db_query(
                 "UPDATE op_bobines SET
                  films_utilises   = GREATEST(0, films_utilises   - ?),
@@ -131,6 +135,9 @@ function _site_bloque_ecart(int $site_id, string $date_today): ?string {
     );
     if (!$dernier_point) return null;
     $date_prec = $dernier_point['date_point'];
+    // Un inventaire de bobines validé depuis ce point a rétabli le stock du
+    // site : la validation de ce jour-là ne décide plus de rien.
+    if (inv_bobines_recompte_apres($site_id, $date_prec)) return null;
     $validation = db_fetch_one(
         "SELECT statut FROM validations_stock_matin WHERE site_id=? AND date_validation=?",
         [$site_id, $date_prec]
@@ -198,6 +205,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             $bloque = _site_bloque_ecart($site_id, $date_point);
             if ($bloque) json_response(false, $bloque);
         }
+
+        // ── Garde-fou inventaire : point daté d'avant un inventaire de
+        // bobines validé du site (oublié, corrigé ou repris après coup). La
+        // production, les rivets et le PMMA s'enregistrent normalement ; les
+        // films restants des bobines ne bougent plus — le comptage tient déjà
+        // compte de ce que ce jour-là a consommé.
+        $inv_recompte = inv_bobines_recompte_apres($site_id, $date_point);
 
         // Calculs automatiques
         $total_engins  = $nb_vp + $nb_camion + $nb_semi + $nb_moto;
@@ -280,7 +294,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                      $np_conc,$np_usag,$heures,$obs],
                      $reimmat_params, [$point_id]));
                 // Remettre en stock ce que l'ancienne version du point avait retiré
-                _pj_restaurer_stock((int)$point_id, $site_id, $old_riv_gonfl, $old_riv_eclate, $deja_remis);
+                _pj_restaurer_stock((int)$point_id, $site_id, $old_riv_gonfl, $old_riv_eclate, $deja_remis, $inv_recompte !== null);
                 // Supprimer anciens films et PMMA
                 db_query("DELETE FROM op_films_utilises WHERE point_id=?", [$point_id]);
                 db_query("DELETE FROM op_pmma_utilises  WHERE point_id=?", [$point_id]);
@@ -376,7 +390,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 if (!$bobine) continue;
 
                 $total_sortis = $f_util + $f_endomm + $f_nc;
-                if ($bobine['films_restants'] < $total_sortis)
+                if ($inv_recompte === null && $bobine['films_restants'] < $total_sortis)
                     throw new Exception("Bobine {$bobine['numero']} : stock insuffisant ({$bobine['films_restants']} restants, {$total_sortis} demandés).");
 
                 if (_pj_films_nc())
@@ -386,7 +400,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     db_query("INSERT INTO op_films_utilises (point_id,bobine_id,type_vehicule_id,films_utilises,films_endommages)
                               VALUES (?,?,?,?,?)", [$point_id, $bobine_id, $tv_id, $f_util, $f_endomm]);
 
-                // Mettre à jour la bobine
+                // Mettre à jour la bobine (après un inventaire validé : seuls
+                // les compteurs de consommation bougent, cf. $inv_recompte)
+                if ($inv_recompte !== null) {
+                    db_query("UPDATE op_bobines SET
+                              films_utilises=films_utilises+?,
+                              films_endommages=films_endommages+?,
+                              date_ouverture=COALESCE(date_ouverture,?)
+                              WHERE id=?",
+                        [$f_util, $f_endomm, $date_point, $bobine_id]);
+                    $films_detail[] = "Bobine {$bobine['numero']} : $f_util utilisés, $f_endomm endommagés" . ($f_nc ? ", $f_nc non conformes" : '');
+                    continue;
+                }
                 $new_restants = $bobine['films_restants'] - $total_sortis;
                 $new_statut   = $new_restants <= 0 ? 'epuisee' : 'en_cours';
                 db_query("UPDATE op_bobines SET
@@ -524,6 +549,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 "Point journalier $type_point — Site:$site_id — $date_point — $total_engins engins");
             db_commit();
             $msg_save = "Point enregistré. $total_engins engins, $total_plaques plaques, $rivets_util rivets déduits.";
+            if ($inv_recompte !== null)
+                $msg_save .= " Films des bobines non déduits : " . inv_bobines_msg_recompte($inv_recompte) . ", qui en tient déjà compte.";
             $films_total_util = array_sum(array_map(fn($fd) => (int)($fd['films_utilises'] ?? 0), $films_data ?: []));
             $manque_save = array_keys(array_filter([
                 'films utilisés' => $films_total_util === 0,
@@ -710,10 +737,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if ($obs_suivies > 0)
             json_response(false, 'Impossible : une observation de ce point est déjà prise en charge par un superviseur.');
 
+        // Garde-fou inventaire : un brouillon d'avant le comptage ne rend pas
+        // ses films aux bobines (cf. save_point).
+        $inv_recompte = inv_bobines_recompte_apres((int)$point['site_id'], (string)$point['date_point']);
+
         db_begin();
         try {
             _pj_restaurer_stock($point_id, (int)$point['site_id'],
-                (int)($point['rivets_gonflables'] ?? 0), (int)($point['rivets_eclates'] ?? 0));
+                (int)($point['rivets_gonflables'] ?? 0), (int)($point['rivets_eclates'] ?? 0),
+                false, $inv_recompte !== null);
             // Lignes liées (films, PMMA, endommagements, observations…) :
             // ON DELETE CASCADE ; supprimées explicitement pour ne pas
             // dépendre des contraintes de chaque base.
@@ -725,7 +757,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             audit_log($user['id'], 'DELETE', 'operations', $point_id,
                 "Suppression brouillon point journalier #$point_id du {$point['date_point']} — stock films, rivets et PMMA restauré");
             db_commit();
-            json_response(true, 'Brouillon supprimé. Films, rivets et PMMA remis en stock.');
+            json_response(true, $inv_recompte !== null
+                ? 'Brouillon supprimé. Rivets et PMMA remis en stock ; films des bobines inchangés : '
+                  . inv_bobines_msg_recompte($inv_recompte) . '.'
+                : 'Brouillon supprimé. Films, rivets et PMMA remis en stock.');
         } catch (Exception $e) {
             db_rollback();
             json_response(false, 'Erreur : ' . $e->getMessage());
@@ -743,10 +778,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!in_array($point['statut'], ['en_attente_validation','brouillon']))
             json_response(false, 'Ce point ne peut plus être rejeté (statut : '.$point['statut'].').');
 
+        // Garde-fou inventaire : point d'avant le comptage, ses films ne sont
+        // pas rendus aux bobines (cf. save_point, qui ne les redéduira pas).
+        $inv_recompte = inv_bobines_recompte_apres((int)$point['site_id'], (string)$point['date_point']);
+
         db_begin();
         try {
             // Restaurer les films dans chaque bobine
-            $films = db_fetch_all("SELECT * FROM op_films_utilises WHERE point_id=?", [$point_id]);
+            $films = $inv_recompte === null
+                ? db_fetch_all("SELECT * FROM op_films_utilises WHERE point_id=?", [$point_id])
+                : [];
             foreach ($films as $f) {
                 $total = (int)$f['films_utilises'] + (int)$f['films_endommages'] + (int)($f['non_conformes'] ?? 0);
                 if ($total > 0) {
@@ -796,7 +837,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
             audit_log($user['id'], 'UPDATE', 'operations', $point_id, "Rejet point journalier #$point_id — stock restauré");
             db_commit();
-            json_response(true, 'Point rejeté. Stock films, rivets et PMMA restaurés.');
+            json_response(true, $inv_recompte !== null
+                ? 'Point rejeté. Rivets et PMMA restaurés ; films des bobines inchangés : '
+                  . inv_bobines_msg_recompte($inv_recompte) . '.'
+                : 'Point rejeté. Stock films, rivets et PMMA restaurés.');
         } catch (Exception $e) {
             db_rollback();
             json_response(false, 'Erreur : '.$e->getMessage());
@@ -837,6 +881,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         $corr = db_fetch_one("SELECT * FROM corrections_bobines WHERE id=? AND statut='en_attente'", [$correction_id]);
         if (!$corr) json_response(false, 'Demande introuvable ou déjà traitée.');
+        // Garde-fou inventaire : correction d'un jour d'avant le comptage —
+        // le point est corrigé, les films restants de la bobine ne bougent pas.
+        $inv_recompte = inv_bobines_recompte_apres((int)$corr['site_id'], (string)$corr['date_point']);
 
         db_begin();
         try {
@@ -852,7 +899,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                         "UPDATE op_films_utilises SET films_utilises=? WHERE point_id=? AND bobine_id=?",
                         [$films_final, $corr['point_id'], $corr['bobine_id']]
                     );
-                    if ($delta !== 0) {
+                    if ($delta !== 0 && $inv_recompte !== null) {
+                        db_query(
+                            "UPDATE op_bobines SET films_utilises = GREATEST(0, films_utilises + ?) WHERE id=?",
+                            [$delta, $corr['bobine_id']]
+                        );
+                    } elseif ($delta !== 0) {
                         db_query(
                             "UPDATE op_bobines SET
                              films_utilises = GREATEST(0, films_utilises + ?),
@@ -898,7 +950,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             db_commit();
 
             $msg = match($reponse) {
-                'approuvee'      => 'Correction confirmée. Le stock a été ajusté.',
+                'approuvee'      => $inv_recompte !== null
+                    ? 'Correction confirmée. Point corrigé, films de la bobine inchangés : ' . inv_bobines_msg_recompte($inv_recompte) . '.'
+                    : 'Correction confirmée. Le stock a été ajusté.',
                 'contreproposee' => 'Contre-proposition envoyée au GSB.',
                 'refusee'        => 'Refus enregistré. Le GSB a été notifié.',
             };

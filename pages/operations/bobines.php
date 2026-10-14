@@ -101,8 +101,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $cap = capacite_bobine($type_code);
         db_begin();
         try {
-            db_query("INSERT INTO op_bobines (numero,type_code,serie,type_vehicule_id,site_id,format,qte_initiale,stock_systeme,statut) VALUES (?,?,?,?,?,?,?,?,'en_stock')",
-                [$numero,$type_code,$serie,$tv['id']??null,$site_id,$format,$cap,$cap]);
+            // films_restants explicite : sinon la valeur par défaut de la
+            // colonne (500) faisait démarrer une TL/WSL de 2000 films à 500
+            // dans l'ERP — écart permanent à la validation du matin.
+            db_query("INSERT INTO op_bobines (numero,type_code,serie,type_vehicule_id,site_id,format,qte_initiale,stock_systeme,films_restants,statut) VALUES (?,?,?,?,?,?,?,?,?,'en_stock')",
+                [$numero,$type_code,$serie,$tv['id']??null,$site_id,$format,$cap,$cap,$cap]);
             $id = (int)db_last_id();
             db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by) VALUES (?,?,?,?,?,?,?)",
                 [$id,'entree',$cap,0,$cap,"Création bobine $numero",$user['id']]);
@@ -319,8 +322,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
                 if (!in_array($serie, $series_actives, true)) {$errors[]="$num : type '$type' hors categorie $bob_label_pl";continue;}
                 $tv=db_fetch_one("SELECT id FROM op_types_vehicule WHERE serie_bobine=?",[$serie]);
                 $cap=capacite_bobine($type);
-                db_query("INSERT INTO op_bobines (numero,type_code,serie,type_vehicule_id,site_id,format,qte_initiale,stock_systeme,statut) VALUES (?,?,?,?,?,?,?,?,'en_stock')",
-                    [strtoupper($num),strtoupper($type),$serie,$tv['id']??null,$site_id,$format,$cap,$cap]);
+                db_query("INSERT INTO op_bobines (numero,type_code,serie,type_vehicule_id,site_id,format,qte_initiale,stock_systeme,films_restants,statut) VALUES (?,?,?,?,?,?,?,?,?,'en_stock')",
+                    [strtoupper($num),strtoupper($type),$serie,$tv['id']??null,$site_id,$format,$cap,$cap,$cap]);  // films_restants : cf. création unitaire
                 $new_id=(int)db_last_id();
                 db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by) VALUES (?,?,?,?,?,?,?)",
                     [$new_id,'entree',$cap,0,$cap,"Import lot - bobine $num",$user['id']]);

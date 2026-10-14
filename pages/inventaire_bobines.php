@@ -98,8 +98,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         );
         if ($exist) json_response(false, "Un inventaire $type existe déjà pour ce site à cette date.");
 
+        // Référence = quantité ERP (films_restants), cf. inv_creer_mensuel().
         $bobines = db_fetch_all(
-            "SELECT b.id, b.numero, b.type_code, b.serie, b.stock_systeme
+            "SELECT b.id, b.numero, b.type_code, b.serie, b.films_restants
              FROM op_bobines b
              WHERE b.site_id=? AND b.statut NOT IN ('retiree','epuisee')
              ORDER BY b.serie, b.type_code, b.numero",
@@ -109,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         db_begin();
         try {
-            $total_systeme = array_sum(array_column($bobines,'stock_systeme'));
+            $total_systeme = array_sum(array_column($bobines,'films_restants'));
             try {
                 $films_emuci = (int)db_fetch_value(
                     "SELECT COALESCE(SUM(plaques_posees),0) FROM points_emuci WHERE site_id=? AND date_point=?",
@@ -132,7 +133,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 db_query(
                     "INSERT INTO inventaire_details_bobines (inventaire_id,bobine_id,stock_systeme,qte_temps_reel,stock_physique,ecart,ecart_connu_avant,conso_quotidienne_moy)
                      VALUES (?,?,?,?,0,0,?,?)",
-                    [$inv_id,$b['id'],(int)$b['stock_systeme'],(int)$b['stock_systeme'],$ecart_connu,round($conso_moy,2)]
+                    [$inv_id,$b['id'],(int)$b['films_restants'],(int)$b['films_restants'],$ecart_connu,round($conso_moy,2)]
                 );
             }
             audit_log($user['id'],'CREATE','inventaire_bobines',$inv_id,"Création inventaire $type $date site:$site_id — ".count($bobines)." bobines");
@@ -147,34 +148,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $inv = db_fetch_one("SELECT * FROM inventaires_bobines WHERE id=?",[$inv_id]);
         if (!$inv || $inv['statut'] !== 'brouillon') json_response(false,'Inventaire introuvable ou déjà validé.');
 
-        $lignes = db_fetch_all("SELECT * FROM inventaire_details_bobines WHERE inventaire_id=?",[$inv_id]);
-        $nb_ecarts = 0; $total_physique = 0;
-
         db_begin();
         try {
-            foreach ($lignes as $l) {
-                if ($l['stock_physique'] == 0) continue;
-                $total_physique += (int)$l['stock_physique'];
-                // Fermer les anciens écarts ouverts
-                db_query("UPDATE ecarts_bobines SET statut='resolu',resolu_at=NOW(),resolu_par=?,resolution_notes=? WHERE bobine_id=? AND statut='ouvert'",
-                    [$user['id'],"Résolu par inventaire #{$inv_id}",$l['bobine_id']]);
-                if ($l['ecart'] != 0) {
-                    $nb_ecarts++;
-                    $phy = (int)$l['stock_physique'];
-                    db_query("UPDATE op_bobines SET stock_systeme=?,films_restants=?,statut=CASE WHEN ?>0 THEN (CASE WHEN statut='retiree' THEN 'retiree' ELSE 'en_cours' END) ELSE 'epuisee' END WHERE id=?",[$phy,$phy,$phy,$l['bobine_id']]);
-                    db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,ref_id,created_by) VALUES (?,?,?,?,?,?,?,?)",
-                        [$l['bobine_id'],'ajustement_inventaire',$l['ecart'],$l['stock_systeme'],$phy,"Inventaire #{$inv_id} ({$inv['type_inventaire']})",$inv_id,$user['id']]);
-                    db_query("INSERT INTO ecarts_bobines (bobine_id,date_constat,stock_systeme,stock_physique,ecart,motif,source,inventaire_id,statut,resolu_at,resolu_par,created_by) VALUES (?,?,?,?,?,?,?,?,'resolu',NOW(),?,?)",
-                        [$l['bobine_id'],$inv['date_inventaire'],$l['stock_systeme'],$phy,$l['ecart'],$l['notes']??'','inventaire',$inv_id,$user['id'],$user['id']]);
-                }
-            }
-            if ($inv['type_inventaire'] === 'mensuel') {
-                $mois = date('Y-m', strtotime($inv['date_inventaire']));
-                db_query("INSERT INTO bilans_mensuels_bobines (site_id,mois,inventaire_id,stock_fin_mois,nb_ajustements,statut,valide_par,valide_at) VALUES (?,?,?,?,?,'valide',?,NOW()) ON DUPLICATE KEY UPDATE stock_fin_mois=VALUES(stock_fin_mois),nb_ajustements=nb_ajustements+VALUES(nb_ajustements),statut='valide',valide_par=VALUES(valide_par),valide_at=NOW()",
-                    [$inv['site_id'],$mois,$inv_id,$total_physique,$nb_ecarts,$user['id']]);
-            }
-            db_query("UPDATE inventaires_bobines SET statut='valide',nb_ecarts=?,total_films_physique=?,valide_par=?,valide_at=NOW() WHERE id=?",
-                [$nb_ecarts,$total_physique,$user['id'],$inv_id]);
+            // Même validation que la fiche détail (includes/inventaire.php).
+            $nb_ecarts = inv_valider_bobines($inv, (int)$user['id'])['nb_ecarts'];
             audit_log($user['id'],'UPDATE','inventaire_bobines',$inv_id,"Validation inventaire #{$inv_id} ({$inv['type_inventaire']}) — {$nb_ecarts} écart(s)");
             db_commit();
             json_response(true,"Inventaire validé. {$nb_ecarts} écart(s) ajusté(s).",['nb_ecarts'=>$nb_ecarts]);
