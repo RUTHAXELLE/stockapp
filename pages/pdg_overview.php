@@ -110,7 +110,7 @@ if ($reimmat_migration_ok) {
                 COALESCE(SUM(p.total_plaques_postimmat),0) AS plaques_pi
          FROM sites s
          LEFT JOIN op_points_journaliers p ON p.site_id=s.id
-                    AND TO_CHAR(p.date_point,'$date_fmt')=? AND p.statut != 'brouillon'
+                    AND DATE_FORMAT(p.date_point,'$date_fmt')=? AND p.statut != 'brouillon'
          WHERE s.actif=1 AND s.operation='reimmat_post' $sf_s
          GROUP BY s.id, s.nom ORDER BY (engins_dup+engins_pi) DESC",
         [$periode_val]

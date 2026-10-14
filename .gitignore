@@ -58,3 +58,8 @@ Thumbs.db
 
 # Fiches de mise à jour générées par tools/fiche_mise_a_jour.sh
 fiches_mise_a_jour/
+
+# Cache de métriques de police écrit par dompdf au premier PDF (DejaVu…) :
+# généré à l'exécution, jamais committé — sinon un serveur qui l'a déjà
+# produit refuserait le `git pull` (fichier non suivi écrasé).
+vendor/dompdf/dompdf/lib/fonts/*.ufm.json

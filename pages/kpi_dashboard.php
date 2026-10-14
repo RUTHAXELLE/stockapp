@@ -347,17 +347,19 @@ if ($has_reimmat_sites) {
     }
 
     // Classement par site reimmat_post — période A uniquement.
-    $fa_reimmat = "FILTER (WHERE p.date_point BETWEEN ?::date AND ?::date)";
+    // MySQL : pas de FILTER (WHERE …) — même forme que $fa plus bas (SUM d'un
+    // CASE sans ELSE) ; un ? de date par borne, ordre des paramètres inchangé.
+    $fa_reimmat = "CASE WHEN p.date_point BETWEEN ? AND ? THEN";
     $classement_reimmat = db_fetch_all(
         "SELECT s.nom,
-                COALESCE(SUM(p.total_plaques_duplicata) $fa_reimmat,0) AS plaques_dup,
-                COALESCE(SUM(p.total_plaques_postimmat) $fa_reimmat,0) AS plaques_pi
+                COALESCE(SUM($fa_reimmat p.total_plaques_duplicata END),0) AS plaques_dup,
+                COALESCE(SUM($fa_reimmat p.total_plaques_postimmat END),0) AS plaques_pi
            FROM sites s
            LEFT JOIN op_points_journaliers p ON p.site_id = s.id AND p.statut <> 'brouillon'
           WHERE s.actif = 1 AND s.operation = 'reimmat_post' " . pref_clause_in('s.id', $sites_sel) . "
           GROUP BY s.id, s.nom
-          HAVING COALESCE(SUM(p.total_plaques_duplicata) $fa_reimmat,0) > 0
-              OR COALESCE(SUM(p.total_plaques_postimmat) $fa_reimmat,0) > 0
+          HAVING COALESCE(SUM($fa_reimmat p.total_plaques_duplicata END),0) > 0
+              OR COALESCE(SUM($fa_reimmat p.total_plaques_postimmat END),0) > 0
           ORDER BY plaques_dup DESC, plaques_pi DESC",
         [$C['du_a'], $C['au_a'], $C['du_a'], $C['au_a'], $C['du_a'], $C['au_a'], $C['du_a'], $C['au_a']]);
     foreach ($classement_reimmat as $c)

@@ -72,8 +72,7 @@ foreach ($fichiers as $f) {
 // Défauts connus, affichés sans bloquer. Chaque entrée dit pourquoi elle
 // est tolérée ; la retirer dès que le défaut est corrigé.
 $connus = [
-    'cron/check_alerts.php:notif_check_fin_cycles' => 'alertes quotidiennes, désactivées en production (docs/deploiement/cron-stockapp) — fonctions à écrire',
-    'cron/check_alerts.php:notif_check_stock_bas'  => 'alertes quotidiennes, désactivées en production (docs/deploiement/cron-stockapp) — fonctions à écrire',
+    // (vide : les fonctions d'alerte de cron/check_alerts.php sont écrites depuis le report du 14/10/2026)
 ];
 $n_fct = 0;
 $ignorer = [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT];
@@ -169,6 +168,9 @@ foreach ($fichiers as $f) {
         $table = $x[1][0];
         $ligne = substr_count($src, "\n", 0, $x[0][1]) + 1;
         if (!preg_match('/^[a-z_][a-z0-9_]*$/', $table)) continue;   // table dynamique ($var)
+        // Liste de colonnes construite par le code (implode($cols)…) : elle
+        // n'est pas lisible ici, l'ouverture des écrans la couvre.
+        if (preg_match('/["$]|implode/', $x[2][0])) continue;
         $n_ins++;
         if (!isset($colonnes[$table])) { signaler("$f:$ligne — table inexistante : $table"); $n_pb++; continue; }
         $fournies = array_filter(array_map(fn($c) => trim($c, " \t\r\n`\""), explode(',', $x[2][0])),

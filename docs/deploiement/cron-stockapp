@@ -14,8 +14,8 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Sauvegarde complète de la base à 2 h 30, conservée 14 jours
 30 2 * * * root mysqldump --defaults-extra-file=/etc/mysql/stockapp-client.cnf --no-tablespaces --single-transaction stockapp | gzip > /var/backups/stockapp/quotidien_$(date +\%F).sql.gz && find /var/backups/stockapp -name 'quotidien_*.sql.gz' -mtime +14 -delete
 
-# Alertes quotidiennes (fins de cycle, stocks bas) : NE PAS ACTIVER.
-# cron/check_alerts.php appelle notif_check_fin_cycles() et
-# notif_check_stock_bas(), qui n'existent dans aucune branche :
-# la tâche s'arrête en erreur fatale. Voir le manuel, « Limites connues ».
-# 0 8 * * * www-data php /var/www/stockapp/cron/check_alerts.php >> /var/log/stockapp/cron.log 2>&1
+# Alertes quotidiennes à 8 h : équipements en fin de cycle (dépassée ou
+# dans les 30 jours) et stocks bas. Une même alerte n'est pas renvoyée
+# avant 7 jours ; au-delà de 5 alertes d'un même genre, une seule
+# notification groupée (fonctions écrites sur main, reportées le 14/10/2026).
+0 8 * * * www-data php /var/www/stockapp/cron/check_alerts.php >> /var/log/stockapp/cron.log 2>&1

@@ -123,6 +123,9 @@ function db_rollback(): void { if (get_db()->inTransaction()) get_db()->rollBack
 function db_colonne_existe(string $table, string $colonne): bool {
     static $cache = [];
     return $cache["$table.$colonne"] ??= (bool)db_fetch_value(
-        "SELECT COUNT(*) FROM information_schema.columns WHERE table_name=? AND column_name=?",
+        // MySQL : information_schema couvre toutes les bases visibles du
+        // compte — sans DATABASE(), une colonne d'une autre base comptait.
+        "SELECT COUNT(*) FROM information_schema.columns
+          WHERE table_schema = DATABASE() AND table_name=? AND column_name=?",
         [$table, $colonne]);
 }

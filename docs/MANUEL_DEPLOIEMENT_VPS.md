@@ -338,7 +338,7 @@ sudo install -m 644 docs/deploiement/logrotate-stockapp /etc/logrotate.d/stockap
 |---|---|---|---|
 | `cron/check_alerts.php bobines` | toutes les 5 min | www-data | Passe en « épuisée » toute bobine à zéro film et zéro stock système |
 | Sauvegarde MySQL | chaque nuit à 2 h 30 | root | `/var/backups/stockapp/quotidien_AAAA-MM-JJ.sql.gz`, conservée 14 jours |
-| Alertes quotidiennes | — | — | **Désactivée** : le script s'arrête en erreur (voir § 15) |
+| `cron/check_alerts.php` | chaque jour à 8 h | www-data | Alertes fin de cycle des équipements et stocks bas (sans doublon : même alerte au plus une fois par semaine) |
 
 Le journal des tâches est `/var/log/stockapp/cron.log`, avec une rotation
 hebdomadaire sur 8 semaines.
@@ -492,7 +492,7 @@ Pour revenir ensuite à la branche : `sudo git checkout vps-mysql`.
 | Point | Effet | Que faire |
 |---|---|---|
 | **Envoi d'emails non fonctionnel** | La bibliothèque d'envoi (PHPMailer) n'est pas livrée et aucun serveur SMTP n'est configuré. « Mot de passe oublié » échoue. | Les mots de passe se réinitialisent par un administrateur, dans Administration → Utilisateurs. |
-| **Alertes quotidiennes** (fins de cycle, stocks bas) | `cron/check_alerts.php` appelle deux fonctions qui n'existent dans aucune version du code : la tâche s'arrête en erreur. | Laissée désactivée dans `cron-stockapp`. À développer avant activation. |
+| Alertes quotidiennes (fins de cycle, stocks bas) | Fonctionnelles depuis la mise à jour du 14/10/2026. | Sur un serveur installé avant cette date, recopier `docs/deploiement/cron-stockapp` dans `/etc/cron.d/stockapp` pour les activer. |
 | Vues `v_cout_hebdo_site`, `v_cout_mensuel_site` | Héritées de l'ancien schéma, inutilisables avec le mode SQL par défaut de MySQL 8. | Aucune page ne les utilise : sans effet. |
 | Serveur réel non encore vérifié | Les identifiants SSH transmis sont refusés ; les ports 80 et 443 sont fermés. | Voir l'annexe A ; reprendre les § 2 à 10 dès l'accès obtenu. |
 | `/assets/` répond 403 | Les listes de fichiers sont désactivées. | Normal : les feuilles de style et images restent servies. |

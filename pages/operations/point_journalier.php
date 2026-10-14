@@ -432,7 +432,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             // sql/migration_endommagements_cause_libre.sql n'est pas passée.
             $cause_max = (int)(db_fetch_value(
                 "SELECT character_maximum_length FROM information_schema.columns
-                 WHERE table_name='op_endommagements' AND column_name='cause'") ?: 255);
+                 WHERE table_schema = DATABASE() AND table_name='op_endommagements' AND column_name='cause'") ?: 255);
 
             // Une déclaration par unité endommagée : six films abîmés sur une
             // bobine peuvent l'avoir été à six moments et pour six causes.
