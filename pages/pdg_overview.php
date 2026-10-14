@@ -112,7 +112,8 @@ if ($reimmat_migration_ok) {
          LEFT JOIN op_points_journaliers p ON p.site_id=s.id
                     AND DATE_FORMAT(p.date_point,'$date_fmt')=? AND p.statut != 'brouillon'
          WHERE s.actif=1 AND s.operation='reimmat_post' $sf_s
-         GROUP BY s.id, s.nom ORDER BY (engins_dup+engins_pi) DESC",
+         GROUP BY s.id, s.nom
+         ORDER BY (COALESCE(SUM(p.total_engins_duplicata),0) + COALESCE(SUM(p.total_engins_postimmat),0)) DESC",
         [$periode_val]
     );
 }
