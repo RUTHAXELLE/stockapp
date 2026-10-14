@@ -87,7 +87,8 @@ FICHIERS="stockapp.sql demandes_internes_mysql.sql agents_mysql.sql achats_mysql
  migration_endommagements_cause_libre_mysql.sql migration_endommagements_film_no_mysql.sql
  migration_rivets_endommages_par_type_mysql.sql migration_pmma_non_conformes_mysql.sql
  migration_endommagements_rivets_pmma_mysql.sql migration_films_nc_numero_consommable_mysql.sql
- migration_operation_sites_duplicata_postimmat_mysql.sql"
+ migration_operation_sites_duplicata_postimmat_mysql.sql
+ migration_permission_vue_pdg_mysql.sql"
 
 echo "==> Installation du schéma dans $DB_NAME@$DB_HOST"
 for f in $FICHIERS; do
@@ -116,6 +117,7 @@ verif "commandes.depot_source_id (dépôt source des livraisons)" "SELECT COUNT(
 verif "plus aucune liste fermée (ENUM) hors colonnes calculées, comme sur main" "SELECT COUNT(*) = 0 FROM information_schema.columns WHERE table_schema = DATABASE() AND data_type = 'enum' AND extra NOT LIKE '%GENERATED%'"
 verif "droits des modules scindés (Nouvelle demande, À valider, Traitements IT, Vignette…)" "SELECT COUNT(DISTINCT module) = 5 FROM permissions WHERE module IN ('demandes_new','demandes_valider','demandes_it','equipements_operationnel','vignette')"
 verif "report du 14/10/2026 : Re-Immatriculation, endommagements par unité, non conformes" "SELECT COUNT(*) = 9 FROM information_schema.columns WHERE table_schema = DATABASE() AND ((table_name = 'sites' AND column_name = 'operation') OR (table_name = 'op_points_journaliers' AND column_name IN ('total_plaques_duplicata','total_plaques_postimmat','rivets_gonflables_end','rivets_eclates_end')) OR (table_name = 'op_endommagements' AND column_name IN ('objet','numero_consommable')) OR (table_name IN ('op_pmma_utilises','op_films_utilises') AND column_name = 'non_conformes'))"
+verif "droit Vue exécutive (PDG) pour chaque rôle" "SELECT COUNT(*) = (SELECT COUNT(*) FROM roles) FROM permissions WHERE module = 'pdg_overview'"
 [ "$ECHEC" = "0" ] && echo "==> Schéma complet." || { echo "==> Schéma INCOMPLET : ne pas continuer."; exit 1; }
 
 if [ "$AVEC_DEMO" = "1" ]; then

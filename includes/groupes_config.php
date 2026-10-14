@@ -28,9 +28,12 @@ function _groupes_def(): array {
                  'roles_exclude'=>['lecteur']],
                 // n° 07 réunion ERP : visible par tous les comptes, pas
                 // réservée au lecteur — second bouton menu vers la même vue
-                // que celle du PDG.
+                // que celle du PDG. Droit pdg_overview depuis le 14/10/2026,
+                // ouvert à tous les rôles par défaut (sql/migration_
+                // permission_vue_pdg_mysql.sql), retirable par rôle.
                 ['label'=>'Vue exécutive','icon'=>'ph-chart-pie-slice',
-                 'url'=>'pages/pdg_overview.php','active_keys'=>['pdg_overview']],
+                 'url'=>'pages/pdg_overview.php','active_keys'=>['pdg_overview'],
+                 'perm'=>['pdg_overview','can_read']],
                 // n° 2.2 CR PDG — lecture rapide des indicateurs. Sa place est
                 // ici, aux côtés des deux autres vues d'ensemble : c'est un
                 // tableau de bord, pas un rapport. Il était dans RAPPORTS, où
@@ -90,6 +93,14 @@ function _groupes_def(): array {
                 ['label'=>'Rivets',    'icon'=>'ph-nut',
                  'url'=>'pages/operations/rivets.php','active_keys'=>['rivets'],
                  'perm'=>['rivets','can_read']],
+                // n° 2.1 CR PDG — historique des films, rivets et PMMA
+                // endommagés. La saisie reste dans le point journalier ; cet
+                // écran ne fait que restituer, d'où le simple can_read.
+                // Rangé dans Stock (il était sous Bobines) : il couvre les
+                // trois consommables, à côté de leurs écrans de stock.
+                ['label'=>'Traçabilité endommagements', 'icon'=>'ph-first-aid-kit',
+                 'url'=>'pages/tracabilite_endommagements.php','active_keys'=>['tracabilite_endommagements'],
+                 'perm'=>['tracabilite_endommagements','can_read']],
                 ['label'=>'Commandes', 'icon'=>'ph-shopping-cart',
                  'url'=>'pages/commandes.php','active_keys'=>['commandes'],
                  'perm'=>['commandes','can_read']],
@@ -133,12 +144,6 @@ function _groupes_def(): array {
                 ['label'=>'Vue stock par site',   'icon'=>'ph-table',
                  'url'=>'pages/stock_bobines_vue.php','active_keys'=>['stock_bobines_vue'],
                  'perm'=>['stock_bobines','can_read']],
-                // n° 2.1 CR PDG — historique des bobines endommagées. La
-                // saisie reste dans le point journalier ; cet écran ne fait
-                // que restituer, d'où le simple can_read.
-                ['label'=>'Traçabilité endommagements', 'icon'=>'ph-first-aid-kit',
-                 'url'=>'pages/tracabilite_endommagements.php','active_keys'=>['tracabilite_endommagements'],
-                 'perm'=>['tracabilite_endommagements','can_read']],
             ],
         ],
 

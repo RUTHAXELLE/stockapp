@@ -30,8 +30,8 @@ $active_page = 'permissions';
 // modèle mental pour l'administrateur.
 $module_groupes = [
     // Le groupe DASHBOARD n'apparaissait pas ici tant qu'aucun module ne
-    // s'y rattachait : dashboard.php et pdg_overview.php ne passent pas
-    // par require_permission(). Sans cette entrée, le Dashboard KPI serait
+    // s'y rattachait : dashboard.php ne passe pas par require_permission()
+    // (pdg_overview.php si, depuis le 14/10/2026). Sans cette entrée, le Dashboard KPI serait
     // devenu invisible sur cet écran — donc impossible à ouvrir à un rôle —
     // en rejoignant le groupe : l'onglet ne s'affiche que si $module_groupes
     // le déclare.
@@ -114,6 +114,7 @@ $modules = [
     'inventaire_pmma'    => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire PMMA', 'INVENTAIRE'],
     'inventaire_equipements' => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire équipements', 'INVENTAIRE'],
     'audit'              => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Journal d\'audit', 'ADMINISTRATION'],
+    'pdg_overview'       => ['<i class="ph ph-chart-pie-slice" aria-hidden="true"></i>', 'Vue exécutive (PDG)', 'DASHBOARD'],
     'kpi_dashboard'      => ['<i class="ph ph-gauge" aria-hidden="true"></i>', 'Dashboard KPI', 'DASHBOARD'],
     'nomenclatures'      => ['<i class="ph ph-tag" aria-hidden="true"></i>', 'Nomenclatures', 'ADMINISTRATION'],
     'pmma'               => ['<i class="ph ph-printer" aria-hidden="true"></i>', 'PMMA', 'STOCK'],
@@ -124,7 +125,7 @@ $modules = [
     'rivets'             => ['<i class="ph ph-wrench" aria-hidden="true"></i>', 'Rivets', 'STOCK'],
     'simulation_stocks'  => ['<i class="ph ph-trend-up" aria-hidden="true"></i>', 'Simulation & projection', 'RAPPORTS'],
     'sites'              => ['<i class="ph ph-buildings" aria-hidden="true"></i>', 'Sites', 'ADMINISTRATION'],
-    'tracabilite_endommagements' => ['<i class="ph ph-first-aid-kit" aria-hidden="true"></i>', 'Traçabilité endommagements', 'BOBINES'],
+    'tracabilite_endommagements' => ['<i class="ph ph-first-aid-kit" aria-hidden="true"></i>', 'Traçabilité endommagements', 'STOCK'],
     'referentiels_operations' => ['<i class="ph ph-sliders-horizontal" aria-hidden="true"></i>', 'Référentiels & capacités', 'ADMINISTRATION'],
     'users'              => ['<i class="ph ph-users" aria-hidden="true"></i>', 'Utilisateurs', 'ADMINISTRATION'],
     'validation_stock'   => ['<i class="ph ph-check-circle" aria-hidden="true"></i>', 'Validation stock jour', 'BOBINES'],

@@ -10,6 +10,9 @@ require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/achats.php';
 
 require_auth();
+// Droit propre depuis le 14/10/2026 (onglet Dashboard des permissions) —
+// ouvert à tous les rôles par sql/migration_permission_vue_pdg_mysql.sql.
+require_permission('pdg_overview', 'can_read');
 $user = current_user();
 
 $page_title  = 'Vue PDG';
