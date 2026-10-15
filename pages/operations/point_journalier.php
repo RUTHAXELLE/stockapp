@@ -1648,15 +1648,23 @@ foreach($points as $p):
       <span style="font-size:12px;color:var(--muted);font-weight:400"> · <?= h($p['agent']) ?></span>
       <?php endif; ?>
     </div>
+    <?php
+      // Site en Re-Immatriculation : les engins de la section principale
+      // sont des ré-immatriculations. Ordre : ré-immat, duplicata,
+      // post-immat, plaques (des trois sections), rivets, puis le reste.
+      $pj_reimmat = ($p['site_operation'] ?? 'primo') === 'reimmat_post';
+      $pj_plaques = (int)$p['total_plaques'] + (int)($p['total_plaques_duplicata'] ?? 0)
+                  + (int)($p['total_plaques_postimmat'] ?? 0);
+    ?>
     <div class="pj-pills">
-      <span class="pj-pill engins"><i class="ph ph-car" aria-hidden="true"></i> <?= $p['total_engins'] ?> engins</span>
-      <span class="pj-pill plaques"><i class="ph ph-clipboard-text" aria-hidden="true"></i> <?= $p['total_plaques'] ?> plaques</span>
+      <span class="pj-pill engins"><i class="ph ph-car" aria-hidden="true"></i> <?= $p['total_engins'] ?> <?= $pj_reimmat ? 'ré-immat' : 'engins' ?></span>
       <?php if(($p['total_engins_duplicata'] ?? 0) > 0): ?>
       <span class="pj-pill" style="background:#f3e8ff;color:#6b21a8"><i class="ph ph-copy" aria-hidden="true"></i> <?= $p['total_engins_duplicata'] ?> Duplicata</span>
       <?php endif; ?>
       <?php if(($p['total_engins_postimmat'] ?? 0) > 0): ?>
       <span class="pj-pill" style="background:#fff3e0;color:#9a3412"><i class="ph ph-stamp" aria-hidden="true"></i> <?= $p['total_engins_postimmat'] ?> Post-Immat</span>
       <?php endif; ?>
+      <span class="pj-pill plaques"><i class="ph ph-clipboard-text" aria-hidden="true"></i> <?= $pj_plaques ?> plaques</span>
       <?php if($p['rivets_utilises'] > 0): ?>
       <span class="pj-pill rivets"><i class="ph ph-wrench" aria-hidden="true"></i> <?= $p['rivets_utilises'] ?> rivets<?= $p['rivets_endommages']>0?' (<i class="ph ph-warning" aria-hidden="true"></i>'.$p['rivets_endommages'].' end.)':'' ?></span>
       <?php endif; ?>
