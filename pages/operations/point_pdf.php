@@ -196,15 +196,28 @@ ob_start();
         <span class="statut-badge statut-<?= $sc ?>"><?= h($statut_lbl[$point['statut']] ?? $point['statut']) ?></span>
       </div>
     </div>
+    <?php
+    // Site en Re-Immatriculation : les engins posés sont la somme des trois
+    // sections (Re-Immatriculation + Duplicatas + Post-Immat). L'en-tête ne
+    // montrait que la première — total_engins ne compte jamais les deux
+    // autres, stockées à part pour le reporting.
+    $eng_dup    = (int)($point['total_engins_duplicata'] ?? 0);
+    $eng_pi     = (int)($point['total_engins_postimmat'] ?? 0);
+    $plq_dup    = (int)($point['total_plaques_duplicata'] ?? 0);
+    $plq_pi     = (int)($point['total_plaques_postimmat'] ?? 0);
+    $est_reimmat = ($point['site_operation'] ?? 'primo') === 'reimmat_post' || $eng_dup + $eng_pi > 0;
+    $eng_total  = (int)$point['total_engins'] + $eng_dup + $eng_pi;
+    $plq_total  = (int)$point['total_plaques'] + $plq_dup + $plq_pi;
+    ?>
     <!-- KPIs -->
     <table style="width:100%;background:rgba(255,255,255,.08);border-radius:6px">
       <tr>
         <td style="text-align:center;padding:8px;color:white">
-          <div style="font-size:20px;font-weight:bold"><?= $point['total_engins'] ?></div>
-          <div style="font-size:9px;opacity:.6;text-transform:uppercase">Engins</div>
+          <div style="font-size:20px;font-weight:bold"><?= $est_reimmat ? $eng_total : $point['total_engins'] ?></div>
+          <div style="font-size:9px;opacity:.6;text-transform:uppercase"><?= $est_reimmat ? 'Engins posés' : 'Engins' ?></div>
         </td>
         <td style="text-align:center;padding:8px;color:white;border-left:1px solid rgba(255,255,255,.15)">
-          <div style="font-size:20px;font-weight:bold"><?= $point['total_plaques'] ?></div>
+          <div style="font-size:20px;font-weight:bold"><?= $est_reimmat ? $plq_total : $point['total_plaques'] ?></div>
           <div style="font-size:9px;opacity:.6;text-transform:uppercase">Plaques</div>
         </td>
         <td style="text-align:center;padding:8px;color:white;border-left:1px solid rgba(255,255,255,.15)">
@@ -301,6 +314,32 @@ ob_start();
     </table>
   </div>
   <?php endforeach; ?>
+
+  <?php if ($est_reimmat): ?>
+  <!-- Total des engins posés (Re-Immatriculation + Duplicatas + Post-Immat) -->
+  <div class="section">
+    <div class="section-title">Total engins posés</div>
+    <table class="veh">
+      <thead>
+        <tr>
+          <th>Opération</th>
+          <th style="text-align:center">Engins</th>
+          <th style="text-align:center">Plaques</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><?= ($point['site_operation'] ?? 'primo') === 'reimmat_post' ? 'Re-Immatriculation' : 'Primo' ?></td><td style="text-align:center"><?= (int)$point['total_engins'] ?></td><td style="text-align:center"><?= (int)$point['total_plaques'] ?></td></tr>
+        <tr><td>Duplicatas</td><td style="text-align:center"><?= $eng_dup ?></td><td style="text-align:center"><?= $plq_dup ?></td></tr>
+        <tr><td>Post-Immat</td><td style="text-align:center"><?= $eng_pi ?></td><td style="text-align:center"><?= $plq_pi ?></td></tr>
+        <tr class="total">
+          <td>TOTAL</td>
+          <td style="text-align:center"><?= $eng_total ?></td>
+          <td style="text-align:center"><?= $plq_total ?></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <?php endif; ?>
 
   <!-- Rivets -->
   <?php

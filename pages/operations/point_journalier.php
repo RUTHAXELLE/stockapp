@@ -3160,6 +3160,28 @@ async function viewPoint(id){
       </div>
     </div>`).join('') : '';
 
+  // Site en Re-Immatriculation : engins posés = Re-Immatriculation +
+  // Duplicatas + Post-Immat (total_engins ne compte que la première).
+  const engDup = parseInt(p.total_engins_duplicata)||0, engPi = parseInt(p.total_engins_postimmat)||0;
+  const plqDup = parseInt(p.total_plaques_duplicata)||0, plqPi = parseInt(p.total_plaques_postimmat)||0;
+  const estReimmat = p.site_operation === 'reimmat_post' || engDup + engPi > 0;
+  const engTotal = (parseInt(p.total_engins)||0) + engDup + engPi;
+  const plqTotal = (parseInt(p.total_plaques)||0) + plqDup + plqPi;
+  const totalPosesSection = estReimmat ? `
+    <div style="margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px"><i class="ph ph-calculator" aria-hidden="true"></i> Total engins posés</div>
+      <div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;font-size:13px">
+        ${[[p.site_operation==='reimmat_post' ? 'Re-Immatriculation' : 'Primo', parseInt(p.total_engins)||0, parseInt(p.total_plaques)||0, 'var(--navy)'],
+           ['Duplicatas', engDup, plqDup, '#6b21a8'], ['Post-Immat', engPi, plqPi, '#9a3412']].map(([lb, e, pl, c]) => `
+        <div style="display:flex;justify-content:space-between;padding:8px 14px;border-bottom:1px solid #f1f5f9">
+          <span style="color:${c};font-weight:600">${lb}</span><span>${e} engin${e>1?'s':''} · ${pl} plaque${pl>1?'s':''}</span>
+        </div>`).join('')}
+        <div style="display:flex;justify-content:space-between;padding:10px 14px;background:#eff6ff;font-weight:800;color:#1e40af">
+          <span>TOTAL</span><span>${engTotal} engin${engTotal>1?'s':''} · ${plqTotal} plaque${plqTotal>1?'s':''}</span>
+        </div>
+      </div>
+    </div>` : '';
+
   // Rivets
   const gonfl  = parseInt(p.rivets_gonflables)||0;
   const eclate = parseInt(p.rivets_eclates)||0;
@@ -3254,11 +3276,11 @@ async function viewPoint(id){
       <div style="font-size:12px;opacity:.6;margin-bottom:16px">${typeLbl[p.type_point]||p.type_point} · ${dateStr}</div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
         <div style="text-align:center">
-          <div style="font-family:'Montserrat',sans-serif;font-size:28px;font-weight:900">${p.total_engins}</div>
-          <div style="font-size:12px;opacity:.5;text-transform:uppercase">Engins</div>
+          <div style="font-family:'Montserrat',sans-serif;font-size:28px;font-weight:900">${estReimmat ? engTotal : p.total_engins}</div>
+          <div style="font-size:12px;opacity:.5;text-transform:uppercase">${estReimmat ? 'Engins posés' : 'Engins'}</div>
         </div>
         <div style="text-align:center">
-          <div style="font-family:'Montserrat',sans-serif;font-size:28px;font-weight:900">${p.total_plaques}</div>
+          <div style="font-family:'Montserrat',sans-serif;font-size:28px;font-weight:900">${estReimmat ? plqTotal : p.total_plaques}</div>
           <div style="font-size:12px;opacity:.5;text-transform:uppercase">Plaques</div>
         </div>
         <div style="text-align:center">
@@ -3287,6 +3309,7 @@ async function viewPoint(id){
     </div>
 
     ${reimmatSection}
+    ${totalPosesSection}
     ${rivSection}
     ${pmmaSection}
     ${filmsSection}
