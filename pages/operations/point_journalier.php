@@ -10,6 +10,14 @@ require_once __DIR__ . '/../../includes/notifications.php';
 require_once __DIR__ . '/../../includes/point_emuci_corrections.php';
 require_once __DIR__ . '/../../includes/inventaire.php';
 require_once __DIR__ . '/../../includes/validation_stock.php';
+require_once __DIR__ . '/../../includes/optoplate_comparaison.php';
+
+// Comparaison OptoPlate disponible seulement une fois les deux migrations
+// jouées (colonnes de désactivation + justification/écart sur le point).
+function _pj_optoplate_comparaison_ok(): bool {
+    return db_colonne_existe('import_optoplate', 'type_desactivation')
+        && db_colonne_existe('op_points_journaliers', 'justification_superviseur');
+}
 
 require_auth();
 require_permission('operations', 'can_read');
@@ -479,7 +487,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     if ($t !== '' && $n > 0) { $attendus["pmma:$t"] = $n; $libelles["pmma:$t"] = "PMMA $t"; }
                 }
             }
-            $etapes_ok = ['pose','impression','lamination','transport','stockage','autre'];
+            // Étapes par objet (plan comparaison OptoPlate, 2026-10-15) : le
+            // film perd "pose" pour les nouvelles déclarations (comparé
+            // étape par étape à OptoPlate — vérification/percée/fissurée
+            // remplacent et complètent l'ancienne liste), le PMMA se limite
+            // à lamination/percée (non comparé), le rivet reste inchangé.
+            // Les anciennes déclarations film en "pose" restent lisibles
+            // (non réémises) : seule l'écriture est désormais bloquée.
+            $etapes_par_objet = [
+                'film'  => ['verification','impression','lamination','percee','fissuree','transport','stockage','autre'],
+                'pmma'  => ['lamination','percee','transport','stockage','autre'],
+                'rivet' => ['pose','impression','lamination','transport','stockage','autre'],
+            ];
             // Cause en saisie libre (demande métier) : seule la longueur est
             // contrôlée, sur la taille réelle de la colonne — 30 tant que
             // sql/migration_endommagements_cause_libre.sql n'est pas passée.
@@ -513,7 +532,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 $e_etape    = trim((string)($ed['etape'] ?? ''));
                 $e_cause    = trim((string)($ed['cause'] ?? ''));
                 if ($e_personne === '') throw new Exception("Déclaration d'endommagement : la personne concernée est obligatoire.");
-                if (!in_array($e_etape, $etapes_ok, true)) throw new Exception("Déclaration d'endommagement : étape invalide.");
+                $etapes_ok = $etapes_par_objet[$objet] ?? $etapes_par_objet['rivet'];
+                if (!in_array($e_etape, $etapes_ok, true)) throw new Exception("Déclaration d'endommagement : étape invalide pour cet élément.");
                 if ($e_cause === '') throw new Exception("Déclaration d'endommagement : la cause est obligatoire.");
                 if (mb_strlen($e_cause) > $cause_max) throw new Exception("Déclaration d'endommagement : cause trop longue ($cause_max caractères maximum).");
 
@@ -733,16 +753,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         json_response(true, 'Point soumis au superviseur pour validation.');
     }
 
+    // ── COMPARAISON OPTOPLATE avant validation (superviseur) — plan 15/10/2026
+    if ($action === 'comparer_optoplate') {
+        if (!in_array($user['role_slug'] ?? '', ['admin','superadmin','superviseur_operation']))
+            json_response(false, 'Accès refusé.');
+        if (!_pj_optoplate_comparaison_ok())
+            json_response(false, "Comparaison indisponible : les migrations OptoPlate ne sont pas encore jouées sur cette base.");
+        $point_id = (int)($_POST['point_id'] ?? 0);
+        $point = db_fetch_one("SELECT * FROM op_points_journaliers WHERE id=?", [$point_id]);
+        if (!$point) json_response(false, 'Point introuvable.');
+        $site_nom = db_fetch_value("SELECT nom FROM sites WHERE id=?", [(int)$point['site_id']]);
+        $dernier_import = db_fetch_value(
+            "SELECT MAX(date_installation)::date FROM import_optoplate WHERE site_id=? AND date_installation::date=?",
+            [(int)$point['site_id'], $point['date_point']]
+        );
+        json_response(true, '', [
+            'comparaison'    => op_comparer_point($point),
+            'site_nom'       => $site_nom,
+            'import_present' => (bool)$dernier_import,
+        ]);
+    }
+
     if ($action === 'valider_point') {
         if (!in_array($user['role_slug'] ?? '', ['admin','superadmin','superviseur_operation']))
             json_response(false, 'Accès refusé.');
         $point_id = (int)($_POST['point_id'] ?? 0);
+        $justification = trim($_POST['justification_superviseur'] ?? '');
         $point = db_fetch_one("SELECT * FROM op_points_journaliers WHERE id=?", [$point_id]);
         if (!$point) json_response(false, 'Point introuvable.');
         if ($manque = _pj_elements_manquants($point))
             json_response(false, "Impossible de valider : ce point ne comporte aucun " . implode(', ', $manque) . ". Rejetez-le pour correction.");
-        db_query("UPDATE op_points_journaliers SET statut='valide',validated_by=?,validated_at=NOW() WHERE id=?",
-            [$user['id'], $point_id]);
+
+        // Comparaison OptoPlate : écart tolérance 0 (plan 15/10/2026). Une
+        // justification est exigée côté serveur, pas seulement côté écran —
+        // la requête pourrait être rejouée sans être passée par la comparaison.
+        $ecart_json = null;
+        if (($point['type_point'] ?? '') === 'point_18h' && _pj_optoplate_comparaison_ok()) {
+            $comparaison = op_comparer_point($point);
+            if ($comparaison['has_ecart'] && $justification === '')
+                json_response(false, "Un écart a été constaté avec OptoPlate : une justification est obligatoire pour valider malgré cet écart (ou rejetez le point).");
+            $ecart_json = json_encode($comparaison);
+        }
+
+        db_query(
+            "UPDATE op_points_journaliers SET statut='valide',validated_by=?,validated_at=NOW()"
+            . (_pj_optoplate_comparaison_ok() ? ",justification_superviseur=?,ecart_optoplate=?" : "")
+            . " WHERE id=?",
+            _pj_optoplate_comparaison_ok()
+                ? [$user['id'], $justification ?: null, $ecart_json, $point_id]
+                : [$user['id'], $point_id]
+        );
         // Notifier le coordinateur
         if (!empty($point['created_by'])) {
             db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
@@ -1630,7 +1690,7 @@ foreach($points as $p):
         <button class="btn btn-sm" onclick="supprimerBrouillon(<?= $p['id'] ?>)" title="Supprimer le brouillon" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5"><i class="ph ph-trash" aria-hidden="true"></i></button>
       <?php endif; ?>
       <?php if(in_array($p['statut'],['brouillon','en_attente_validation']) && ($p['type_point']??'')==='point_18h' && in_array($role_slug_pj,['admin','superadmin','superviseur_operation'])): ?>
-        <button class="btn btn-success btn-sm" onclick="validerPoint(<?= $p['id'] ?>)" title="Valider"><i class="ph ph-check-circle" aria-hidden="true"></i></button>
+        <button class="btn btn-success btn-sm" onclick="validerPoint(<?= $p['id'] ?>,<?= htmlspecialchars(json_encode($p['date_point'])) ?>)" title="Valider"><i class="ph ph-check-circle" aria-hidden="true"></i></button>
         <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5" onclick="ouvrirRejet(<?= $p['id'] ?>,<?= htmlspecialchars(json_encode($p['date_point'])) ?>)" title="Rejeter"><i class="ph ph-x-circle" aria-hidden="true"></i></button>
       <?php endif; ?>
     </div>
@@ -1944,6 +2004,24 @@ foreach($points as $p):
 </div>
 
 <!-- MODAL REJET POINT -->
+<!-- MODAL COMPARAISON OPTOPLATE (superviseur, avant validation du point 18h) -->
+<div class="modal-overlay" id="mCompOpto">
+  <div class="modal" style="width:820px">
+    <div class="mhdr">
+      <h3><i class="ph ph-scales" aria-hidden="true"></i> Comparaison OptoPlate avant validation</h3>
+      <button class="mclose" onclick="document.getElementById('mCompOpto').classList.remove('open')"><i class="ph ph-x" aria-hidden="true"></i></button>
+    </div>
+    <div class="mbody">
+      <input type="hidden" id="comp-point-id" value="">
+      <input type="hidden" id="comp-point-date" value="">
+      <div id="comp-body" style="min-height:120px">
+        <div style="text-align:center;padding:30px;color:var(--muted)">Chargement…</div>
+      </div>
+    </div>
+    <div class="mfoot" id="comp-footer"></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="mRejet">
   <div class="modal" style="width:480px">
     <div class="mhdr">
@@ -2564,14 +2642,37 @@ function getSelectedBobineIds(){
    sont conservées ici, indexées par bobine, puis envoyées avec le
    point : une ligne par bobine, comme demandé au compte rendu.
    ══════════════════════════════════════════════════════════════ */
-const ETAPES_ENDO = [
-  ['pose',       'À la pose'],
-  ['impression', "À l'impression"],
-  ['lamination', 'À la lamination'],
-  ['transport',  'Au transport'],
-  ['stockage',   'Au stockage'],
-  ['autre',      'Autre'],
-];
+// Étapes par objet (plan comparaison OptoPlate, 2026-10-15) : film et PMMA
+// ont leur propre liste, le rivet reste inchangé. "pose" n'est plus
+// proposé pour un film (sauf "pose (ancien)" injecté à l'affichage d'une
+// déclaration existante — cf. ouvrirPopupEndommagement).
+const ETAPES_ENDO = {
+  film: [
+    ['verification', 'À la vérification'],
+    ['impression',   "À l'impression"],
+    ['lamination',   'À la lamination'],
+    ['percee',       'À la percée'],
+    ['fissuree',     'Plaque fissurée'],
+    ['transport',    'Au transport'],
+    ['stockage',     'Au stockage'],
+    ['autre',        'Autre'],
+  ],
+  pmma: [
+    ['lamination', 'À la lamination'],
+    ['percee',     'À la percée'],
+    ['transport',  'Au transport'],
+    ['stockage',   'Au stockage'],
+    ['autre',      'Autre'],
+  ],
+  rivet: [
+    ['pose',       'À la pose'],
+    ['impression', "À l'impression"],
+    ['lamination', 'À la lamination'],
+    ['transport',  'Au transport'],
+    ['stockage',   'Au stockage'],
+    ['autre',      'Autre'],
+  ],
+};
 // Causes proposées en suggestion (datalist) — la cause est en saisie libre.
 // Sert aussi à réafficher en clair une cause enregistrée sous l'ancien code.
 const CAUSES_ENDO = [
@@ -2583,6 +2684,9 @@ const CAUSES_ENDO = [
 // Rivets et PMMA endommagés ne se justifient qu'une fois les colonnes
 // objet/sous_type créées (sql/migration_endommagements_rivets_pmma.sql).
 const ENDO_MULTI = <?= db_colonne_existe('op_endommagements', 'objet') ? 'true' : 'false' ?>;
+// Comparaison OptoPlate avant validation (plan 15/10/2026) — désactivée
+// tant que les migrations correspondantes n'ont pas été jouées.
+const OPTO_COMPARAISON_OK = <?= _pj_optoplate_comparaison_ok() ? 'true' : 'false' ?>;
 // N° du consommable (obligatoire pour un film) — sql/migration_films_nc_numero_consommable.sql
 const ENDO_NUMERO = <?= db_colonne_existe('op_endommagements', 'numero_consommable') ? 'true' : 'false' ?>;
 // clé de groupe -> tableau d'une entrée par unité endommagée.
@@ -2698,7 +2802,12 @@ function ouvrirPopupEndommagement(){
             </div>
             <div>
               <label style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase">Étape *</label>
-              <select class="form-control endo-etape" style="margin-top:4px">${opt(ETAPES_ENDO, d.etape)}</select>
+              <select class="form-control endo-etape" style="margin-top:4px">${opt(
+                (g.objet === 'film' && d.etape === 'pose')
+                  ? [['pose','Pose (ancien)'], ...ETAPES_ENDO.film]
+                  : (ETAPES_ENDO[g.objet] || ETAPES_ENDO.rivet),
+                d.etape
+              )}</select>
             </div>
             <div>
               <label style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase">Cause *</label>
@@ -2986,7 +3095,13 @@ function savePoint(){
 }
 
 // ── VOIR DÉTAIL POINT
+// Point affiché dans le détail ou ouvert en modification — sert au bouton
+// « Imprimer » du détail. N'était renseigné que par editPoint() : pour un
+// superviseur qui ne fait que consulter, la variable n'existait pas et le
+// bouton levait une erreur sans rien ouvrir.
+var currentPointId = null;
 async function viewPoint(id){
+  currentPointId = id;
   document.getElementById('mDetail').classList.add('open');
   document.getElementById('detail-body').innerHTML='<div style="text-align:center;padding:40px;color:var(--muted)">Chargement…</div>';
   const pts=<?= json_encode(array_values($points)) ?>;
@@ -3082,6 +3197,14 @@ async function viewPoint(id){
       <div style="font-size:13px;color:#7f1d1d">${p.motif_rejet}</div>
     </div>` : '';
 
+  // Justification superviseur (plan comparaison OptoPlate, 15/10/2026) —
+  // saisie à la validation quand un écart avait été constaté.
+  const justifSection = p.justification_superviseur ? `
+    <div style="background:#fef3c7;border-radius:10px;padding:14px;margin-bottom:20px;border-left:3px solid #f59e0b">
+      <div style="font-size:12px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px"><i class="ph ph-scales" aria-hidden="true"></i> Justification du superviseur (écart OptoPlate)</div>
+      <div style="font-size:13px;color:#78350f">${p.justification_superviseur}</div>
+    </div>` : '';
+
   // Section PMMA
   const pmmaSection = pmmaList.length>0 ? `
     <div style="margin-bottom:20px">
@@ -3168,6 +3291,7 @@ async function viewPoint(id){
     ${npSection}
     ${obsSection}
     ${motifSection}
+    ${justifSection}
 
     <!-- Footer -->
     <div style="border-top:1px solid var(--border);padding-top:12px;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted)">
@@ -3262,12 +3386,159 @@ function soumettrePoint(id){
     if(d.success)setTimeout(()=>location.reload(),800);
   });
 }
-function validerPoint(id){
-  if(!confirm('Valider ce point journalier ? Cette action est définitive.'))return;
-  ap({action:'valider_point',point_id:id}).then(d=>{toast(d.message,d.success?'success':'danger');if(d.success)setTimeout(()=>location.reload(),800);});
+function validerPoint(id, date){
+  if(!OPTO_COMPARAISON_OK){
+    if(!confirm('Valider ce point journalier ? Cette action est définitive.'))return;
+    ap({action:'valider_point',point_id:id}).then(d=>{toast(d.message,d.success?'success':'danger');if(d.success)setTimeout(()=>location.reload(),800);});
+    return;
+  }
+  ouvrirComparaisonOptoplate(id, date);
 }
 
-function printPoint(id){window.open('<?= rtrim(APP_URL,'/') ?>/pages/operations/point_pdf.php?id='+id,'_blank');}
+// ── Comparaison OptoPlate (plan 15/10/2026) : coordinateur / OptoPlate / écart,
+// avant que le superviseur ne valide un point 18h.
+const ETAPE_LBL_COMP = {verification:'À la vérification',impression:"À l'impression",lamination:'À la lamination',percee:'À la percée',fissuree:'Plaque fissurée'};
+const VEH_ICON_COMP = {VP:'ph-car', CAM:'ph-truck', SEMI:'ph-truck', MOTO:'ph-motorcycle'};
+const VEH_BG_COMP   = {VP:'#e3f2fd', CAM:'#e8f5e9', SEMI:'#fff3e0', MOTO:'#fce4ec'};
+const VEH_FG_COMP   = {VP:'#1565c0', CAM:'#2e7d32', SEMI:'#e65100', MOTO:'#ad1457'};
+
+function ecartBadgeComp(ecart){
+  if(ecart===0) return `<span style="display:inline-flex;align-items:center;gap:3px;background:#dcfce7;color:#166534;font-weight:800;font-size:12px;padding:2px 10px;border-radius:20px;white-space:nowrap"><i class="ph ph-check" aria-hidden="true"></i> 0</span>`;
+  const signe = ecart>0 ? '+' : '';
+  return `<span style="display:inline-flex;align-items:center;gap:3px;background:#fee2e2;color:#991b1b;font-weight:800;font-size:12px;padding:2px 10px;border-radius:20px;white-space:nowrap"><i class="ph ph-warning" aria-hidden="true"></i> ${signe}${ecart}</span>`;
+}
+function compSectionTitreComp(txt){
+  return `<div style="font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 8px">${txt}</div>`;
+}
+function compCategCard(icon, bg, fg, libelle, coord, opt, ecart){
+  return `
+  <div style="background:white;border:1.5px solid ${ecart!==0?'#fca5a5':'var(--border)'};border-radius:12px;padding:12px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <div style="width:30px;height:30px;border-radius:9px;background:${bg};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <i class="ph ${icon}" style="color:${fg};font-size:16px" aria-hidden="true"></i>
+      </div>
+      <div style="font-size:12.5px;font-weight:700;color:var(--navy);line-height:1.2">${libelle}</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:4px">
+      <div style="text-align:center;flex:1">
+        <div style="font-size:17px;font-weight:800;color:var(--navy)">${coord}</div>
+        <div style="font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">Coord.</div>
+      </div>
+      <div style="text-align:center;flex:1;border-left:1px solid var(--border)">
+        <div style="font-size:17px;font-weight:800;color:var(--navy)">${opt}</div>
+        <div style="font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">OptoPlate</div>
+      </div>
+    </div>
+    <div style="margin-top:8px;text-align:center">${ecartBadgeComp(ecart)}</div>
+  </div>`;
+}
+function compListRow(libelle, coord, opt, ecart, icon){
+  return `
+  <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">
+    <i class="ph ${icon}" style="color:var(--muted);font-size:15px;flex-shrink:0" aria-hidden="true"></i>
+    <div style="flex:1;font-size:13px;color:var(--navy);font-weight:600">${libelle}</div>
+    <div style="width:70px;text-align:center" title="Coordinateur"><span style="font-weight:700;font-size:13px">${coord}</span></div>
+    <div style="width:70px;text-align:center" title="OptoPlate"><span style="font-weight:700;font-size:13px;color:var(--muted)">${opt}</span></div>
+    <div style="width:64px;text-align:right">${ecartBadgeComp(ecart)}</div>
+  </div>`;
+}
+function compBandeau(hasEcart, nbEcarts){
+  return hasEcart
+    ? `<div style="display:flex;align-items:center;gap:12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:12px 16px">
+         <div style="width:36px;height:36px;border-radius:50%;background:#fee2e2;display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ph ph-warning" style="color:#991b1b;font-size:18px" aria-hidden="true"></i></div>
+         <div><div style="font-weight:800;color:#991b1b;font-size:13.5px">${nbEcarts} écart(s) constaté(s) avec OptoPlate</div><div style="font-size:12px;color:#991b1b">Rejetez le point, ou justifiez pour valider quand même.</div></div>
+       </div>`
+    : `<div style="display:flex;align-items:center;gap:12px;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:12px 16px">
+         <div style="width:36px;height:36px;border-radius:50%;background:#dcfce7;display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ph ph-check-circle" style="color:#166534;font-size:18px" aria-hidden="true"></i></div>
+         <div style="font-weight:800;color:#166534;font-size:13.5px">Aucun écart avec OptoPlate</div>
+       </div>`;
+}
+
+async function ouvrirComparaisonOptoplate(id, date){
+  document.getElementById('comp-point-id').value = id;
+  document.getElementById('comp-point-date').value = date;
+  document.getElementById('comp-body').innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted)">Chargement…</div>';
+  document.getElementById('comp-footer').innerHTML = '';
+  document.getElementById('mCompOpto').classList.add('open');
+
+  const d = await ap({action:'comparer_optoplate', point_id:id});
+  if(!d.success){
+    document.getElementById('comp-body').innerHTML = `<div class="alert alert-danger">${d.message}</div>`;
+    document.getElementById('comp-footer').innerHTML = `<button class="btn btn-secondary" onclick="document.getElementById('mCompOpto').classList.remove('open')">Fermer</button>`;
+    return;
+  }
+  const c = d.data.comparaison;
+  if(!d.data.import_present){
+    document.getElementById('comp-body').innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 16px">
+        <div style="width:36px;height:36px;border-radius:50%;background:#fef3c7;display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ph ph-clock-countdown" style="color:#92400e;font-size:18px" aria-hidden="true"></i></div>
+        <div><div style="font-weight:800;color:#92400e;font-size:13.5px">Comparaison impossible</div>
+        <div style="font-size:12px;color:#92400e">Aucun import OptoPlate du ${date} pour <strong>${escEndo(d.data.site_nom||'')}</strong>. Vous pouvez valider avec une justification, ou attendre l'import.</div></div>
+      </div>
+      <div class="form-group" style="margin-top:16px">
+        <label>Justification *</label>
+        <textarea class="form-control" id="comp-justif" rows="3" placeholder="Import OptoPlate non disponible…"></textarea>
+      </div>`;
+  } else {
+    const toutes = [...c.primo, c.duplicata, c.post_immat, ...c.endommages, ...(c.par_bobine||[])];
+    const nbEcarts = toutes.filter(r => r.ecart !== 0).length;
+
+    const primoCards = c.primo.map(r => compCategCard(VEH_ICON_COMP[r.code], VEH_BG_COMP[r.code], VEH_FG_COMP[r.code], r.libelle, r.coordinateur, r.optoplate, r.ecart)).join('');
+    const reimprCards = `<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+        ${compCategCard('ph-copy', '#f3e8ff', '#6b21a8', 'Duplicatas', c.duplicata.coordinateur, c.duplicata.optoplate, c.duplicata.ecart)}
+        ${compCategCard('ph-stamp', '#fff3e0', '#9a3412', 'Post-Immat', c.post_immat.coordinateur, c.post_immat.optoplate, c.post_immat.ecart)}
+      </div>`;
+    const endoList = c.endommages.length
+      ? c.endommages.map(r => compListRow(ETAPE_LBL_COMP[r.etape]||r.etape, r.coordinateur, r.optoplate, r.ecart, 'ph-warning-circle')).join('')
+      : `<div style="padding:16px;text-align:center;color:var(--muted);font-size:12.5px">Aucun endommagement déclaré.</div>`;
+    const bobineList = (c.par_bobine||[]).length
+      ? c.par_bobine.map(r => compListRow('Bobine ' + r.numero, r.coordinateur, r.optoplate, r.ecart, 'ph-film-strip')).join('')
+      : `<div style="padding:16px;text-align:center;color:var(--muted);font-size:12.5px">Aucune donnée par bobine.</div>`;
+
+    document.getElementById('comp-body').innerHTML = `
+      ${compBandeau(c.has_ecart, nbEcarts)}
+      ${compSectionTitreComp('Véhicules Primo')}
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">${primoCards}</div>
+      ${compSectionTitreComp('Réimpressions')}
+      ${reimprCards}
+      ${compSectionTitreComp('Endommagés par étape')}
+      <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">${endoList}</div>
+      ${compSectionTitreComp('Films par bobine')}
+      <div style="border:1px solid var(--border);border-radius:10px;max-height:170px;overflow-y:auto">${bobineList}</div>
+      ${c.has_ecart ? `
+      <div class="form-group" style="margin-top:16px">
+        <label>Justification (obligatoire pour valider malgré l'écart) *</label>
+        <textarea class="form-control" id="comp-justif" rows="3" placeholder="Expliquer l'écart constaté…"></textarea>
+      </div>` : ''}`;
+  }
+
+  document.getElementById('comp-footer').innerHTML = `
+    <button class="btn btn-secondary" onclick="document.getElementById('mCompOpto').classList.remove('open')">Annuler</button>
+    <button class="btn" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5" onclick="rejeterDepuisComparaison()"><i class="ph ph-x-circle" aria-hidden="true"></i> Rejeter</button>
+    <button class="btn btn-success" onclick="validerDepuisComparaison()"><i class="ph ph-check-circle" aria-hidden="true"></i> Valider</button>`;
+}
+
+function rejeterDepuisComparaison(){
+  const id   = document.getElementById('comp-point-id').value;
+  const date = document.getElementById('comp-point-date').value;
+  document.getElementById('mCompOpto').classList.remove('open');
+  ouvrirRejet(id, date);
+  const justif = document.getElementById('comp-justif');
+  if(justif && justif.value.trim()) document.getElementById('rejet-motif').value = 'Écart OptoPlate : ' + justif.value.trim();
+}
+
+function validerDepuisComparaison(){
+  const id    = document.getElementById('comp-point-id').value;
+  const justifEl = document.getElementById('comp-justif');
+  const justif = justifEl ? justifEl.value.trim() : '';
+  if(justifEl && !justif){ toast('La justification est obligatoire.', 'danger'); return; }
+  ap({action:'valider_point', point_id:id, justification_superviseur:justif}).then(d=>{
+    toast(d.message, d.success?'success':'danger');
+    if(d.success){ document.getElementById('mCompOpto').classList.remove('open'); setTimeout(()=>location.reload(),800); }
+  });
+}
+
+function printPoint(id){if(!id)return;window.open('<?= rtrim(APP_URL,'/') ?>/pages/operations/point_pdf.php?id='+id,'_blank');}
 
 function ouvrirRejet(id, date){
   document.getElementById('rejet-point-id').value = id;

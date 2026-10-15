@@ -513,7 +513,12 @@ $total_films = array_sum(array_column(array_filter($bobines, fn($b) => in_array(
 </div>
 
 <?php
-$coord_types = db_fetch_all("SELECT DISTINCT type_code FROM op_bobines WHERE site_id=? AND type_code IS NOT NULL AND serie IN ($serie_ph) ORDER BY type_code", [$site_force, ...$series_actives]);
+$coord_types = db_fetch_all(
+    "SELECT DISTINCT b.type_code, t.format AS tb_format
+     FROM op_bobines b LEFT JOIN op_types_bobines t ON t.code=b.type_code
+     WHERE b.site_id=? AND b.type_code IS NOT NULL AND b.serie IN ($serie_ph) ORDER BY b.type_code",
+    [$site_force, ...$series_actives]
+);
 ?>
 <!-- Filtres coordinateur -->
 <form method="GET" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
@@ -528,10 +533,10 @@ $coord_types = db_fetch_all("SELECT DISTINCT type_code FROM op_bobines WHERE sit
 
   <select name="type" onchange="this.form.submit()"
     style="padding:8px 12px;border:1.5px solid var(--border);border-radius:9px;font-size:13px;background:white;outline:none">
-    <option value="">Tous les types</option>
+    <option value="">Tous les formats</option>
     <?php foreach($coord_types as $t): ?>
     <option value="<?= h($t['type_code']) ?>" <?= $f_type===$t['type_code']?'selected':'' ?>>
-      <?= h($t['type_code']) ?>
+      <?= h($t['tb_format'] ?: $t['type_code']) ?>
     </option>
     <?php endforeach; ?>
   </select>
@@ -564,7 +569,7 @@ $coord_types = db_fetch_all("SELECT DISTINCT type_code FROM op_bobines WHERE sit
     <table class="coord-bob-table" style="width:100%;border-collapse:collapse">
       <thead><tr>
         <th>N° Bobine</th>
-        <th>Type</th>
+        <th>Format</th>
         <th style="text-align:center">Qté livrée</th>
         <th style="text-align:center">Films restants</th>
         <th style="text-align:center">Consommé</th>
@@ -582,7 +587,7 @@ $coord_types = db_fetch_all("SELECT DISTINCT type_code FROM op_bobines WHERE sit
       ?>
       <tr>
         <td style="font-family:monospace;font-weight:800;color:var(--navy)"><?= h($b['numero']) ?></td>
-        <td style="font-size:12px;color:var(--muted)"><?= h($b['type_code']) ?></td>
+        <td style="font-size:12px;color:var(--muted)"><?= h($b['tb_format'] ?: $b['type_code']) ?></td>
         <td style="text-align:center;font-weight:700;color:var(--navy)"><?= fmt_number($qte_init) ?></td>
         <td style="text-align:center">
           <div style="font-weight:800;font-size:15px;color:<?= $pct_rest<=20?'#991B1B':($pct_rest<=50?'#92400E':'var(--navy)') ?>;font-family:'Plus Jakarta Sans',sans-serif">
@@ -836,7 +841,7 @@ endif;
           <option value="">— Sélectionner une bobine —</option>
           <?php foreach($bobines as $b): if(in_array($b['statut'],['retiree','epuisee'])) continue; ?>
           <option value="<?= $b['id'] ?>" data-stock="<?= $b['stock_systeme'] ?>">
-            <?= h($b['numero']) ?> — <?= h($b['type_code']) ?><?= $b['site_nom']?' ('.$b['site_nom'].')':'' ?> | Stock: <?= $b['stock_systeme'] ?>
+            <?= h($b['numero']) ?> — <?= h($b['tb_format'] ?: $b['type_code']) ?><?= $b['site_nom']?' ('.$b['site_nom'].')':'' ?> | Stock: <?= $b['stock_systeme'] ?>
           </option>
           <?php endforeach; ?>
         </select>
@@ -939,7 +944,9 @@ endif;
 <div id="tab-en_cours" style="display:none">
   <?php
   $bobines_en_cours = db_fetch_all(
-    "SELECT b.*, s.nom AS site_nom FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id
+    "SELECT b.*, s.nom AS site_nom, t.format AS tb_format FROM op_bobines b
+     LEFT JOIN sites s ON s.id=b.site_id
+     LEFT JOIN op_types_bobines t ON t.code=b.type_code
      WHERE b.statut='en_cours' AND b.serie IN ($serie_ph)" . ($site_force?" AND b.site_id=$site_force":"") . " ORDER BY b.site_id, b.numero",
     $series_actives
   );
@@ -951,7 +958,7 @@ endif;
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>Numéro</th><th>Type</th><th>Site</th>
+          <th>Numéro</th><th>Format</th><th>Site</th>
           <th style="text-align:center">Stock système</th>
           <th style="text-align:center">Films restants</th>
           <th style="text-align:center">Actions</th>
@@ -965,7 +972,7 @@ endif;
         ?>
           <tr>
             <td style="font-family:monospace;font-weight:700"><?= h($b['numero']) ?></td>
-            <td><?= h($b['type_code']) ?> <span style="color:var(--muted);font-size:12px"><?= h($b['serie']) ?></span></td>
+            <td><?= h($b['tb_format'] ?: $b['type_code']) ?> <span style="color:var(--muted);font-size:12px"><?= h($b['serie']) ?></span></td>
             <td><?= h($b['site_nom']??'—') ?></td>
             <td style="text-align:center;font-weight:700"><?= fmt_number($b['stock_systeme']) ?></td>
             <td style="text-align:center">
@@ -993,7 +1000,9 @@ endif;
 <div id="tab-en_stock" style="display:none">
   <?php
   $bobines_en_stock = db_fetch_all(
-    "SELECT b.*, s.nom AS site_nom FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id
+    "SELECT b.*, s.nom AS site_nom, t.format AS tb_format FROM op_bobines b
+     LEFT JOIN sites s ON s.id=b.site_id
+     LEFT JOIN op_types_bobines t ON t.code=b.type_code
      WHERE b.statut='en_stock' AND b.serie IN ($serie_ph)" . ($site_force?" AND b.site_id=$site_force":"") . " ORDER BY b.site_id, b.numero",
     $series_actives
   );
@@ -1005,7 +1014,7 @@ endif;
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>Numéro</th><th>Type</th><th>Site</th>
+          <th>Numéro</th><th>Format</th><th>Site</th>
           <th style="text-align:center">Stock</th>
           <th style="text-align:center">Actions</th>
         </tr></thead>
@@ -1015,7 +1024,7 @@ endif;
         <?php else: foreach($bobines_en_stock as $b): ?>
           <tr>
             <td style="font-family:monospace;font-weight:700"><?= h($b['numero']) ?></td>
-            <td><?= h($b['type_code']) ?> <span style="color:var(--muted);font-size:12px"><?= h($b['serie']) ?></span></td>
+            <td><?= h($b['tb_format'] ?: $b['type_code']) ?> <span style="color:var(--muted);font-size:12px"><?= h($b['serie']) ?></span></td>
             <td><?= h($b['site_nom']??'—') ?></td>
             <td style="text-align:center;font-weight:700"><?= fmt_number($b['stock_systeme']) ?></td>
             <td style="text-align:center">
@@ -1041,7 +1050,9 @@ endif;
 <div id="tab-retiree" style="display:none">
   <?php
   $bobines_retirees = db_fetch_all(
-    "SELECT b.*, s.nom AS site_nom FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id
+    "SELECT b.*, s.nom AS site_nom, t.format AS tb_format FROM op_bobines b
+     LEFT JOIN sites s ON s.id=b.site_id
+     LEFT JOIN op_types_bobines t ON t.code=b.type_code
      WHERE b.statut IN ('retiree','epuisee') AND b.serie IN ($serie_ph)" . ($site_force?" AND b.site_id=$site_force":"") . " ORDER BY b.created_at DESC LIMIT 100",
     $series_actives
   );
@@ -1050,14 +1061,14 @@ endif;
     <div class="card-header"><h3><i class="ph ph-arrow-clockwise" aria-hidden="true"></i> Bobines retirées <span style="font-size:13px;font-weight:400;color:var(--muted)">(<?= count($bobines_retirees) ?>)</span></h3></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Numéro</th><th>Type</th><th>Site</th><th style="text-align:center">Films utilisés</th><th>Statut</th></tr></thead>
+        <thead><tr><th>Numéro</th><th>Format</th><th>Site</th><th style="text-align:center">Films utilisés</th><th>Statut</th></tr></thead>
         <tbody>
         <?php if(empty($bobines_retirees)): ?>
           <tr><td colspan="5" style="text-align:center;padding:30px;color:var(--muted)">Aucune bobine terminée.</td></tr>
         <?php else: foreach($bobines_retirees as $b): ?>
           <tr>
             <td style="font-family:monospace;font-weight:700"><?= h($b['numero']) ?></td>
-            <td><?= h($b['type_code']) ?></td>
+            <td><?= h($b['tb_format'] ?: $b['type_code']) ?></td>
             <td><?= h($b['site_nom']??'—') ?></td>
             <td style="text-align:center"><?= fmt_number($b['films_utilises']??0) ?> / <?= fmt_number($b['qte_initiale']??500) ?></td>
             <td><span class="bobine-status <?= $b['statut'] ?>"><?= $b['statut']==='epuisee'?'<i class="ph ph-check-circle" aria-hidden="true"></i> Épuisée':'<i class="ph ph-check-circle" aria-hidden="true"></i> Retirée' ?></span></td>
@@ -1073,7 +1084,9 @@ endif;
 <div id="tab-perdue" style="display:none">
   <?php
   $bobines_perdues = db_fetch_all(
-    "SELECT b.*, s.nom AS site_nom FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id
+    "SELECT b.*, s.nom AS site_nom, t.format AS tb_format FROM op_bobines b
+     LEFT JOIN sites s ON s.id=b.site_id
+     LEFT JOIN op_types_bobines t ON t.code=b.type_code
      WHERE b.statut='perdue' AND b.serie IN ($serie_ph)" . ($site_force?" AND b.site_id=$site_force":"") . " ORDER BY b.created_at DESC",
     $series_actives
   );
@@ -1082,14 +1095,14 @@ endif;
     <div class="card-header"><h3><i class="ph ph-x-circle" aria-hidden="true"></i> Bobines perdues <span style="font-size:13px;font-weight:400;color:var(--muted)">(<?= count($bobines_perdues) ?>)</span></h3></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Numéro</th><th>Type</th><th>Site</th><th style="text-align:center">Films restants perdus</th><th>Motif</th><th>Date</th></tr></thead>
+        <thead><tr><th>Numéro</th><th>Format</th><th>Site</th><th style="text-align:center">Films restants perdus</th><th>Motif</th><th>Date</th></tr></thead>
         <tbody>
         <?php if(empty($bobines_perdues)): ?>
           <tr><td colspan="6" style="text-align:center;padding:30px;color:var(--muted)">Aucune bobine perdue.</td></tr>
         <?php else: foreach($bobines_perdues as $b): ?>
           <tr>
             <td style="font-family:monospace;font-weight:700"><?= h($b['numero']) ?></td>
-            <td><?= h($b['type_code']) ?></td>
+            <td><?= h($b['tb_format'] ?: $b['type_code']) ?></td>
             <td><?= h($b['site_nom']??'—') ?></td>
             <td style="text-align:center;color:#e65100;font-weight:700"><?= fmt_number($b['films_restants']??0) ?></td>
             <td style="font-size:12px;color:var(--muted)"><?= h($b['notes_perte']??'—') ?></td>
@@ -1106,12 +1119,13 @@ endif;
 <div id="tab-demandes" style="display:none">
   <?php
   $demandes = db_fetch_all(
-    "SELECT d.*, b.numero AS bobine_num, b.type_code, b.films_restants,
+    "SELECT d.*, b.numero AS bobine_num, b.type_code, b.films_restants, tb.format AS tb_format,
             s.nom AS site_nom,
             CONCAT(u.prenom,' ',u.nom) AS demandeur,
             CONCAT(t.prenom,' ',t.nom) AS traiteur
      FROM demandes_bobines d
      JOIN op_bobines b ON b.id=d.bobine_id
+     LEFT JOIN op_types_bobines tb ON tb.code=b.type_code
      JOIN sites s ON s.id=d.site_id
      LEFT JOIN users u ON u.id=d.demande_par
      LEFT JOIN users t ON t.id=d.traite_par
@@ -1149,7 +1163,7 @@ endif;
         ?>
           <tr style="<?= $dem['statut']==='en_attente'?'background:#fffbf0':'' ?>">
             <td style="font-size:12px;white-space:nowrap"><?= fmt_datetime($dem['created_at']) ?></td>
-            <td style="font-family:monospace;font-weight:700"><?= h($dem['bobine_num']) ?> <span style="font-size:12px;color:var(--muted)"><?= h($dem['type_code']) ?></span></td>
+            <td style="font-family:monospace;font-weight:700"><?= h($dem['bobine_num']) ?> <span style="font-size:12px;color:var(--muted)"><?= h($dem['tb_format'] ?: $dem['type_code']) ?></span></td>
             <td><?= h($dem['site_nom']) ?></td>
             <td style="text-align:center;font-weight:700"><?= fmt_number($dem['films_restants']) ?></td>
             <td style="font-size:12px;max-width:180px"><?= h($dem['motif']) ?></td>

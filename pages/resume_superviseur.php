@@ -70,11 +70,13 @@ if (isset($_GET['export'])) {
             $params
         );
         $headers = ['Date','Site','Type','VP','Camion','Semi','Moto','Total Engins','Total Plaques','Rivets util.','Rivets endomm.','Heures','Statut','Agent'];
-        foreach($headers as $i=>$h) $ws->setCellValueByColumnAndRow($i+1,1,$h);
+        // setCellValueByColumnAndRow() a disparu en PhpSpreadsheet 2.0 ; le
+        // projet est en 5.9 (composer.json). La notation [colonne, ligne] la remplace.
+        foreach($headers as $i=>$h) $ws->setCellValue([$i+1,1],$h);
         $ws->getStyle('A1:N1')->applyFromArray($header_style);
         foreach($data as $ri=>$row) {
             $vals = [$row['date_point'],$row['site'],$row['type_point'],$row['nb_vp'],$row['nb_camion'],$row['nb_semi'],$row['nb_moto'],$row['total_engins'],$row['total_plaques'],$row['rivets_utilises'],$row['rivets_endommages'],$row['nb_heures_travail'],$row['statut'],$row['agent']];
-            foreach($vals as $ci=>$v) $ws->setCellValueByColumnAndRow($ci+1,$ri+2,$v);
+            foreach($vals as $ci=>$v) $ws->setCellValue([$ci+1,$ri+2],$v);
         }
         foreach(range('A','N') as $c) $ws->getColumnDimension($c)->setAutoSize(true);
         $filename = "PJ_ERP_EMUCI_{$f_date}.xlsx";
@@ -98,11 +100,11 @@ if (isset($_GET['export'])) {
             $params
         );
         $headers = ['Site','Mois','Nb Points','Total Plaques','Total Engins','Rivets utilisés','Heures travail','Points validés'];
-        foreach($headers as $i=>$h) $ws->setCellValueByColumnAndRow($i+1,1,$h);
+        foreach($headers as $i=>$h) $ws->setCellValue([$i+1,1],$h);
         $ws->getStyle('A1:H1')->applyFromArray($header_style);
         foreach($data as $ri=>$row) {
             $vals = [$row['site'],$row['mois'],$row['nb_points'],$row['total_plaques'],$row['total_engins'],$row['rivets_utilises'],$row['heures_total'],$row['points_valides']];
-            foreach($vals as $ci=>$v) $ws->setCellValueByColumnAndRow($ci+1,$ri+2,$v);
+            foreach($vals as $ci=>$v) $ws->setCellValue([$ci+1,$ri+2],$v);
         }
         foreach(range('A','H') as $c) $ws->getColumnDimension($c)->setAutoSize(true);
         $filename = "Resume_Mensuel_{$f_mois}.xlsx";

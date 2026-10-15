@@ -37,7 +37,12 @@ $active_page = 'tracabilite_endommagements';
 $is_coord   = ($role_slug === 'coordinateur_site');
 $site_force = ($is_coord && $user['site_id']) ? (int)$user['site_id'] : 0;
 
-$ETAPES = ['pose'=>'À la pose','impression'=>"À l'impression",'lamination'=>'À la lamination','transport'=>'Au transport',
+// "pose" reste valide pour les rivets (inchangé) ; pour un film c'est
+// désormais une ancienne déclaration (vérification/percée/fissurée l'ont
+// remplacée) — le libellé générique "À la pose" reste correct dans les
+// deux cas, sans distinction par objet sur cette page.
+$ETAPES = ['pose'=>'À la pose','verification'=>'À la vérification','impression'=>"À l'impression",'lamination'=>'À la lamination',
+           'percee'=>'À la percée','fissuree'=>'Plaque fissurée','transport'=>'Au transport',
            'stockage'=>'Au stockage','autre'=>'Autre'];
 $CAUSES = ['manipulation'=>'Manipulation incorrecte','defaut_materiel'=>'Défaut matériel',
            'incident_externe'=>'Incident externe','autre'=>'Autre'];
@@ -59,6 +64,10 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $f_au)) $f_au = date('Y-m-d');
 
 $where  = ["DATE(e.created_at) BETWEEN ? AND ?"];
 $params = [$f_du, $f_au];
+// Un brouillon n'est visible que de son auteur (même règle que la liste
+// des points) : ses déclarations n'apparaissent ici qu'à lui.
+$where[]  = "(p.statut IS NULL OR p.statut <> 'brouillon' OR e.created_by = ?)";
+$params[] = (int)$user['id'];
 if ($f_site)  { $where[] = "e.site_id = ?";  $params[] = $f_site; }
 if (isset($ETAPES[$f_etape])) { $where[] = "e.etape = ?"; $params[] = $f_etape; }
 // Cause en saisie libre depuis 2026-10 : filtre sur la valeur exacte,

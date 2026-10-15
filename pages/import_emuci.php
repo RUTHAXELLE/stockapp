@@ -217,12 +217,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                     set_time_limit(0);
                     $nb_ok = 0; $nb_err = 0; $sites_inconnus = [];
 
+                    // Un seul fichier OptoPlate porte à la fois les poses et les
+                    // désactivations (une ligne par plaque, mise à jour dans le temps) —
+                    // dès que la migration désactivations est jouée, on upsert par
+                    // N°Consommable au lieu de purger/réinsérer le jour (sinon une
+                    // plaque posée hier puis désactivée aujourd'hui perdrait sa pose).
+                    $peut_upsert = db_colonne_existe('import_optoplate', 'type_desactivation');
+
                     // Créer session
                     db_query("INSERT INTO import_sessions_emuci (id,date_import,type_import,statut,importe_par) VALUES (?,?,'optoplate','en_cours',?)",
                         [$session_id,$date_import,$user['id']]);
 
-                    // Supprimer import du même jour
-                    db_query("DELETE FROM import_optoplate WHERE date_import=?", [$date_import]);
+                    if (!$peut_upsert) {
+                        // Ancien comportement (avant migration) : purge du jour.
+                        db_query("DELETE FROM import_optoplate WHERE date_import=?", [$date_import]);
+                    }
 
                     try {
                     db_begin();
@@ -237,11 +246,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                         $type_plaque  = $get('Type de plaque');
                         $statut       = $get('Statut plaque');
                         $position     = $get('Position');
-                        $num_conso    = $get('N°Consommable');
+                        $num_conso    = $get('N°Consommable') ?: null;
                         $num_bobine   = $get('N°Bobine');
                         $site_id_emu  = $get('Id du site');
                         $site_nom_emu = $get("Nom du site d'installation");
-
                         if (!$immat || !$statut) { $nb_err++; continue; }
 
                         $site_id_ds = trouver_site_id($site_nom_emu, $sites_list);
@@ -250,12 +258,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                             logger_site_inconnu($site_nom_emu, 'optoplate');
                         }
 
-                        db_query(
-                            "INSERT INTO import_optoplate
-                             (import_session_id,date_import,date_installation,numero_dossier,immatriculation,vin,type_plaque,statut_plaque,position,num_consommable,num_bobine,site_id_emuci,site_nom_emuci,site_id,importe_par)
-                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                            [$session_id,$date_import,$date_install,$num_dossier,$immat,$vin,$type_plaque,$statut,$position,$num_conso,$num_bobine,$site_id_emu,$site_nom_emu,$site_id_ds,$user['id']]
-                        );
+                        $cols_opto = ['import_session_id','date_import','date_installation','numero_dossier','immatriculation','vin','type_plaque','statut_plaque','position','num_consommable','num_bobine','site_id_emuci','site_nom_emuci','site_id','importe_par'];
+                        $vals_opto = [$session_id,$date_import,$date_install,$num_dossier,$immat,$vin,$type_plaque,$statut,$position,$num_conso,$num_bobine,$site_id_emu,$site_nom_emu,$site_id_ds,$user['id']];
+                        // Colonnes désactivation (plan comparaison OptoPlate, 15/10) — même
+                        // fichier/ligne que la pose ; présentes seulement si la plaque a
+                        // été désactivée depuis (Duplicata / Modification POST / Incident).
+                        if ($peut_upsert) {
+                            $cols_opto = array_merge($cols_opto, ['categorie','ancienne_plaque','type_desactivation','motif_desactivation','date_desactivation']);
+                            $vals_opto = array_merge($vals_opto, [
+                                $get('Catégorie') ?: null,
+                                $get('Ancien Plate') ?: null,
+                                $get('Type de désactivation') ?: null,
+                                $get('Motif de désactivation') ?: null,
+                                emuci_parse_date_fr($get('Date de désactivation')),
+                            ]);
+                        }
+
+                        if ($peut_upsert) {
+                            $set_sql = implode(',', array_map(
+                                fn($c) => "$c=EXCLUDED.$c",
+                                array_diff($cols_opto, ['import_session_id','num_consommable'])
+                            ));
+                            db_query(
+                                "INSERT INTO import_optoplate (" . implode(',', $cols_opto) . ")
+                                 VALUES (" . implode(',', array_fill(0, count($cols_opto), '?')) . ")
+                                 ON CONFLICT (num_consommable) WHERE num_consommable IS NOT NULL DO UPDATE SET $set_sql",
+                                $vals_opto
+                            );
+                        } else {
+                            db_query(
+                                "INSERT INTO import_optoplate (" . implode(',', $cols_opto) . ")
+                                 VALUES (" . implode(',', array_fill(0, count($cols_opto), '?')) . ")",
+                                $vals_opto
+                            );
+                        }
                         $nb_ok++;
                     }
 
@@ -846,7 +882,7 @@ include __DIR__ . '/../templates/header.php';
   <div class="card" style="margin-bottom:20px">
     <div class="card-header">
       <h3><i class="ph ph-upload-simple" aria-hidden="true"></i> Importer fichier OptoPlate (CSV)</h3>
-      <span style="font-size:12px;color:var(--muted)">Format : export CSV depuis OptoPlate · séparateur ;</span>
+      <span style="font-size:12px;color:var(--muted)">Format : export CSV/XLSX depuis OptoPlate · poses et désactivations dans le même fichier</span>
     </div>
     <div class="card-body">
       <?php if($msg_optoplate): ?>
@@ -865,16 +901,16 @@ include __DIR__ . '/../templates/header.php';
                    style="padding:10px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;outline:none">
           </div>
           <div>
-            <label style="font-size:13px;font-weight:600;color:var(--navy);display:block;margin-bottom:6px">Fichier CSV OptoPlate</label>
+            <label style="font-size:13px;font-weight:600;color:var(--navy);display:block;margin-bottom:6px">Fichier OptoPlate</label>
             <div class="upload-zone" onclick="document.getElementById('fileOpto').click()"
                  ondragover="this.classList.add('drag');event.preventDefault()"
                  ondragleave="this.classList.remove('drag')"
                  ondrop="this.classList.remove('drag');handleDrop(event,'fileOpto','selectedOpto')">
               <div class="upload-icon"><i class="ph ph-clipboard-text" aria-hidden="true"></i></div>
-              <div class="upload-label">Glissez le fichier CSV ici ou cliquez</div>
-              <div class="upload-sub">export_plates_from_YYYY-MM-DD_until_YYYY-MM-DD.csv</div>
+              <div class="upload-label">Glissez le fichier ici ou cliquez</div>
+              <div class="upload-sub">export_plates_from_YYYY-MM-DD_until_YYYY-MM-DD.csv (ou .xlsx) — poses + désactivations</div>
               <div class="upload-selected" id="selectedOpto"></div>
-              <input type="file" id="fileOpto" name="fichier_optoplate" accept=".csv"
+              <input type="file" id="fileOpto" name="fichier_optoplate" accept=".csv,.xlsx,.xls"
                      onchange="document.getElementById('selectedOpto').textContent=this.files[0]?.name||''">
             </div>
           </div>

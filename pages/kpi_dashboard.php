@@ -698,7 +698,8 @@ usort($endo_top, function ($a, $b) {
 // pas détaillés : la part restante est dite plutôt que tue.
 $ENDO_CAUSES = ['manipulation' => 'Manipulation incorrecte', 'defaut_materiel' => 'Défaut matériel',
                 'incident_externe' => 'Incident externe', 'autre' => 'Autre'];
-$ENDO_ETAPES = ['pose' => 'à la pose', 'impression' => "à l'impression", 'lamination' => 'à la lamination', 'transport' => 'au transport',
+$ENDO_ETAPES = ['pose' => 'à la pose', 'verification' => 'à la vérification', 'impression' => "à l'impression", 'lamination' => 'à la lamination',
+                'percee' => 'à la percée', 'fissuree' => 'à une plaque fissurée', 'transport' => 'au transport',
                 'stockage' => 'au stockage', 'autre' => 'autre étape'];
 $endo_causes = []; $endo_etapes = []; $endo_detailles = 0;
 foreach (db_fetch_all(

@@ -7,6 +7,7 @@
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/../includes/db.php';
@@ -31,10 +32,13 @@ if (isset($_GET['modele'])) {
     $ws = $sp->getActiveSheet();
     $ws->setTitle('Agents');
     $headers = ['Matricule','Nom','Prénom','Email','Téléphone','Fonction','Département','Direction','Site','Grade','Statut'];
+    // PhpSpreadsheet 5.x (composer.json : ^5.9) a retiré les méthodes
+    // ...ByColumnAndRow(), remplacées par les coordonnées lettre+ligne.
     foreach ($headers as $i => $h) {
-        $ws->setCellValueByColumnAndRow($i + 1, 1, $h);
-        $ws->getColumnDimensionByColumn($i + 1)->setAutoSize(true);
-        $ws->getStyleByColumnAndRow($i + 1, 1)->getFont()->setBold(true);
+        $col = Coordinate::stringFromColumnIndex($i + 1);
+        $ws->setCellValue("{$col}1", $h);
+        $ws->getColumnDimension($col)->setAutoSize(true);
+        $ws->getStyle("{$col}1")->getFont()->setBold(true);
     }
     $ws->setCellValue('K2', 'actif');
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

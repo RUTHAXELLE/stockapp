@@ -360,14 +360,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 }
                 // Ligne de distribution
                 if ($q_liv > 0) {
+                    // type_article vient de la base (voir commentaire plus haut),
+                    // jamais du article_id envoyé par le client : pour une ligne
+                    // bobine, cet id désigne un TYPE de bobine
+                    // (op_types_bobines), pas un articles.id — le traiter comme
+                    // un article déciderait le stock d'un article sans rapport.
+                    $ta = $type_article_map[(int)($l['ligne_id'] ?? 0)] ?? '';
                     db_query(
                         "INSERT INTO distribution_lignes (distribution_id,article_id,commande_ligne_id,libelle,quantite_envoyee,unite,statut)
                          VALUES (?,?,?,?,?,?,'en_cours_livraison')",
-                        [$dist_id, $l['article_id']??null, (int)$l['ligne_id'],
+                        [$dist_id, $ta === 'article' ? ($l['article_id']??null) : null, (int)$l['ligne_id'],
                          $l['libelle']??'', $q_liv, $l['unite']??'unité']
                     );
                     // Décrémenter stock central articles
-                    if (!empty($l['article_id'])) {
+                    if ($ta === 'article' && !empty($l['article_id'])) {
                         db_query("UPDATE articles SET stock_global = GREATEST(0, stock_global - ?) WHERE id=?",
                             [$q_liv, (int)$l['article_id']]);
                         // …et sa contrepartie au magasin : le décrément global
@@ -386,7 +392,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     // quantité : mieux vaut arrêter l'expédition que livrer
                     // un site avec un stock qui ne serait jamais sorti de
                     // nulle part.
-                    $ta = $type_article_map[(int)($l['ligne_id'] ?? 0)] ?? '';
                     if ($ta === 'rivet') {
                         $lib_norm = strtolower(str_replace(
                             ['é','è','ê','ë','É','È','Ê','Ë'],
@@ -458,11 +463,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                       WHERE ds.commande_id=?",[$cmd_id]);
             db_query("UPDATE distributions_site SET statut='livre',recu_at=NOW(),recu_par=?
                       WHERE commande_id=?",[$user['id'],$cmd_id]);
-            // Mettre à jour stock site — articles classiques (+)
+            // Mettre à jour stock site — articles classiques (+) uniquement.
+            // Liste blanche plutôt que liste noire : pour tout autre type
+            // (bobine, équipement informatique/opérationnel...), article_id
+            // désigne l'id d'une autre table (op_types_bobines, equipements)
+            // et non un articles.id — l'y insérer créditerait le stock d'un
+            // article sans rapport. Rivet/PMMA ont leur propre bloc dédié
+            // plus bas ; bobine et équipement sont gérés ailleurs (ou pas
+            // encore automatisés à la réception).
             $lignes_rec = db_fetch_all(
                 "SELECT cl.article_id, cl.quantite_livree AS qte
                  FROM commande_lignes cl
-                 WHERE cl.commande_id=? AND cl.type_article != 'rivet'
+                 WHERE cl.commande_id=? AND cl.type_article='article'
                    AND cl.article_id IS NOT NULL AND cl.quantite_livree > 0",
                 [$cmd_id]
             );
@@ -748,11 +760,12 @@ if (isset($_GET['export'], $_GET['id'])) {
                 ];
                 break;
 
-            case 'equipement':
+            case 'equipement_informatique':
+            case 'equipement_operationnel':
                 $ctx[$l['id']] = [
                     'stock_site' => (int)(db_fetch_value(
-                        "SELECT COUNT(*) FROM equipements WHERE statut_stock='en_stock' AND actif=1 AND site_id=?",
-                        [$sid]) ?? 0),
+                        "SELECT COUNT(*) FROM equipements WHERE statut_stock='en_stock' AND actif=1 AND categorie=? AND site_id=?",
+                        [$type === 'equipement_informatique' ? 'informatique' : 'operationnel', $sid]) ?? 0),
                     'derniere'   => $fn_derniere(),
                     'conso'      => 0,
                 ];
@@ -904,7 +917,10 @@ foreach ($rivet_types as $rt) {
 }
 
 // ── Équipements disponibles (en_stock) avec indicateur site
-$equipements_list = db_fetch_all(
+// Équipement Informatique / Équipement Opérationnel : deux catégories de
+// commande distinctes, alignées sur equipements.categorie (déjà utilisée
+// pour les permissions et menus de pages/equipements.php).
+$equip_informatique_list = db_fetch_all(
     "SELECT e.id,
             CONCAT(n.libelle,' — ',e.numero_serie_interne) AS libelle,
             'unité' AS unite,
@@ -915,7 +931,22 @@ $equipements_list = db_fetch_all(
             0 AS conso
      FROM equipements e
      LEFT JOIN nomenclatures n ON n.id=e.nomenclature_id
-     WHERE e.actif=1 AND e.statut_stock='en_stock'
+     WHERE e.actif=1 AND e.statut_stock='en_stock' AND e.categorie='informatique'
+     ORDER BY n.libelle, e.numero_serie_interne LIMIT 200",
+    [$_sid ?: 0]
+);
+$equip_operationnel_list = db_fetch_all(
+    "SELECT e.id,
+            CONCAT(n.libelle,' — ',e.numero_serie_interne) AS libelle,
+            'unité' AS unite,
+            0 AS prix_unitaire,
+            1 AS stock_global,
+            CASE WHEN e.site_id=? THEN 1 ELSE 0 END AS stock_site,
+            0 AS derniere,
+            0 AS conso
+     FROM equipements e
+     LEFT JOIN nomenclatures n ON n.id=e.nomenclature_id
+     WHERE e.actif=1 AND e.statut_stock='en_stock' AND e.categorie='operationnel'
      ORDER BY n.libelle, e.numero_serie_interne LIMIT 200",
     [$_sid ?: 0]
 );
@@ -1411,9 +1442,11 @@ include __DIR__ . '/../templates/header.php';
           <label style="font-size:12px;font-weight:600;color:var(--navy)">Catégorie</label>
           <select class="form-control" id="aType" onchange="onTypeChange()" style="margin-top:4px">
             <option value="article">📦 Article</option>
+            <option value="bobine">🎞️ Bobine</option>
             <option value="pmma">🖨️ PMMA</option>
             <option value="rivet">🔩 Rivets</option>
-            <option value="equipement">🖥️ Équipement</option>
+            <option value="equipement_informatique">🖥️ Équipement Informatique</option>
+            <option value="equipement_operationnel">🦺 Équipement Opérationnel</option>
             <option value="autre">📝 Autre (libre)</option>
           </select>
         </div>
@@ -1448,7 +1481,12 @@ include __DIR__ . '/../templates/header.php';
         </div>
         <div>
           <label style="font-size:12px;font-weight:600;color:var(--navy)">Unité</label>
-          <input type="text" class="form-control" id="aUnite" value="unité" style="margin-top:4px">
+          <select class="form-control" id="aUnite" style="margin-top:4px">
+            <option value="UNITE" selected>UNITE</option>
+            <option value="CARTON">CARTON</option>
+            <option value="BOBINE">BOBINE</option>
+            <option value="BOITE">BOITE</option>
+          </select>
         </div>
         <button type="button" class="btn btn-primary" onclick="ajouterLigne()">+ Ajouter</button>
       </div>
@@ -1692,7 +1730,8 @@ const articlesData = <?= json_encode(array_values($articles_dispo)) ?>;
 const bobinesData  = <?= json_encode(array_values($bobines_list)) ?>;
 const pmmaData     = <?= json_encode(array_values($pmma_list)) ?>;
 const rivetData    = <?= json_encode($rivet_data) ?>;
-const equipData    = <?= json_encode(array_values($equipements_list)) ?>;
+const equipDataInfo = <?= json_encode(array_values($equip_informatique_list)) ?>;
+const equipDataOp   = <?= json_encode(array_values($equip_operationnel_list)) ?>;
 const voirPrix       = <?= $voir_prix?'true':'false' ?>;
 const siteForce      = <?= $site_force ?>;
 const isSuperviseur  = <?= $is_superviseur?'true':'false' ?>;
@@ -1930,7 +1969,7 @@ function onTypeChange(){
   if(type==='autre'){grpA.style.display='none';grpL.style.display='block';return;}
   grpA.style.display='block'; grpL.style.display='none';
   sel.innerHTML='<option value="">— Sélectionner —</option>';
-  const map = {article:articlesData,bobine:bobinesData,pmma:pmmaData,rivet:rivetData,equipement:equipData};
+  const map = {article:articlesData,bobine:bobinesData,pmma:pmmaData,rivet:rivetData,equipement_informatique:equipDataInfo,equipement_operationnel:equipDataOp};
   (map[type]||[]).forEach(a=>{
     const lib=a.libelle||a.numero||'—';
     sel.innerHTML+=`<option value="${a.id||''}"
@@ -1944,10 +1983,17 @@ function onTypeChange(){
       data-stock-site="${a.stock_site||0}">${lib}</option>`;
   });
 }
+// Normalise une unité libre (base de données, souvent minuscule/accentuée)
+// vers l'une des 4 valeurs du menu déroulant — UNITE par défaut sinon.
+function normaliserUnite(u){
+  const n = String(u||'').trim().toUpperCase()
+    .replace(/Î/g,'I').replace(/É|È|Ê/g,'E');
+  return ['UNITE','CARTON','BOBINE','BOITE'].includes(n) ? n : 'UNITE';
+}
 function onArticleChange(){
   const opt=document.getElementById('aArticle').options[document.getElementById('aArticle').selectedIndex];
   if(!opt||!opt.value){document.getElementById('infoContexte').style.display='none';return;}
-  document.getElementById('aUnite').value=opt.dataset.unite||'unité';
+  document.getElementById('aUnite').value=normaliserUnite(opt.dataset.unite);
   if(!voirPrix) {
     const derniere=parseInt(opt.dataset.derniere)||0;
     const stockSite=parseInt(opt.dataset.stockSite)||0;

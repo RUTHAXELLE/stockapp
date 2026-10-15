@@ -451,6 +451,14 @@ ob_start();
   </div>
   <?php endif; ?>
 
+  <!-- Justification superviseur (plan comparaison OptoPlate, 15/10/2026) -->
+  <?php if(!empty($point['justification_superviseur'])): ?>
+  <div class="section">
+    <div class="section-title">Justification du superviseur (écart OptoPlate)</div>
+    <div class="rejet-box" style="background:#fef3c7;border-left-color:#f59e0b;color:#78350f"><?= h($point['justification_superviseur']) ?></div>
+  </div>
+  <?php endif; ?>
+
   <!-- Footer -->
   <div class="footer">
     <div class="footer-left">Enregistré par <strong><?= h($point['agent'] ?? '—') ?></strong></div>
