@@ -27,6 +27,60 @@ function op_categorie_vers_type(?string $categorie): string {
 }
 
 /**
+ * Classe les poses d'une journée de site : Primo (ou ré-immat) par type de
+ * véhicule, réimpressions Duplicata et Post-Immat, plaques par bobine.
+ * Fonction pure, partagée par la comparaison du superviseur
+ * (op_calc_jour_site) et par la reconstitution de l'historique : une seule
+ * règle de classement pour les deux.
+ *  $poses         : lignes d'import (id, immatriculation, vin, num_bobine,
+ *                   categorie) des plaques posées ce jour-là ;
+ *  $type_vehicule : [clé immat/VIN => 'Duplicata'|'Modification POST'], la
+ *                   dernière désactivation connue de chaque véhicule À CE
+ *                   JOUR (désactivation et réimpression peuvent tomber le
+ *                   même jour).
+ * Un véhicule compte une fois, quel que soit son nombre de plaques posées.
+ */
+function op_classer_poses(array $poses, array $type_vehicule): array {
+    $zero = fn() => ['vehicules' => 0, 'plaques' => 0];
+    $types = ['VP', 'CAM', 'SEMI', 'MOTO', 'AUTRE'];
+    $primo = []; $dup_par_type = []; $pi_par_type = [];
+    foreach ($types as $t) { $primo[$t] = $zero(); $dup_par_type[$t] = $zero(); $pi_par_type[$t] = $zero(); }
+    $duplicata = $zero(); $post_immat = $zero(); $par_bobine = [];
+
+    $vehicules_jour = [];
+    foreach ($poses as $p) {
+        $cle = trim((string)$p['immatriculation']) ?: trim((string)$p['vin']) ?: ('#' . $p['id']);
+        $vehicules_jour[$cle]['nb_plaques'] = ($vehicules_jour[$cle]['nb_plaques'] ?? 0) + 1;
+        $vehicules_jour[$cle]['categorie']  = $p['categorie'] ?? ($vehicules_jour[$cle]['categorie'] ?? null);
+
+        $nb_b = (string)($p['num_bobine'] ?: '—');
+        $par_bobine[$nb_b] = ($par_bobine[$nb_b] ?? 0) + 1;
+    }
+
+    foreach ($vehicules_jour as $cle => $v) {
+        $type = op_categorie_vers_type($v['categorie']);
+        $type_desact = $type_vehicule[$cle] ?? null;
+        if ($type_desact === 'Duplicata') {
+            $duplicata['vehicules']++;
+            $duplicata['plaques'] += $v['nb_plaques'];
+            $dup_par_type[$type]['vehicules']++;
+            $dup_par_type[$type]['plaques'] += $v['nb_plaques'];
+        } elseif ($type_desact === 'Modification POST') {
+            $post_immat['vehicules']++;
+            $post_immat['plaques'] += $v['nb_plaques'];
+            $pi_par_type[$type]['vehicules']++;
+            $pi_par_type[$type]['plaques'] += $v['nb_plaques'];
+        } else {
+            $primo[$type]['vehicules']++;
+            $primo[$type]['plaques'] += $v['nb_plaques'];
+        }
+    }
+    return ['primo' => $primo, 'duplicata' => $duplicata, 'post_immat' => $post_immat,
+            'par_bobine' => $par_bobine,
+            'duplicata_par_type' => $dup_par_type, 'post_immat_par_type' => $pi_par_type];
+}
+
+/**
  * Calcule, pour un site et une date (jour calendaire, 0h-23h59), ce
  * qu'OptoPlate a enregistré :
  *  - primo       : ['VP'=>['vehicules'=>n,'plaques'=>n], 'CAM'=>...] — poses
@@ -60,6 +114,7 @@ function op_calc_jour_site(int $site_id, string $date): array {
     $duplicata  = ['vehicules' => 0, 'plaques' => 0];
     $post_immat = ['vehicules' => 0, 'plaques' => 0];
     $par_bobine = [];
+    $dup_par_type = []; $pi_par_type = [];
 
     if (!empty($poses)) {
         // Véhicules (immat/VIN) du site ayant une désactivation Duplicata ou
@@ -83,32 +138,13 @@ function op_calc_jour_site(int $site_id, string $date): array {
             }
         }
 
-        // Un véhicule compte une fois (son nombre de plaques posées ce
-        // jour), pas une fois par plaque — regroupement par immat/VIN.
-        $vehicules_jour = [];
-        foreach ($poses as $p) {
-            $cle = trim((string)$p['immatriculation']) ?: trim((string)$p['vin']) ?: ('#' . $p['id']);
-            $vehicules_jour[$cle]['nb_plaques'] = ($vehicules_jour[$cle]['nb_plaques'] ?? 0) + 1;
-            $vehicules_jour[$cle]['categorie']  = $p['categorie'] ?? ($vehicules_jour[$cle]['categorie'] ?? null);
-
-            $nb_b = (string)($p['num_bobine'] ?: '—');
-            $par_bobine[$nb_b] = ($par_bobine[$nb_b] ?? 0) + 1;
-        }
-
-        foreach ($vehicules_jour as $cle => $v) {
-            $type_desact = $type_vehicule[$cle] ?? null;
-            if ($type_desact === 'Duplicata') {
-                $duplicata['vehicules']++;
-                $duplicata['plaques'] += $v['nb_plaques'];
-            } elseif ($type_desact === 'Modification POST') {
-                $post_immat['vehicules']++;
-                $post_immat['plaques'] += $v['nb_plaques'];
-            } else {
-                $type = op_categorie_vers_type($v['categorie']);
-                $primo[$type]['vehicules']++;
-                $primo[$type]['plaques'] += $v['nb_plaques'];
-            }
-        }
+        $classe = op_classer_poses($poses, $type_vehicule);
+        $primo      = $classe['primo'];
+        $duplicata  = $classe['duplicata'];
+        $post_immat = $classe['post_immat'];
+        $par_bobine = $classe['par_bobine'];
+        $dup_par_type = $classe['duplicata_par_type'];
+        $pi_par_type  = $classe['post_immat_par_type'];
     }
 
     // Endommagés : désactivations DU JOUR en Incident, par motif.
@@ -131,6 +167,10 @@ function op_calc_jour_site(int $site_id, string $date): array {
         'endommages' => $endommages,
         'par_bobine' => $par_bobine,
         'total_jour' => count($poses),
+        // Répartition par type de véhicule des réimpressions (reconstitution
+        // de l'historique, tools/historique_optoplate.php).
+        'duplicata_par_type'  => $dup_par_type,
+        'post_immat_par_type' => $pi_par_type,
     ];
 }
 
