@@ -763,9 +763,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $point = db_fetch_one("SELECT * FROM op_points_journaliers WHERE id=?", [$point_id]);
         if (!$point) json_response(false, 'Point introuvable.');
         $site_nom = db_fetch_value("SELECT nom FROM sites WHERE id=?", [(int)$point['site_id']]);
+        // MySQL : plage horaire plutôt que ::date (PostgreSQL)
         $dernier_import = db_fetch_value(
-            "SELECT MAX(date_installation)::date FROM import_optoplate WHERE site_id=? AND date_installation::date=?",
-            [(int)$point['site_id'], $point['date_point']]
+            "SELECT DATE(MAX(date_installation)) FROM import_optoplate
+              WHERE site_id=? AND date_installation >= ? AND date_installation < DATE_ADD(?, INTERVAL 1 DAY)",
+            [(int)$point['site_id'], $point['date_point'], $point['date_point']]
         );
         json_response(true, '', [
             'comparaison'    => op_comparer_point($point),

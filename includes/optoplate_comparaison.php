@@ -41,11 +41,17 @@ function op_categorie_vers_type(?string $categorie): string {
  *  - total_jour  : nombre de poses du jour (avant classement).
  */
 function op_calc_jour_site(int $site_id, string $date): array {
+    // Poses du jour : plaques en service, ou remplacées depuis par un
+    // duplicata / une post-immat (elles étaient bien posées ce jour-là —
+    // l'import met une plaque à jour dans le temps). Ni les plaques
+    // « reserved » (pas posées), ni les incidents de production (comptés en
+    // endommagés). MySQL : plage horaire plutôt que ::date (PostgreSQL).
     $poses = db_fetch_all(
         "SELECT id, immatriculation, vin, num_consommable, num_bobine, categorie
          FROM import_optoplate
-         WHERE site_id=? AND statut_plaque='in_use' AND date_installation::date=?",
-        [$site_id, $date]
+         WHERE site_id=? AND date_installation >= ? AND date_installation < DATE_ADD(?, INTERVAL 1 DAY)
+           AND (statut_plaque='in_use' OR type_desactivation IN ('Duplicata','Modification POST'))",
+        [$site_id, $date, $date]
     );
 
     $primo      = ['VP' => ['vehicules' => 0, 'plaques' => 0], 'CAM' => ['vehicules' => 0, 'plaques' => 0],
@@ -57,20 +63,23 @@ function op_calc_jour_site(int $site_id, string $date): array {
 
     if (!empty($poses)) {
         // Véhicules (immat/VIN) du site ayant une désactivation Duplicata ou
-        // Modification POST antérieure au jour comparé — peu importe quand.
+        // Modification POST jusqu'au jour comparé COMPRIS — désactivation et
+        // réimpression peuvent tomber le même jour (« < » les comptait en
+        // Primo). Lues de la plus ancienne à la plus récente : la dernière
+        // désactivation décide du type (un duplicata d'il y a trois mois ne
+        // fait pas d'une post-immat d'aujourd'hui un duplicata).
         $desact = db_fetch_all(
-            "SELECT DISTINCT immatriculation, vin, type_desactivation
+            "SELECT immatriculation, vin, type_desactivation
              FROM import_optoplate
              WHERE site_id=? AND type_desactivation IN ('Duplicata','Modification POST')
-               AND date_desactivation < ?",
+               AND date_desactivation <= ?
+             ORDER BY date_desactivation, id",
             [$site_id, $date]
         );
-        $dup_vehicules = []; $pi_vehicules = [];
+        $type_vehicule = [];
         foreach ($desact as $d) {
-            $cles = array_filter([trim((string)$d['immatriculation']), trim((string)$d['vin'])]);
-            foreach ($cles as $cle) {
-                if ($d['type_desactivation'] === 'Duplicata') $dup_vehicules[$cle] = true;
-                else $pi_vehicules[$cle] = true;
+            foreach (array_filter([trim((string)$d['immatriculation']), trim((string)$d['vin'])]) as $cle) {
+                $type_vehicule[$cle] = $d['type_desactivation'];
             }
         }
 
@@ -87,10 +96,11 @@ function op_calc_jour_site(int $site_id, string $date): array {
         }
 
         foreach ($vehicules_jour as $cle => $v) {
-            if (isset($dup_vehicules[$cle])) {
+            $type_desact = $type_vehicule[$cle] ?? null;
+            if ($type_desact === 'Duplicata') {
                 $duplicata['vehicules']++;
                 $duplicata['plaques'] += $v['nb_plaques'];
-            } elseif (isset($pi_vehicules[$cle])) {
+            } elseif ($type_desact === 'Modification POST') {
                 $post_immat['vehicules']++;
                 $post_immat['plaques'] += $v['nb_plaques'];
             } else {
@@ -198,11 +208,13 @@ function op_comparer_point(array $point): array {
         $endommages[] = ['etape' => $et, 'coordinateur' => $c, 'optoplate' => $o, 'ecart' => $ecart];
     }
 
-    // Films par bobine : total déclaré par le coordinateur (utilisés +
-    // endommagés, comme pour le reste du point) vs plaques posées du jour
-    // comptées par OptoPlate sur le même n° de bobine.
+    // Films par bobine : films UTILISÉS déclarés par le coordinateur vs
+    // plaques posées du jour comptées par OptoPlate sur le même n° de
+    // bobine. Les films endommagés correspondent aux incidents OptoPlate
+    // (plaques jamais posées), comparés à part étape par étape : les
+    // ajouter ici créait un écart à chaque film endommagé.
     $coord_bobine_rows = db_fetch_all(
-        "SELECT b.numero, SUM(fu.films_utilises + fu.films_endommages) AS n
+        "SELECT b.numero, SUM(fu.films_utilises) AS n
          FROM op_films_utilises fu JOIN op_bobines b ON b.id = fu.bobine_id
          WHERE fu.point_id=? GROUP BY b.numero",
         [(int)$point['id']]

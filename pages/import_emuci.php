@@ -270,19 +270,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                                 $get('Ancien Plate') ?: null,
                                 $get('Type de désactivation') ?: null,
                                 $get('Motif de désactivation') ?: null,
-                                emuci_parse_date_fr($get('Date de désactivation')),
+                                // colonne DATE : la partie heure tronquée par MySQL
+                                // ferait un avertissement (refusé en mode strict)
+                                ($dd = emuci_parse_date_fr($get('Date de désactivation'))) ? substr($dd, 0, 10) : null,
                             ]);
                         }
 
                         if ($peut_upsert) {
+                            // MySQL : ON DUPLICATE KEY sur l'index unique de
+                            // num_consommable (migration_optoplate_desactivations_mysql.sql) —
+                            // les NULL ne s'y heurtent jamais, comme l'index partiel de main.
                             $set_sql = implode(',', array_map(
-                                fn($c) => "$c=EXCLUDED.$c",
+                                fn($c) => "$c=VALUES($c)",
                                 array_diff($cols_opto, ['import_session_id','num_consommable'])
                             ));
                             db_query(
                                 "INSERT INTO import_optoplate (" . implode(',', $cols_opto) . ")
                                  VALUES (" . implode(',', array_fill(0, count($cols_opto), '?')) . ")
-                                 ON CONFLICT (num_consommable) WHERE num_consommable IS NOT NULL DO UPDATE SET $set_sql",
+                                 ON DUPLICATE KEY UPDATE $set_sql",
                                 $vals_opto
                             );
                         } else {
