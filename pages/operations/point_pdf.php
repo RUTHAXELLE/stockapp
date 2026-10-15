@@ -73,7 +73,7 @@ $statut_lbl = [
     'brouillon'              => 'Brouillon',
     'en_attente_validation'  => 'En attente de validation',
     'valide'                 => 'Validé',
-    'rejete'                 => 'Rejeté',
+    'rejete'                 => 'Modification demandée',
     'suivi'                  => 'Suivi',
 ];
 
@@ -482,10 +482,10 @@ ob_start();
   </div>
   <?php endif; ?>
 
-  <!-- Motif rejet -->
+  <!-- Motif de la demande de modification -->
   <?php if(!empty($point['motif_rejet'])): ?>
   <div class="section">
-    <div class="section-title">Motif de rejet</div>
+    <div class="section-title">Motif de la demande de modification</div>
     <div class="rejet-box"><?= h($point['motif_rejet']) ?></div>
   </div>
   <?php endif; ?>

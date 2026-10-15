@@ -118,11 +118,11 @@ function vsm_attente(?array $point, ?string $import): array {
     $motif = trim((string)($point['motif_rejet'] ?? ''));
     return match ($point['statut']) {
         'brouillon' => $motif !== ''
-            ? ['code' => 'brouillon', 'libelle' => "Point 18h rejeté, corrigé mais pas resoumis (motif du rejet : $motif)"]
+            ? ['code' => 'brouillon', 'libelle' => "Point 18h corrigé après une demande de modification, mais pas renvoyé (motif : $motif)"]
             : ['code' => 'brouillon', 'libelle' => 'Point 18h en brouillon, pas encore soumis'],
         'en_attente_validation', 'suivi'
                     => ['code' => 'soumis', 'libelle' => 'Point 18h soumis, en attente du superviseur'],
-        'rejete'    => ['code' => 'rejete', 'libelle' => 'Point 18h rejeté par le superviseur' . ($motif !== '' ? " — motif : $motif" : '')],
+        'rejete'    => ['code' => 'rejete', 'libelle' => 'Modification demandée par le superviseur sur le point 18h' . ($motif !== '' ? " — motif : $motif" : '')],
         'valide'    => $import === null
             ? ['code' => 'import', 'libelle' => 'Point 18h validé, import EMUCI attendu']
             : ['code' => 'relancer', 'libelle' => 'Point 18h validé et import fait, comparaison pas encore lancée'],
