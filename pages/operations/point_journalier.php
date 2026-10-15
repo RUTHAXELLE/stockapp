@@ -252,11 +252,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // Calculs automatiques
         $total_engins  = $nb_vp + $nb_camion + $nb_semi + $nb_moto;
         $total_plaques = ($nb_vp * 2) + ($nb_camion * 2) + ($nb_semi * 1) + ($nb_moto * 1);
-        $moy_prod      = $heures > 0 ? round($total_engins / $heures, 1) : 0;
         $total_engins_dup   = $nb_vp_dup + $nb_camion_dup + $nb_semi_dup + $nb_moto_dup;
         $total_plaques_dup  = ($nb_vp_dup * 2) + ($nb_camion_dup * 2) + ($nb_semi_dup * 1) + ($nb_moto_dup * 1);
         $total_engins_pi    = $nb_vp_pi + $nb_camion_pi + $nb_semi_pi + $nb_moto_pi;
         $total_plaques_pi   = ($nb_vp_pi * 2) + ($nb_camion_pi * 2) + ($nb_semi_pi * 1) + ($nb_moto_pi * 1);
+        // V/H sur tous les engins posés : Primo/Re-Immatriculation +
+        // Duplicatas + Post-Immat (15/10/2026 — sur un site en
+        // Re-Immatriculation, la seule première section sous-estimait la
+        // production horaire). Sans effet sur un site Primo (0 + 0).
+        $moy_prod      = $heures > 0 ? round(($total_engins + $total_engins_dup + $total_engins_pi) / $heures, 1) : 0;
 
         // Pré-vérifier si c'est une mise à jour (pour ajuster le check stock en conséquence)
         $existing_pre = db_fetch_one(
@@ -2290,7 +2294,13 @@ function recalcule(){
   const totalEclate = eclateUtil + eclateEnd;
   const totalRivets = totalGonfl + totalEclate;
   const heures = parseFloat(document.getElementById('p-heures')?.value||8);
-  const moy    = heures>0 ? (engins/heures).toFixed(1) : 0;
+  // V/H sur tous les engins posés (Duplicatas et Post-Immat compris) —
+  // même calcul que l'enregistrement du point.
+  let enginsExtra = 0;
+  ['DUP','PI'].forEach(s => TYPES_V.forEach(tv => {
+    enginsExtra += parseInt(document.getElementById('nb-'+tv.code+'-'+s)?.value||0);
+  }));
+  const moy    = heures>0 ? ((engins+enginsExtra)/heures).toFixed(1) : 0;
 
   document.getElementById('c-engins').textContent=engins;
   document.getElementById('c-plaques').textContent=plaques;
@@ -2332,6 +2342,7 @@ function recalculeExtra(){
     if(eEl) eEl.textContent=engins;
     if(pEl) pEl.textContent=plaques;
   });
+  recalcule();   // le V/H compte aussi les duplicatas et post-immat
 }
 
 // ── CHARGER STOCK RIVETS
