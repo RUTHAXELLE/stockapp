@@ -9,6 +9,7 @@ require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/referentiels.php';
+require_once __DIR__ . '/../includes/validation_stock.php';
 
 require_auth();
 
@@ -130,96 +131,13 @@ function _verifier_coherence_optoplate(string $date_import, int $user_id): array
     return $resultats;
 }
 
+// Déclencheur « import » de la validation stock jour (includes/
+// validation_stock.php) : chaque site dont le point 18h de la date est
+// validé par le superviseur est comparé à CET import. L'ancienne version
+// comparait toutes les bobines actives du site au dernier import, sans
+// exiger un point 18h, et renvoyait l'alerte GSB à chaque réimport.
 function _auto_valider_stock(string $date_import, int $user_id): array {
-    $resultats = [];
-
-    // Nettoyer TOUS les records créés par un import précédent (gsb_user_id IS NULL)
-    // pour cette date avant de recréer uniquement les valides.
-    // Les décisions humaines (gsb_user_id IS NOT NULL) ne sont jamais touchées.
-    db_query(
-        "DELETE FROM validations_stock_matin WHERE date_validation=? AND gsb_user_id IS NULL",
-        [$date_import]
-    );
-
-    // Tous les sites ayant des bobines actives
-    $sites_avec_data = db_fetch_all(
-        "SELECT DISTINCT b.site_id FROM op_bobines b WHERE b.statut IN ('en_cours','en_stock') AND b.site_id IS NOT NULL"
-    );
-    foreach ($sites_avec_data as $s) {
-        $site_id = (int)$s['site_id'];
-
-        // Sans PJ validé, films_restants n'est pas à jour → pas de comparaison possible
-        $has_pj = (int)db_fetch_value(
-            "SELECT COUNT(*) FROM op_points_journaliers WHERE site_id=? AND date_point=? AND statut='valide'",
-            [$site_id, $date_import]
-        );
-        if (!$has_pj) continue;
-
-        // Comparer films_restants (ERP EMUCI, mis à jour par le PJ)
-        // vs stock_systeme (EMUCI, mis à jour par l'import OptoTrace)
-        $bobines = db_fetch_all(
-            "SELECT b.id, b.numero, b.stock_systeme, b.films_restants
-             FROM op_bobines b WHERE b.site_id=? AND b.statut IN ('en_cours','en_stock')",
-            [$site_id]
-        );
-        if (empty($bobines)) continue;
-
-        $ecarts = [];
-        foreach ($bobines as $b) {
-            $ecart = (int)$b['films_restants'] - (int)$b['stock_systeme'];
-            if ($ecart !== 0) {
-                $ecarts[] = [
-                    'bobine_id'      => $b['id'],
-                    'numero'         => $b['numero'],
-                    'stock_systeme'  => (int)$b['stock_systeme'],
-                    'films_restants' => (int)$b['films_restants'],
-                    'ecart'          => $ecart,
-                ];
-            }
-        }
-
-        $nb_ecarts = count($ecarts);
-        $site_nom  = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$site_id]);
-
-        if ($nb_ecarts === 0) {
-            // films_restants = stock_systeme → validation automatique
-            db_query(
-                "INSERT INTO validations_stock_matin (site_id,date_validation,statut,nb_ecarts,gsb_user_id,gsb_at)
-                 VALUES (?,?,'valide_auto',0,?,NOW())
-                 ON DUPLICATE KEY UPDATE
-                   statut      = IF(gsb_user_id IS NULL, 'valide_auto', statut),
-                   nb_ecarts   = IF(gsb_user_id IS NULL, 0, nb_ecarts),
-                   gsb_at      = IF(gsb_user_id IS NULL, NOW(), gsb_at),
-                   gsb_user_id = IF(gsb_user_id IS NULL, VALUES(gsb_user_id), gsb_user_id)",
-                [$site_id, $date_import, $user_id]
-            );
-            $coords = db_fetch_all(
-                "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug='coordinateur_site' AND u.site_id=? AND u.actif=1",
-                [$site_id]
-            );
-            foreach ($coords as $c) {
-                db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
-                    [$c['id'],'info','✅ Stock validé',
-                     "Votre stock bobines du $date_import est validé automatiquement.",
-                     '/pages/validation_stock_matin.php']);
-            }
-            $resultats[] = ['site_id'=>$site_id,'statut'=>'valide_auto','nb_ecarts'=>0];
-        } else {
-            // Écarts détectés → notifier le GSB pour validation manuelle
-            // Ne pas créer de record refuse automatique : c'est au GSB de décider
-            $gsb_users = db_fetch_all(
-                "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug IN ('gestionnaire_stock_bobines','admin','superadmin') AND u.actif=1"
-            );
-            foreach ($gsb_users as $gsb) {
-                db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
-                    [$gsb['id'],'info','⚠️ Écart stock détecté',
-                     "Import du $date_import — Site $site_nom : $nb_ecarts écart(s) ERP EMUCI / EMUCI. Validation requise.",
-                     '/pages/validation_stock_matin.php']);
-            }
-            $resultats[] = ['site_id'=>$site_id,'statut'=>'ecart_detecte','nb_ecarts'=>$nb_ecarts];
-        }
-    }
-    return $resultats;
+    return vsm_evaluer_import($date_import, $user_id);
 }
 
 // ============================================================
@@ -594,7 +512,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                     // Déclencher validation automatique
                     $auto_resultats = _auto_valider_stock($date_import, $user['id']);
                     $nb_valide_auto  = count(array_filter($auto_resultats, fn($r) => $r['statut'] === 'valide_auto'));
-                    $nb_bloque       = count(array_filter($auto_resultats, fn($r) => $r['statut'] === 'bloque'));
+                    // Sites en écart : le GSB est alerté (l'ancien compteur visait un statut
+                    // « bloque » que la fonction ne renvoyait jamais — toujours 0).
+                    $nb_bloque       = count(array_filter($auto_resultats, fn($r) => $r['statut'] === 'ecart'));
 
                     $result_optotrace = [
                         'nb_ok'          => $nb_ok,
@@ -607,7 +527,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                         'nb_bloque'      => $nb_bloque,
                     ];
                     $auto_msg = $nb_valide_auto > 0 ? " · ✅ $nb_valide_auto site(s) validé(s) auto" : '';
-                    $bloc_msg = $nb_bloque      > 0 ? " · ⚠️ $nb_bloque site(s) bloqué(s)" : '';
+                    $bloc_msg = $nb_bloque      > 0 ? " · ⚠️ $nb_bloque site(s) en écart, GSB alerté" : '';
                     $stock_msg = $nb_stock_maj  > 0 ? " · 🔄 $nb_stock_maj bobine(s) mises à jour" : '';
                     $msg_optotrace = ['type'=>'success',
                         'text'=>"Import terminé : $nb_ok lignes importées.".($nb_err?" ($nb_err ignorées)":'').$stock_msg.$auto_msg.$bloc_msg];
@@ -875,7 +795,7 @@ include __DIR__ . '/../templates/header.php';
     <div class="irb-stat"><div class="irb-stat-val" style="color:#059669"><?= $result_optotrace['nb_valide_auto'] ?></div><div class="irb-stat-lbl">Sites validés auto</div></div>
     <?php endif; ?>
     <?php if($result_optotrace['nb_bloque']>0): ?>
-    <div class="irb-stat"><div class="irb-stat-val" style="color:#D97706"><?= $result_optotrace['nb_bloque'] ?></div><div class="irb-stat-lbl">Sites bloqués</div></div>
+    <div class="irb-stat"><div class="irb-stat-val" style="color:#D97706"><?= $result_optotrace['nb_bloque'] ?></div><div class="irb-stat-lbl">Sites en écart (GSB alerté)</div></div>
     <?php endif; ?>
     <div class="irb-stat"><div class="irb-stat-val" style="font-size:15px"><?= fmt_date($result_optotrace['date'],'d/m/Y') ?></div><div class="irb-stat-lbl">Date import</div></div>
   </div>

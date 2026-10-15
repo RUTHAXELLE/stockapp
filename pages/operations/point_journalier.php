@@ -9,6 +9,7 @@ require_once __DIR__ . '/../../includes/helpers.php';
 require_once __DIR__ . '/../../includes/notifications.php';
 require_once __DIR__ . '/../../includes/point_emuci_corrections.php';
 require_once __DIR__ . '/../../includes/inventaire.php';
+require_once __DIR__ . '/../../includes/validation_stock.php';
 
 require_auth();
 require_permission('operations', 'can_read');
@@ -126,10 +127,20 @@ function _pj_restaurer_stock(int $point_id, int $site_id, int $riv_gonfl, int $r
     }
 }
 
+// Le coordinateur ne saisit pas de nouveau point tant que la journée
+// précédente n'est pas close : son point 18h soumis, validé par le
+// superviseur, puis son stock validé. On regarde le dernier point 18h d'un
+// jour passé, BROUILLON COMPRIS : le filtre « statut != brouillon » laissait
+// passer un point rejeté puis réenregistré sans être resoumis — il
+// redevient brouillon, le contrôle remontait à la veille déjà validée et
+// débloquait le coordinateur (constaté le 15/10/2026). Les points 9h/13h,
+// qui restent en brouillon par construction, ne comptent pas. Chaque cas a
+// son message : le message « GSB » unique parlait d'écart de stock à un
+// coordinateur dont le point avait été rejeté par le superviseur.
 function _site_bloque_ecart(int $site_id, string $date_today): ?string {
     $dernier_point = db_fetch_one(
-        "SELECT date_point FROM op_points_journaliers
-         WHERE site_id=? AND date_point < ? AND statut != 'brouillon'
+        "SELECT date_point, statut, motif_rejet FROM op_points_journaliers
+         WHERE site_id=? AND date_point < ? AND type_point='point_18h'
          ORDER BY date_point DESC LIMIT 1",
         [$site_id, $date_today]
     );
@@ -138,14 +149,31 @@ function _site_bloque_ecart(int $site_id, string $date_today): ?string {
     // Un inventaire de bobines validé depuis ce point a rétabli le stock du
     // site : la validation de ce jour-là ne décide plus de rien.
     if (inv_bobines_recompte_apres($site_id, $date_prec)) return null;
+    $jour  = date('d/m/Y', strtotime($date_prec));
+    $motif = trim((string)($dernier_point['motif_rejet'] ?? ''));
+    switch ($dernier_point['statut']) {
+        case 'brouillon':
+            return $motif !== ''
+                ? "📝 Votre point 18h du $jour, rejeté puis corrigé, n'a pas été soumis à nouveau. Soumettez-le au superviseur avant de saisir un nouveau point."
+                : "📝 Votre point 18h du $jour est resté en brouillon. Soumettez-le au superviseur (ou supprimez-le s'il est en trop) avant de saisir un nouveau point.";
+        case 'rejete':
+            return "❌ Votre point 18h du $jour a été rejeté par le superviseur" . ($motif !== '' ? " — motif : $motif" : '')
+                 . ". Corrigez-le et soumettez-le à nouveau avant de saisir un nouveau point.";
+        case 'en_attente_validation':
+        case 'suivi':
+            return "⏳ Votre point 18h du $jour attend la validation du superviseur. Vous pourrez saisir un nouveau point une fois votre stock validé.";
+    }
     $validation = db_fetch_one(
         "SELECT statut FROM validations_stock_matin WHERE site_id=? AND date_validation=?",
         [$site_id, $date_prec]
     );
-    if (!$validation)
-        return "⚠️ Votre stock du ".date('d/m/Y', strtotime($date_prec))." n'a pas encore été validé par le GSB. Vous ne pouvez pas saisir un nouveau point journalier tant que les écarts ne sont pas résolus.";
+    if (!$validation) {
+        if (!vsm_import_du($site_id, $date_prec))
+            return "⏳ Votre point 18h du $jour est validé ; votre stock sera comparé dès l'import EMUCI de cette date. Vous pourrez saisir un nouveau point une fois votre stock validé.";
+        return "⚠️ Votre stock du $jour n'a pas encore été validé par le GSB. Vous ne pouvez pas saisir un nouveau point journalier tant que les écarts ne sont pas résolus.";
+    }
     if ($validation['statut'] === 'refuse')
-        return "🚫 Le GSB a bloqué votre activité suite à un écart non résolu sur le stock du ".date('d/m/Y', strtotime($date_prec)).". Contactez votre gestionnaire stock.";
+        return "🚫 Le GSB a bloqué votre activité suite à un écart non résolu sur le stock du $jour. Contactez votre gestionnaire stock.";
     return null;
 }
 
@@ -670,6 +698,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!$point) json_response(false, 'Point introuvable.');
         if (($point['created_by'] ?? 0) != $user['id']) json_response(false, 'Accès refusé.');
         if ($point['statut'] !== 'brouillon') json_response(false, 'Ce point ne peut plus être modifié.');
+        // Le point 18h se soumet au superviseur, il ne s'autovalide pas :
+        // l'écran ne propose ce bouton que pour 9h/13h, le serveur ne le
+        // vérifiait pas — une validation par le coordinateur aurait ouvert
+        // la comparaison du stock sans le superviseur.
+        if (($point['type_point'] ?? '') === 'point_18h')
+            json_response(false, 'Le point 18h se soumet au superviseur pour validation.');
         if ($manque = _pj_elements_manquants($point)) json_response(false, _pj_msg_manquants($manque));
         db_query("UPDATE op_points_journaliers SET statut='valide', validated_by=?, validated_at=NOW() WHERE id=?",
             [$user['id'], $point_id]);
@@ -717,7 +751,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                  '/pages/operations/point_journalier.php']);
         }
         audit_log($user['id'], 'UPDATE', 'operations', $point_id, "Validation point journalier #$point_id");
-        json_response(true, 'Point validé.');
+        // Déclencheur de la validation stock jour : si l'import EMUCI de
+        // cette date est déjà là, la comparaison se fait maintenant (sinon
+        // c'est l'import qui la lancera). Un incident de comparaison ne doit
+        // pas faire croire que la validation du point a échoué : elle est
+        // faite, le GSB pourra relancer la comparaison.
+        $msg_stock = '';
+        if (($point['type_point'] ?? '') === 'point_18h') {
+            try {
+                $eval = vsm_evaluer_site((int)$point['site_id'], (string)$point['date_point'], (int)$user['id'], 'validation_superviseur');
+                $msg_stock = match ($eval['statut']) {
+                    'valide_auto' => ' Stock comparé à l\'import EMUCI : conforme, validé automatiquement.',
+                    'ecart'       => " Stock comparé à l'import EMUCI : {$eval['nb_ecarts']} écart(s), le GSB est alerté.",
+                    'en_attente'  => ' Le stock sera comparé dès l\'import EMUCI de cette date.',
+                    default       => '',
+                };
+            } catch (Throwable $e) {
+                error_log('validation stock jour, point #' . $point_id . ' : ' . $e->getMessage());
+                $msg_stock = ' La comparaison du stock n\'a pas pu être faite : le GSB peut la relancer depuis la validation stock jour.';
+            }
+        }
+        json_response(true, 'Point validé.' . $msg_stock);
     }
 
     // ── REJETER POINT (superviseur) — reverse les déductions stock
