@@ -1224,6 +1224,11 @@ if ($role_slug_pj === 'coordinateur_site' && $user['site_id']) {
 include __DIR__ . '/../../templates/header.php';
 ?>
 <style>
+/* Icône de la semi-remorque : la remorque seule (conteneur à nervures, deux roues). La
+   bibliothèque d'icônes ne l'a pas — « truck-trailer » y dessine un camion avec sa cabine.
+   Masque SVG teinté par currentColor : elle suit la couleur du texte comme les autres icônes. */
+.ph-semi{display:inline-block;width:1em;height:1em;vertical-align:-.125em;background-color:currentColor;
+  -webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20256%20256'%20fill='none'%20stroke='black'%20stroke-width='16'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cg%20transform='translate%280%2C-5%29'%3E%3Cpath%20d='M28%2066H44L54%2078H202L212%2066H228V170H28Z'/%3E%3Cpath%20d='M74%2098V142M110%2098V142M146%2098V142M182%2098V142'/%3E%3Ccircle%20cx='54'%20cy='184'%20r='16'/%3E%3Ccircle%20cx='98'%20cy='184'%20r='16'/%3E%3C/g%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20256%20256'%20fill='none'%20stroke='black'%20stroke-width='16'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cg%20transform='translate%280%2C-5%29'%3E%3Cpath%20d='M28%2066H44L54%2078H202L212%2066H228V170H28Z'/%3E%3Cpath%20d='M74%2098V142M110%2098V142M146%2098V142M182%2098V142'/%3E%3Ccircle%20cx='54'%20cy='184'%20r='16'/%3E%3Ccircle%20cx='98'%20cy='184'%20r='16'/%3E%3C/g%3E%3C/svg%3E") center/contain no-repeat}
 /* ── KPI BAR ── */
 .kpi-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
 .kpi-card{background:white;border:1px solid var(--border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px}
@@ -1632,7 +1637,7 @@ foreach($points as $p):
   $veh = [];
   if($p['nb_vp']>0)     $veh[]="<i class='ph ph-car' aria-hidden='true'></i> {$p['nb_vp']}";
   if($p['nb_camion']>0) $veh[]="<i class='ph ph-truck' aria-hidden='true'></i> {$p['nb_camion']}";
-  if($p['nb_semi']>0)   $veh[]="<i class='ph ph-truck' aria-hidden='true'></i> {$p['nb_semi']}";
+  if($p['nb_semi']>0)   $veh[]="<i class='ph-semi' aria-hidden='true'></i> {$p['nb_semi']}";
   if($p['nb_moto']>0)   $veh[]="<i class='ph ph-motorcycle' aria-hidden='true'></i> {$p['nb_moto']}";
 ?>
 <div class="pj-card<?= $today ? ' today' : '' ?>">
@@ -1830,7 +1835,7 @@ foreach($points as $p):
         </div>
       <div class="point-grid" style="margin-bottom:0">
         <?php
-        $veh_icons = ['VP'=>'<i class="ph ph-car" aria-hidden="true"></i>','CAM'=>'<i class="ph ph-truck" aria-hidden="true"></i>','SEMI'=>'<i class="ph ph-truck" aria-hidden="true"></i>','MOTO'=>'<i class="ph ph-motorcycle" aria-hidden="true"></i>'];
+        $veh_icons = ['VP'=>'<i class="ph ph-car" aria-hidden="true"></i>','CAM'=>'<i class="ph ph-truck" aria-hidden="true"></i>','SEMI'=>'<i class="ph-semi" aria-hidden="true"></i>','MOTO'=>'<i class="ph ph-motorcycle" aria-hidden="true"></i>'];
         $veh_colors= ['VP'=>'#e3f2fd','CAM'=>'#e8f5e9','SEMI'=>'#fff3e0','MOTO'=>'#fce4ec'];
         foreach($types_v as $tv):
         ?>
@@ -3035,7 +3040,7 @@ function updatePreview(engins,plaques,moy){
   document.getElementById('prev-stats').innerHTML=[
     ['<i class="ph ph-car" aria-hidden="true"></i>',document.getElementById('nb-VP')?.value||0,'VP'],
     ['<i class="ph ph-truck" aria-hidden="true"></i>',document.getElementById('nb-CAM')?.value||0,'Camion'],
-    ['<i class="ph ph-truck" aria-hidden="true"></i>',document.getElementById('nb-SEMI')?.value||0,'Semi'],
+    ['<i class="ph-semi" aria-hidden="true"></i>',document.getElementById('nb-SEMI')?.value||0,'Semi'],
     ['<i class="ph ph-motorcycle" aria-hidden="true"></i>',document.getElementById('nb-MOTO')?.value||0,'Moto'],
   ].map(([i,v,l])=>`<div class="pp-stat"><div class="psv">${v}</div><div class="psl">${i} ${l}</div></div>`).join('');
   const detail=TYPES_V.map(tv=>{
@@ -3147,7 +3152,7 @@ async function viewPoint(id){
   const dateStr = new Date(p.date_point).toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
 
   // Véhicules
-  const vehs=[['🚗','VP',p.nb_vp],['🚛','Camion',p.nb_camion],['🚚','Semi',p.nb_semi],['🏍️','Moto',p.nb_moto]];
+  const vehs=[['<i class="ph ph-car" aria-hidden="true"></i>','VP',p.nb_vp],['<i class="ph ph-truck" aria-hidden="true"></i>','Camion',p.nb_camion],['<i class="ph-semi" aria-hidden="true"></i>','Semi',p.nb_semi],['<i class="ph ph-motorcycle" aria-hidden="true"></i>','Moto',p.nb_moto]];
   const vehCards = vehs.map(([ic,lb,nb])=>`
     <div style="background:${nb>0?'#e3f2fd':'#f8fafc'};border-radius:10px;padding:12px;text-align:center;border:1px solid ${nb>0?'#90caf9':'#e2e8f0'}">
       <div style="font-size:20px">${ic}</div>
@@ -3164,7 +3169,7 @@ async function viewPoint(id){
     <div style="margin-bottom:20px">
       <div style="font-size:12px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">${lbl}</div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
-        ${[['🚗','VP',vp],['🚛','Camion',cam],['🚚','Semi',semi],['🏍️','Moto',moto]].map(([ic,lb,nb])=>`
+        ${[['<i class="ph ph-car" aria-hidden="true"></i>','VP',vp],['<i class="ph ph-truck" aria-hidden="true"></i>','Camion',cam],['<i class="ph-semi" aria-hidden="true"></i>','Semi',semi],['<i class="ph ph-motorcycle" aria-hidden="true"></i>','Moto',moto]].map(([ic,lb,nb])=>`
         <div style="background:${bg};border-radius:10px;padding:12px;text-align:center;border:1px solid ${color}33">
           <div style="font-size:20px">${ic}</div>
           <div style="font-family:'Montserrat',sans-serif;font-size:20px;font-weight:900;color:${color}">${nb||0}</div>
@@ -3442,7 +3447,7 @@ function validerPoint(id, date){
 // ── Comparaison OptoPlate (plan 15/10/2026) : coordinateur / OptoPlate / écart,
 // avant que le superviseur ne valide un point 18h.
 const ETAPE_LBL_COMP = {verification:'À la vérification',impression:"À l'impression",lamination:'À la lamination',percee:'À la percée',fissuree:'Plaque fissurée'};
-const VEH_ICON_COMP = {VP:'ph-car', CAM:'ph-truck', SEMI:'ph-truck', MOTO:'ph-motorcycle'};
+const VEH_ICON_COMP = {VP:'ph-car', CAM:'ph-truck', SEMI:'ph-semi', MOTO:'ph-motorcycle'};
 const VEH_BG_COMP   = {VP:'#e3f2fd', CAM:'#e8f5e9', SEMI:'#fff3e0', MOTO:'#fce4ec'};
 const VEH_FG_COMP   = {VP:'#1565c0', CAM:'#2e7d32', SEMI:'#e65100', MOTO:'#ad1457'};
 
