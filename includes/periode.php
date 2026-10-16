@@ -33,7 +33,10 @@
 //  produit deja l'annee/semaine ISO, donc aucun changement necessaire la.
 // ============================================================
 
-function periode_contexte(): array {
+// $avec_tout : l'écran propose, dans le filtre annuel, « Depuis le début de l'activité »
+// (annee=tout). Réservé aux écrans qui savent l'afficher : pour les autres, annee=tout
+// est ignoré et on retombe sur l'année en cours.
+function periode_contexte(bool $avec_tout = false): array {
     $mc = ['01'=>'Jan','02'=>'Fév','03'=>'Mar','04'=>'Avr','05'=>'Mai','06'=>'Juin',
            '07'=>'Juil','08'=>'Aoû','09'=>'Sep','10'=>'Oct','11'=>'Nov','12'=>'Déc'];
     $ml = ['01'=>'Janvier','02'=>'Février','03'=>'Mars','04'=>'Avril','05'=>'Mai','06'=>'Juin',
@@ -68,6 +71,17 @@ function periode_contexte(): array {
                          .fmt_date($lundi,'d/m').' au '.fmt_date($dimanche,'d/m/Y'),
               'libelle_prec'=>'Semaine '.substr($prec,-2),
               'mot'=>'cette semaine', 'annee'=>(int)date('o', strtotime($jour))];
+    } elseif ($periode === 'annuel' && $avec_tout && ($_GET['annee'] ?? '') === 'tout') {
+        // Depuis le premier point de l'ERP. Le « format » de période est une simple
+        // constante : tous les TO_CHAR/DATE_FORMAT(date, fmt) = val de l'écran valent
+        // 'tout' et retiennent donc toutes les lignes, sans toucher aux requêtes.
+        // Aucune période précédente (val_prec ne correspond à rien). `annee` reste
+        // l'année en cours pour ce qui est propre à un exercice (budget, trimestres).
+        $premier = db_fetch_value("SELECT MIN(date_point) FROM op_points_journaliers WHERE statut <> 'brouillon'");
+        $c = ['date_fmt'=>'tout', 'val'=>'tout', 'val_prec'=>'aucune',
+              'du'=>$premier ?: $annee_min.'-01-01', 'au'=>$annee_max.'-12-31',
+              'libelle'=>"Depuis le début de l'activité", 'libelle_prec'=>'—',
+              'mot'=>'depuis le début', 'annee'=>$annee_max, 'tout'=>true];
     } elseif ($periode === 'annuel') {
         $an = (int)($_GET['annee'] ?? $annee_max);
         if ($an < 2000 || $an > 2100) $an = $annee_max;
@@ -85,7 +99,7 @@ function periode_contexte(): array {
               'mot'=>'ce mois', 'annee'=>(int)substr($mois,0,4)];
     }
 
-    return $c + ['periode'=>$periode, 'mois'=>$mois, 'jour'=>$jour,
+    return $c + ['tout'=>false, 'periode'=>$periode, 'mois'=>$mois, 'jour'=>$jour,
                  'annee_min'=>$annee_min, 'annee_max'=>$annee_max];
 }
 

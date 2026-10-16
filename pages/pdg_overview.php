@@ -24,7 +24,7 @@ $active_page = 'pdg_overview';
 // et les comparaisons à la période précédente en aval restent inchangés
 // (cf. includes/periode.php — date_fmt en tokens MySQL sur cette branche,
 // pas les tokens TO_CHAR de main).
-$P = periode_contexte();
+$P = periode_contexte(true);   // true : propose « Depuis le début » dans le filtre annuel
 $periode          = $P['periode'];
 $date_fmt         = $P['date_fmt'];
 $periode_val      = $P['val'];
@@ -806,9 +806,10 @@ include __DIR__ . '/../templates/header.php';
         <option value="annuel"<?= $periode==='annuel' ? ' selected' : '' ?>>Annuel</option>
       </select>
       <?php if ($periode === 'annuel'): ?>
-      <select name="annee" class="month-inp" onchange="this.form.submit()" title="Choisir l'année">
+      <select name="annee" class="month-inp" onchange="this.form.submit()" title="Choisir l'année, ou toute l'activité">
+        <option value="tout"<?= !empty($P['tout']) ? ' selected' : '' ?>>Depuis le début de l'activité</option>
         <?php for ($_y = $annee_max; $_y >= $annee_min; $_y--): ?>
-        <option value="<?= $_y ?>"<?= $annee_filtre===$_y ? ' selected' : '' ?>><?= $_y ?></option>
+        <option value="<?= $_y ?>"<?= (empty($P['tout']) && $annee_filtre===$_y) ? ' selected' : '' ?>><?= $_y ?></option>
         <?php endfor; ?>
       </select>
       <?php elseif ($periode === 'mensuel'): ?>
@@ -1172,22 +1173,26 @@ include __DIR__ . '/../templates/header.php';
       <div class="kpi-m-val" style="color:#6b21a8"><?= number_format($engins_dup_curr,0,',',' ') ?></div>
       <div class="kpi-m-lbl">Duplicatas posés</div>
     </div>
+    <?php if (empty($P['tout'])): ?>
     <div class="kpi-m">
       <div class="kpi-m-val" style="color:<?= $engins_dup_trend===null?'#5a6678':($engins_dup_trend>=0?'#15803d':'#dc2626') ?>">
         <?= $engins_dup_trend===null ? '—' : (($engins_dup_trend>=0?'+':'').$engins_dup_trend.'%') ?>
       </div>
       <div class="kpi-m-lbl">vs <?= h($mois_prec_lbl) ?></div>
     </div>
+    <?php endif; ?>
     <div class="kpi-m">
       <div class="kpi-m-val" style="color:#9a3412"><?= number_format($engins_pi_curr,0,',',' ') ?></div>
       <div class="kpi-m-lbl">Post-Immat posés</div>
     </div>
+    <?php if (empty($P['tout'])): ?>
     <div class="kpi-m">
       <div class="kpi-m-val" style="color:<?= $engins_pi_trend===null?'#5a6678':($engins_pi_trend>=0?'#15803d':'#dc2626') ?>">
         <?= $engins_pi_trend===null ? '—' : (($engins_pi_trend>=0?'+':'').$engins_pi_trend.'%') ?>
       </div>
       <div class="kpi-m-lbl">vs <?= h($mois_prec_lbl) ?></div>
     </div>
+    <?php endif; ?>
   </div>
   <table class="dtbl">
     <thead><tr><th>Site</th><th style="text-align:right">Duplicatas</th><th style="text-align:right">Plaques dup.</th><th style="text-align:right">Post-Immat</th><th style="text-align:right">Plaques PI</th></tr></thead>
