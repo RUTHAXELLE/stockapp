@@ -375,14 +375,16 @@ $SC = ['#1B75BC','#3B4FBE','#7c3aed','#0891b2','#16a34a','#d97706','#e11d48'];
 $site_monthly_raw = db_fetch_all(
     "SELECT s.nom AS site_nom,
             DATE_FORMAT(p.date_point,'%Y-%m') AS mois,
-            COALESCE(SUM(fu.films_utilises),0) AS films,
+            -- Films en sous-requête : la jointure directe sur op_films_utilises
+            -- répétait chaque point autant de fois qu'il avait de bobines, et
+            -- comptait donc ses engins (et sa moyenne) en double.
+            COALESCE(SUM((SELECT SUM(fu.films_utilises) FROM op_films_utilises fu WHERE fu.point_id=p.id)),0) AS films,
             COALESCE(SUM(p.total_engins),0) AS engins,
             COALESCE(ROUND(AVG(NULLIF(p.moyenne_prod,0)),1),0) AS moy_vh
      FROM sites s
      JOIN op_points_journaliers p ON p.site_id=s.id
           AND DATE_FORMAT(p.date_point,'%Y')=?
           AND p.statut != 'brouillon'
-     LEFT JOIN op_films_utilises fu ON fu.point_id=p.id
      WHERE s.actif=1 $sf_s
      GROUP BY s.id, s.nom, DATE_FORMAT(p.date_point,'%Y-%m')
      ORDER BY s.id, mois",
@@ -419,6 +421,33 @@ foreach ($prod_par_site as $i => $s) {
         'films_rest' => $fr,
         'monthly'    => (object)($site_monthly_by_name[$s['nom']] ?? []),
     ];
+}
+// Filtre « Tous les sites » : une entrée cumulée en tête de liste,
+// sélectionnée par défaut — le bloc n'affichait sinon que le 1er site.
+if (!$site_id && count($pfw_sites_json) > 1) {
+    $cumul = [];
+    foreach ($pfw_sites_json as $sj) {
+        foreach ((array)$sj['monthly'] as $mois => $m) {
+            $c = $cumul[$mois] ?? ['films' => 0, 'engins' => 0, 'vh' => []];
+            $c['films']  += $m['films'];
+            $c['engins'] += $m['engins'];
+            if ($m['moy_vh'] > 0) $c['vh'][] = $m['moy_vh'];
+            $cumul[$mois] = $c;
+        }
+    }
+    $monthly_tous = [];
+    foreach ($cumul as $mois => $c)
+        $monthly_tous[$mois] = ['films' => $c['films'], 'engins' => $c['engins'],
+                                'moy_vh' => $c['vh'] ? round(array_sum($c['vh']) / count($c['vh']), 1) : 0];
+    $vh_sites = array_filter(array_column($pfw_sites_json, 'moy_vh'), fn($v) => $v > 0);
+    array_unshift($pfw_sites_json, [
+        'name'       => 'Tous les sites',
+        'color'      => '#06033A',
+        'moy_vh'     => $vh_sites ? round(array_sum($vh_sites) / count($vh_sites), 1) : 0,
+        'films_mois' => array_sum(array_column($pfw_sites_json, 'films_mois')),
+        'films_rest' => array_sum($films_rest_by_site) ?: (int)($bobines_stats['films_restants'] ?? 0),
+        'monthly'    => (object)$monthly_tous,
+    ]);
 }
 $js_pfw_sites    = json_encode($pfw_sites_json);
 $pfw_quarter_def = $periode === 'annuel'
