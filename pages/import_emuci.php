@@ -266,6 +266,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                 } else {
                     set_time_limit(0);
                     $nb_ok = 0; $nb_err = 0; $sites_inconnus = [];
+                    $jours_pose = [];   // jour d'installation => nb de plaques posées dans le fichier
 
                     // Un seul fichier OptoPlate porte à la fois les poses et les
                     // désactivations (une ligne par plaque, mise à jour dans le temps) —
@@ -348,9 +349,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                             );
                         }
                         $nb_ok++;
+                        if ($statut === 'in_use' && $date_install) {
+                            $j = substr($date_install, 0, 10);
+                            $jours_pose[$j] = ($jours_pose[$j] ?? 0) + 1;
+                        }
                     }
 
                     db_commit();
+                    ksort($jours_pose);
 
                     db_query("UPDATE import_sessions_emuci SET statut='termine',nb_lignes_optoplate=?,nb_erreurs=? WHERE id=?",
                         [$nb_ok,$nb_err,$session_id]);
@@ -367,6 +373,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                         'session_id' => $session_id, 'date' => $date_import,
                         'nb_valide_auto'  => $nb_valide_auto,
                         'nb_incoherent'   => $nb_incoherent,
+                        'jours_pose'      => $jours_pose,
                     ];
                     $incoh_msg = $nb_incoherent>0?" · ⚠️ $nb_incoherent site(s) avec incohérence plaques — coordinateur(s) notifié(s)":'';
                     $msg_optoplate = ['type'=>'success','text'=>"Import terminé : $nb_ok plaques importées.".($nb_err?" ($nb_err ignorées)":'').$incoh_msg];
@@ -637,6 +644,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
 // DONNÉES — COMPARAISON & HISTORIQUE
 // ============================================================
 $f_date = trim($_GET['date'] ?? date('Y-m-d'));
+// Juste après un import, l'écran se place sur la dernière journée de pose contenue dans le
+// fichier : les plaques « posées » sont comptées sur leur date d'installation, donc sur
+// « aujourd'hui » un export du 14/10 donnait « Aucune donnée » alors qu'il était bien importé.
+if (!isset($_GET['date']) && !empty($result_optoplate)) {
+    $f_date = $result_optoplate['jours_pose'] ? array_key_last($result_optoplate['jours_pose']) : $result_optoplate['date'];
+}
 $f_site = (int)($_GET['site'] ?? 0);
 $onglet = $_GET['tab'] ?? 'optoplate';
 
@@ -860,6 +873,16 @@ include __DIR__ . '/../templates/header.php';
     <?php endif; ?>
     <div class="irb-stat"><div class="irb-stat-val" style="font-size:15px"><?= fmt_date($result_optoplate['date'],'d/m/Y') ?></div><div class="irb-stat-lbl">Date import</div></div>
   </div>
+  <?php if(!empty($result_optoplate['jours_pose'])): $jp = $result_optoplate['jours_pose']; ?>
+  <div style="margin-top:12px;font-size:13px">
+    <strong>Plaques posées du <?= fmt_date(array_key_first($jp),'d/m/Y') ?> au <?= fmt_date(array_key_last($jp),'d/m/Y') ?></strong>
+    <?= count($jp) > 1 ? '(' . count($jp) . ' jours)' : '' ?> — afficher le jour :
+    <?php foreach(array_slice(array_reverse($jp, true), 0, 10, true) as $j => $n): ?>
+    <a href="?tab=optoplate&date=<?= h($j) ?>" style="display:inline-block;margin:3px 4px 0 0;padding:3px 10px;border-radius:999px;background:#fff;border:1px solid #34D399;color:#065F46;font-weight:600;text-decoration:none"><?= fmt_date($j,'d/m') ?> · <?= (int)$n ?></a>
+    <?php endforeach; ?>
+    <?php if(count($jp) > 10): ?><span style="color:#64748B">… autres jours : choisissez la date en haut de page.</span><?php endif; ?>
+  </div>
+  <?php endif; ?>
   <?php if(!empty($result_optoplate['sites_inconnus'])): ?>
   <div style="margin-top:10px;font-size:12.5px;color:#92400E"><i class="ph ph-warning" aria-hidden="true"></i> Sites non reconnus : <strong><?= implode(', ', array_map('h',$result_optoplate['sites_inconnus'])) ?></strong></div>
   <?php endif; ?>
