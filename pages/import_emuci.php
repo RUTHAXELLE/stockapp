@@ -64,6 +64,57 @@ function emuci_parse_date_fr(string $v): ?string {
     return $ts !== false ? date('Y-m-d H:i:s', $ts) : null;
 }
 
+// Texte d'un fichier CSV → UTF-8. L'export OptoPlate brut est en UTF-8, mais un fichier
+// ouvert puis réenregistré avec Excel (« CSV (séparateur : point-virgule) ») sort en
+// Windows-1252, et « Texte Unicode » en UTF-16. Lu tel quel, « N°Bobine » devenait
+// « N\xB0Bobine » (octet invalide) : la colonne était déclarée manquante — et, si elle
+// avait été trouvée, les noms de sites accentués auraient été enregistrés illisibles.
+function emuci_csv_vers_utf8(string $s): string {
+    if (str_starts_with($s, "\xFF\xFE")) return mb_convert_encoding(substr($s, 2), 'UTF-8', 'UTF-16LE');
+    if (str_starts_with($s, "\xFE\xFF")) return mb_convert_encoding(substr($s, 2), 'UTF-8', 'UTF-16BE');
+    if (str_starts_with($s, "\xEF\xBB\xBF")) $s = substr($s, 3);
+    return mb_check_encoding($s, 'UTF-8') ? $s : mb_convert_encoding($s, 'UTF-8', 'Windows-1252');
+}
+
+// Clé de comparaison d'un nom de colonne : insensible à la casse, aux accents, aux espaces
+// (dont l'espace insécable) et aux variantes de « ° » et d'apostrophe — « N° Bobine »,
+// « N°Bobine » et « Nº bobine » désignent la même colonne.
+function emuci_cle_entete(string $h): string {
+    static $memo = [];
+    if (isset($memo[$h])) return $memo[$h];
+    $k = mb_strtolower(trim(str_replace(["\xEF\xBB\xBF", "\xC2\xA0"], ['', ' '], $h), " \t\r\n\"\0"), 'UTF-8');
+    $k = strtr($k, [
+        '’' => "'", '‘' => "'", '`' => "'", '´' => "'",
+        'º' => '°', '˚' => '°', 'ᵒ' => '°',
+        'à' => 'a', 'â' => 'a', 'ä' => 'a', 'é' => 'e', 'è' => 'e', 'ê' => 'e', 'ë' => 'e',
+        'î' => 'i', 'ï' => 'i', 'ô' => 'o', 'ö' => 'o', 'ù' => 'u', 'û' => 'u', 'ü' => 'u', 'ç' => 'c',
+    ]);
+    return $memo[$h] = preg_replace('/\s+/u', '', $k);
+}
+
+// Lit un CSV (UTF-8 ou non, délimiteur « ; », « , » ou tabulation) :
+// retourne [entêtes, lignes].
+function emuci_lire_csv(string $chemin): array {
+    $texte = emuci_csv_vers_utf8((string)file_get_contents($chemin));
+    $premiere = strstr($texte, "\n", true);
+    $premiere = $premiere === false ? $texte : $premiere;
+    $delim = ';';
+    $max = substr_count($premiere, ';');
+    foreach ([',', "\t"] as $d) {
+        if (substr_count($premiere, $d) > $max) { $delim = $d; $max = substr_count($premiere, $d); }
+    }
+    $flux = fopen('php://temp', 'r+');
+    fwrite($flux, $texte);
+    rewind($flux);
+    $headers = fgetcsv($flux, 0, $delim);
+    $rows = [];
+    if ($headers) {
+        while (($row = fgetcsv($flux, 0, $delim)) !== false) $rows[] = $row;
+    }
+    fclose($flux);
+    return [$headers ? array_map(fn($h) => trim((string)$h), $headers) : [], $rows];
+}
+
 // Enregistre un site EMUCI inconnu pour traitement ultérieur par l'admin
 function logger_site_inconnu(string $nom_emuci, string $type_import): void {
     if (!$nom_emuci) return;
@@ -175,15 +226,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
             // Lire les lignes selon le format
             $all_rows = [];
             if ($ext === 'csv') {
-                $handle = fopen($tmp, 'r');
-                $headers_raw = fgetcsv($handle, 0, ';');
-                if ($headers_raw) {
-                    while (($row = fgetcsv($handle, 0, ';')) !== false) {
-                        $all_rows[] = $row;
-                    }
-                }
-                fclose($handle);
-                $headers = $headers_raw ? array_map(fn($h) => trim($h, "\"\xEF\xBB\xBF"), $headers_raw) : [];
+                [$headers, $all_rows] = emuci_lire_csv($tmp);
             } else {
                 $autoload = __DIR__ . '/../vendor/autoload.php';
                 if (!file_exists($autoload)) {
@@ -198,7 +241,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                     $rows_raw = $sheet->toArray(null, true, true, false);
                     @unlink($tmp_dest);
                     $headers_raw = $rows_raw[0] ?? [];
-                    $headers = array_map('trim', $headers_raw);
+                    $headers = array_map(fn($h) => trim((string)$h), $headers_raw);
                     $all_rows = array_slice($rows_raw, 1);
                 }
             }
@@ -206,13 +249,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
             if (empty($headers)) {
                 $msg_optoplate = ['type'=>'danger','text'=>'Fichier vide ou invalide.'];
             } else {
-                $col = array_flip($headers);
+                // Index des colonnes par nom normalisé (cf. emuci_cle_entete)
+                $col = [];
+                foreach ($headers as $i => $h) {
+                    $cle = emuci_cle_entete($h);
+                    if ($cle !== '' && !isset($col[$cle])) $col[$cle] = $i;
+                }
 
                 // Colonnes requises
-                $required = ["Date d'installation","Statut plaque","N°Bobine","Nom du site d'installation"];
-                $missing = array_filter($required, fn($r) => !isset($col[$r]));
+                $required = ["Date d'installation","Numéro d'immatriculation","Statut plaque","N°Bobine","Nom du site d'installation"];
+                $missing = array_filter($required, fn($r) => !isset($col[emuci_cle_entete($r)]));
                 if ($missing) {
-                    $msg_optoplate = ['type'=>'danger','text'=>'Colonnes manquantes : '.implode(', ', $missing)];
+                    $msg_optoplate = ['type'=>'danger','text'=>'Colonnes manquantes : '.implode(', ', $missing).
+                        '. Colonnes détectées dans le fichier : '.implode(', ', array_filter($headers, fn($h) => $h !== '')).
+                        '. Vérifiez que c\'est bien l\'export OptoPlate « Plaques posées » et que sa première ligne est la ligne d\'en-têtes.'];
                 } else {
                     set_time_limit(0);
                     $nb_ok = 0; $nb_err = 0; $sites_inconnus = [];
@@ -237,7 +287,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                     db_begin();
                     foreach ($all_rows as $row) {
                         if (count($row) < 5) continue;
-                        $get = fn($k) => trim((string)($row[$col[$k] ?? -1] ?? ''));
+                        $get = fn($k) => trim((string)($row[$col[emuci_cle_entete($k)] ?? -1] ?? ''));
 
                         $date_install = emuci_parse_date_fr($get("Date d'installation"));
                         $immat        = $get("Numéro d'immatriculation");
