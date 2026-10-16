@@ -63,7 +63,14 @@ if ($type==='equipements') {
     if(!empty($_GET['etat'])){$w[]='e.etat=?';$p[]=$_GET['etat'];}
     if(!empty($_GET['site'])){$w[]='e.site_id=?';$p[]=(int)$_GET['site'];}
     $w[]='e.actif=1';
-    $rows=db_fetch_all("SELECT e.numero_chrono,e.numero_serie_interne,e.numero_serie_origine,COALESCE(n.libelle,'—') AS type,e.marque,e.modele,e.etat,s.nom AS site,CONCAT(u.prenom,' ',u.nom) AS utilisateur,e.date_acquisition,e.date_mise_en_service,e.date_fin_cycle,e.observations FROM equipements e LEFT JOIN nomenclatures n ON n.id=e.nomenclature_id LEFT JOIN sites s ON s.id=e.site_id LEFT JOIN users u ON u.id=e.utilisateur_id WHERE ".implode(' AND ',$w)." ORDER BY e.numero_chrono DESC",$p);
+    // Utilisateur = agent de l'Annuaire (equipements.agent_id), à défaut le
+    // compte applicatif historique (utilisateur_id).
+    $agent_ok = db_colonne_existe('equipements', 'agent_id');
+    $col_user = $agent_ok
+        ? "COALESCE(NULLIF(TRIM(CONCAT(ag.nom,' ',ag.prenom)),''), NULLIF(TRIM(CONCAT(u.prenom,' ',u.nom)),'')) AS utilisateur"
+        : "CONCAT(u.prenom,' ',u.nom) AS utilisateur";
+    $join_ag  = $agent_ok ? " LEFT JOIN agents ag ON ag.id=e.agent_id" : "";
+    $rows=db_fetch_all("SELECT e.numero_chrono,e.numero_serie_interne,e.numero_serie_origine,COALESCE(n.libelle,'—') AS type,e.marque,e.modele,e.etat,s.nom AS site,$col_user,e.date_acquisition,e.date_mise_en_service,e.date_fin_cycle,e.observations FROM equipements e LEFT JOIN nomenclatures n ON n.id=e.nomenclature_id LEFT JOIN sites s ON s.id=e.site_id LEFT JOIN users u ON u.id=e.utilisateur_id$join_ag WHERE ".implode(' AND ',$w)." ORDER BY e.numero_chrono DESC",$p);
     $sheet->setTitle('Équipements');
     $sheet->fromArray(['#','N° Interne','N° Série Fabricant','Type','Marque','Modèle','État','Site','Utilisateur','Date Acquisition','Mise en service','Fin de cycle','Observations'],null,'A1');
     apply_header($sp,'A1:M1'); $sheet->getRowDimension(1)->setRowHeight(22);

@@ -40,6 +40,15 @@ $sites_list  = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom
 $nomenclatures     = db_fetch_all("SELECT id,code,libelle,categorie,duree_vie_mois FROM nomenclatures WHERE categorie=? ORDER BY libelle", [$f_categorie]);
 $all_nomenclatures = db_fetch_all("SELECT id,libelle,categorie FROM nomenclatures ORDER BY categorie,libelle");
 $can_create  = can($perm_module,'can_create');
+// Utilisateur de l'équipement = agent de l'Annuaire (agents), pas un compte
+// applicatif : la plupart des porteurs d'équipement n'ont pas de compte.
+// Colonne equipements.agent_id (sql/migration_equipements_agent_fonctionnel.sql),
+// ignorée tant qu'elle n'existe pas.
+$equip_agent = db_colonne_existe('equipements', 'agent_id');
+$agents_list = $equip_agent
+    ? db_fetch_all("SELECT id, nom, prenom, matricule, fonction FROM agents
+                    WHERE COALESCE(statut,'actif') = 'actif' ORDER BY nom, prenom")
+    : [];
 $can_update  = can($perm_module,'can_update');
 
 // ── Amortissements OHADA (durées standard en mois)
@@ -56,6 +65,12 @@ $ohada_durees = [
 // recréé lors de la migration vers PostgreSQL du 2026-07-21 : le champ
 // restait vide à la création faute d'équivalent côté base. Séquence par
 // nomenclature (comme l'original), pas globale.
+// Libellé d'un agent dans la liste « Utilisateur » : unique grâce au matricule.
+function agent_libelle_equip(array $a): string {
+    $nom = trim(($a['nom'] ?? '') . ' ' . ($a['prenom'] ?? ''));
+    return $nom . (!empty($a['matricule']) ? " ({$a['matricule']})" : " (#{$a['id']})");
+}
+
 function _prochain_numero_serie(int $nomenclature_id): string {
     $code = $nomenclature_id
         ? (db_fetch_value("SELECT code FROM nomenclatures WHERE id=?", [$nomenclature_id]) ?: 'EQP')
@@ -82,11 +97,15 @@ require_once __DIR__ . '/../includes/import_helpers.php';
 
 if (($_GET['modele'] ?? '') === '1') {
     require_once __DIR__ . '/../vendor/autoload.php';
-    import_generer_modele(
-        ['Marque','Modèle','Type','N° Série externe','Site','État','Date acquisition','Prix achat','Emplacement'],
-        ['HP','LaserJet Pro', $nomenclatures[0]['libelle'] ?? '', 'SN123456', $sites_list[0]['nom'] ?? '', 'neuf', date('d/m/Y'), '150000', 'Bureau RH, 2e étage'],
-        'modele_equipements_' . $f_categorie . '.xlsx'
-    );
+    $mod_entetes = ['Marque','Modèle','Type','N° Série externe','Site','État','Date acquisition','Prix achat','Emplacement'];
+    $mod_exemple = ['HP','LaserJet Pro', $nomenclatures[0]['libelle'] ?? '', 'SN123456', $sites_list[0]['nom'] ?? '', 'neuf', date('d/m/Y'), '150000', 'Bureau RH, 2e étage'];
+    // Utilisateur = matricule (de préférence) ou « NOM Prénom » d'un agent de l'annuaire
+    if ($equip_agent) {
+        $mod_entetes[] = 'Utilisateur';
+        $a0 = $agents_list[0] ?? null;
+        $mod_exemple[] = $a0 ? ($a0['matricule'] ?: trim($a0['nom'] . ' ' . $a0['prenom'])) : '';
+    }
+    import_generer_modele($mod_entetes, $mod_exemple, 'modele_equipements_' . $f_categorie . '.xlsx');
 }
 
 $import_result = null;
@@ -148,6 +167,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
                 $duree_mois_cat = $ohada_durees[$f_categorie] ?? $ohada_durees['default'];
                 $etats_valides  = ['neuf','bon','usage','endommage','hs'];
 
+                // Colonne « Utilisateur » : matricule, « NOM Prénom », « Prénom NOM »
+                // ou le libellé du formulaire « NOM Prénom (matricule) ». Un nom
+                // porté par plusieurs agents est refusé : il faut le matricule.
+                $agent_par_cle = [];
+                foreach ($agents_list as $a) {
+                    $cles = [trim($a['nom'] . ' ' . $a['prenom']), trim($a['prenom'] . ' ' . $a['nom']), agent_libelle_equip($a)];
+                    if (!empty($a['matricule'])) $cles[] = $a['matricule'];
+                    foreach (array_unique(array_map(fn($c) => mb_strtolower(preg_replace('/\s+/', ' ', $c)), $cles)) as $c)
+                        $agent_par_cle[$c][] = (int)$a['id'];
+                }
+
                 $nb_ok = 0; $erreurs = [];
                 db_begin();
                 try {
@@ -204,20 +234,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
                         $emplacement = $get($row, 'Emplacement');
                         $prix_achat  = (float)str_replace([' ', ','], ['', '.'], $get($row, 'Prix achat') ?: '0');
 
+                        $agent_id = null;
+                        $agent_raw = $equip_agent ? $get($row, 'Utilisateur') : '';
+                        if ($agent_raw !== '') {
+                            $ids = array_values(array_unique($agent_par_cle[mb_strtolower(preg_replace('/\s+/', ' ', $agent_raw))] ?? []));
+                            if (!$ids) { $erreurs[] = "Ligne $ln : utilisateur \"$agent_raw\" introuvable dans l'annuaire des agents."; continue; }
+                            if (count($ids) > 1) { $erreurs[] = "Ligne $ln : plusieurs agents s'appellent \"$agent_raw\" — indiquez le matricule."; continue; }
+                            $agent_id = $ids[0];
+                        }
+
                         $statut_stock   = $etat === 'hs' ? 'hs' : (!$site_id ? 'en_stock' : 'affecte');
                         $date_fin_cycle = $date_achat ? date('Y-m-d', strtotime($date_achat . " +{$duree_mois_cat} months")) : null;
 
                         $numero_chrono_next++;
                         $nsi = $prochain_numero($code_nom);
 
-                        db_query(
-                            "INSERT INTO equipements
-                             (marque,modele,categorie,nomenclature_id,numero_serie_interne,numero_chrono,numero_serie_origine,
-                              site_id,emplacement,etat,statut_stock,date_acquisition,prix_achat,date_fin_cycle,duree_amortissement_mois,actif)
-                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
-                            [$marque,$modele,$f_categorie,$nom_id,$nsi,$numero_chrono_next,$nse ?: null,
-                             $site_id,$emplacement ?: null,$etat,$statut_stock,$date_achat,$prix_achat,$date_fin_cycle,$duree_mois_cat]
-                        );
+                        $cols_imp = 'marque,modele,categorie,nomenclature_id,numero_serie_interne,numero_chrono,numero_serie_origine,
+                              site_id,emplacement,etat,statut_stock,date_acquisition,prix_achat,date_fin_cycle,duree_amortissement_mois,actif';
+                        $vals_imp = [$marque,$modele,$f_categorie,$nom_id,$nsi,$numero_chrono_next,$nse ?: null,
+                                     $site_id,$emplacement ?: null,$etat,$statut_stock,$date_achat,$prix_achat,$date_fin_cycle,$duree_mois_cat,1];
+                        if ($equip_agent) { $cols_imp .= ',agent_id'; $vals_imp[] = $agent_id; }
+                        db_query("INSERT INTO equipements ($cols_imp)
+                                  VALUES (" . implode(',', array_fill(0, count($vals_imp), '?')) . ")", $vals_imp);
                         $nb_ok++;
                     }
                     audit_log($user['id'], 'CREATE', 'equipements', null,
@@ -344,6 +382,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $site_id      = (int)($_POST['site_id']             ?? 0) ?: null;
         $emplacement  = trim($_POST['emplacement']           ?? '');
         $etat         = trim($_POST['etat']                 ?? 'neuf');
+        if (!in_array($etat, ['neuf','bon','usage','endommage','hs'], true))
+            json_response(false, 'État invalide.');
+        $agent_id     = (int)($_POST['agent_id']            ?? 0) ?: null;
+        if ($agent_id && !db_fetch_value("SELECT id FROM agents WHERE id=?", [$agent_id]))
+            json_response(false, "Utilisateur introuvable dans l'annuaire des agents.");
         $date_achat   = trim($_POST['date_achat']           ?? '');
         $prix_achat   = (float)($_POST['prix_achat']        ?? 0);
         // statut_stock dérivé automatiquement — pas du formulaire
@@ -377,6 +420,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                  $site_id,$emplacement ?: null,$etat,$statut_stock,$date_achat ?: null,$prix_achat,$date_fin_cycle,$duree_mois]
             );
             $id = (int)db_last_id();
+            if ($equip_agent) db_query("UPDATE equipements SET agent_id=? WHERE id=?", [$agent_id, $id]);
             audit_log($user['id'],'CREATE','equipements',$id,"Création équipement: $label");
             json_response(true,'Équipement créé.', ['id'=>$id]);
         } else {
@@ -389,6 +433,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 [$marque,$modele,$nom_id ?: null,$nsi,$nse,
                  $site_id,$emplacement ?: null,$etat,$statut_stock,$date_achat ?: null,$prix_achat,$date_fin_cycle,$duree_mois,$id]
             );
+            if ($equip_agent) db_query("UPDATE equipements SET agent_id=? WHERE id=?", [$agent_id, $id]);
             audit_log($user['id'],'UPDATE','equipements',$id,"Modification équipement: $label");
             json_response(true,'Équipement mis à jour.');
         }
@@ -416,12 +461,21 @@ if ($f_site)   { $where[] = "e.site_id=?";          $params[] = $f_site; }
 if ($f_etat === 'ok') { $where[] = "e.etat IN ('neuf','bon')"; }
 elseif ($f_etat)      { $where[] = "e.etat=?";       $params[] = $f_etat; }
 if ($f_type)   { $where[] = "e.nomenclature_id=?";   $params[] = $f_type; }
-if ($f_search) { $where[] = "(e.numero_serie_interne LIKE ? OR e.marque LIKE ? OR e.modele LIKE ?)"; $params[] = "%$f_search%"; $params[] = "%$f_search%"; $params[] = "%$f_search%"; }
+if ($f_search) {
+    $cond = "e.numero_serie_interne LIKE ? OR e.marque LIKE ? OR e.modele LIKE ?";
+    $params[] = "%$f_search%"; $params[] = "%$f_search%"; $params[] = "%$f_search%";
+    if ($equip_agent) {
+        $cond .= " OR e.agent_id IN (SELECT id FROM agents WHERE CONCAT(nom,' ',prenom) LIKE ? OR matricule LIKE ?)";
+        $params[] = "%$f_search%"; $params[] = "%$f_search%";
+    }
+    $where[] = "($cond)";
+}
 if ($f_statut_stock) { $where[] = "e.statut_stock=?"; $params[] = $f_statut_stock; }
 if ($f_fin_cycle)    { $where[] = "e.date_fin_cycle IS NOT NULL AND e.date_fin_cycle < (CURRENT_DATE + INTERVAL 30 DAY)"; }
 
 $equipements = db_fetch_all(
     "SELECT e.*, s.nom AS site_nom, n.libelle AS type_nom,
+            " . ($equip_agent ? "TRIM(CONCAT(ag.nom,' ',ag.prenom)) AS agent_nom, ag.matricule AS agent_matricule," : "NULL AS agent_nom, NULL AS agent_matricule,") . "
             -- Taux de pannes : interventions correctives / total interventions × 100
             (SELECT COUNT(*) FROM interventions_maintenance i WHERE i.equipement_id=e.id AND i.type_action='maintenance_corrective') AS nb_curative,
             (SELECT COUNT(*) FROM interventions_maintenance i WHERE i.equipement_id=e.id) AS nb_interventions_total,
@@ -435,6 +489,7 @@ $equipements = db_fetch_all(
      FROM equipements e
      LEFT JOIN sites s ON s.id=e.site_id
      LEFT JOIN nomenclatures n ON n.id=e.nomenclature_id
+     " . ($equip_agent ? "LEFT JOIN agents ag ON ag.id=e.agent_id" : "") . "
      WHERE ".implode(' AND ',$where)."
      ORDER BY e.etat='hs' DESC, e.date_fin_cycle ASC, e.numero_serie_interne",
     $params
@@ -513,8 +568,8 @@ if (isset($_GET['export'])) {
     $ws = $sp->getActiveSheet();
     $ws->setTitle('Équipements');
     $etats = ['neuf'=>'Neuf','bon'=>'Bon état','usage'=>'Usagé','endommage'=>'Endommagé','hs'=>'Hors service'];
-    $headers = ['N° Série','Type','Marque','Modèle','Site','Emplacement','État','Statut stock',
-                'Date acq.','Prix achat','Valeur résiduelle','Amort. %',
+    $headers = ['N° Série','Type','Marque','Modèle','Site','Emplacement','Utilisateur','Matricule',
+                'État','Statut stock','Date acq.','Prix achat','Valeur résiduelle','Amort. %',
                 'Fin de cycle','Nb interventions','Taux curative %'];
     foreach ($headers as $i => $h) {
         $cell = $ws->getCell([$i+1, 1]);
@@ -534,15 +589,17 @@ if (isset($_GET['export'])) {
         $ws->setCellValue([4,  $row], $e['modele'] ?? '');
         $ws->setCellValue([5,  $row], $e['site_nom'] ?? '');
         $ws->setCellValue([6,  $row], $e['emplacement'] ?? '');
-        $ws->setCellValue([7,  $row], $etats[$e['etat']] ?? $e['etat']);
-        $ws->setCellValue([8,  $row], $e['statut_stock'] ?? '');
-        $ws->setCellValue([9,  $row], $e['date_acquisition'] ?? '');
-        $ws->setCellValue([10, $row], $e['prix_achat'] ? (float)$e['prix_achat'] : '');
-        $ws->setCellValue([11, $row], $e['valeur_residuelle'] !== null ? (float)$e['valeur_residuelle'] : '');
-        $ws->setCellValue([12, $row], $e['pct_amorti'] !== null ? (float)$e['pct_amorti'] : '');
-        $ws->setCellValue([13, $row], $e['date_fin_cycle'] ?? '');
-        $ws->setCellValue([14, $row], (int)$e['nb_interventions_total']);
-        $ws->setCellValue([15, $row], $taux_curative);
+        $ws->setCellValue([7,  $row], $e['agent_nom'] ?? '');
+        $ws->setCellValueExplicit([8, $row], (string)($e['agent_matricule'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+        $ws->setCellValue([9,  $row], $etats[$e['etat']] ?? $e['etat']);
+        $ws->setCellValue([10, $row], $e['statut_stock'] ?? '');
+        $ws->setCellValue([11, $row], $e['date_acquisition'] ?? '');
+        $ws->setCellValue([12, $row], $e['prix_achat'] ? (float)$e['prix_achat'] : '');
+        $ws->setCellValue([13, $row], $e['valeur_residuelle'] !== null ? (float)$e['valeur_residuelle'] : '');
+        $ws->setCellValue([14, $row], $e['pct_amorti'] !== null ? (float)$e['pct_amorti'] : '');
+        $ws->setCellValue([15, $row], $e['date_fin_cycle'] ?? '');
+        $ws->setCellValue([16, $row], (int)$e['nb_interventions_total']);
+        $ws->setCellValue([17, $row], $taux_curative);
         $row++;
     }
     foreach (range(1, count($headers)) as $col)
@@ -621,7 +678,7 @@ include __DIR__ . '/../templates/header.php';
       <button onclick="document.getElementById('modalImport').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer"><i class="ph ph-x" aria-hidden="true"></i></button>
     </div>
     <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
-      Fichier Excel (.xlsx/.xls) ou CSV. Colonnes attendues : <strong>Type (obligatoire, doit exister au catalogue)</strong>, Marque ou Modèle (au moins l'un des deux), N° Série externe, Site, État, Date acquisition, Prix achat, Emplacement — téléchargez le modèle pour les exemples.
+      Fichier Excel (.xlsx/.xls) ou CSV. Colonnes attendues : <strong>Type (obligatoire, doit exister au catalogue)</strong>, Marque ou Modèle (au moins l'un des deux), N° Série externe, Site, État, Date acquisition, Prix achat, Emplacement<?= $equip_agent ? ", Utilisateur (matricule de préférence, ou « NOM Prénom » de l'annuaire des agents)" : '' ?> — téléchargez le modèle pour les exemples.
       Une ligne dont le N° Série externe existe déjà (en base ou plus haut dans le fichier) est ignorée comme doublon.
       Le numéro de série interne est généré automatiquement.
     </p>
@@ -798,7 +855,7 @@ include __DIR__ . '/../templates/header.php';
           <td style="font-weight:600;color:var(--navy)"><?= h($e['numero_serie_interne']??'—') ?></td>
           <td style="font-size:12px"><?= h($e['type_nom']??'—') ?></td>
           <td style="font-family:monospace;font-size:12px"><?= h($e['numero_serie_interne']??'—') ?></td>
-          <td><?= h($e['site_nom']??'Non affecté') ?><?php if(!empty($e['emplacement'])): ?><div style="font-size:12px;color:var(--muted)"><?= h($e['emplacement']) ?></div><?php endif; ?></td>
+          <td><?= h($e['site_nom']??'Non affecté') ?><?php if(!empty($e['emplacement'])): ?><div style="font-size:12px;color:var(--muted)"><?= h($e['emplacement']) ?></div><?php endif; ?><?php if(!empty($e['agent_nom'])): ?><div style="font-size:12px;color:var(--navy);font-weight:600"><i class="ph ph-user" aria-hidden="true"></i> <?= h($e['agent_nom']) ?></div><?php endif; ?></td>
           <td style="text-align:center"><span class="etat-badge etat-<?= $e['etat'] ?>"><?= ucfirst($e['etat']) ?></span></td>
           <td style="text-align:center">
             <?php if($nb_int > 0): ?>
@@ -901,6 +958,20 @@ include __DIR__ . '/../templates/header.php';
           <option value="hs">Hors service</option>
         </select>
       </div>
+      <?php if($equip_agent): ?>
+      <div class="form-group">
+        <label>Utilisateur</label>
+        <input type="text" class="form-control" id="eAgent" list="agentsList" autocomplete="off"
+               placeholder="Tapez un nom ou un matricule…" oninput="choisirAgent()">
+        <input type="hidden" id="eAgentId">
+        <div id="eAgentInfo" style="font-size:12px;color:var(--muted);margin-top:3px">Agent de l'annuaire qui utilise l'équipement (facultatif)</div>
+        <datalist id="agentsList">
+          <?php foreach($agents_list as $a): ?>
+          <option value="<?= h(agent_libelle_equip($a)) ?>"></option>
+          <?php endforeach; ?>
+        </datalist>
+      </div>
+      <?php endif; ?>
       <div class="form-group">
         <label>Statut stock</label>
         <select class="form-control" id="eStatutStock">
@@ -990,12 +1061,32 @@ function equipEffacer(ev){
 window.addEventListener('popstate', function(ev){ if(ev.state && ev.state.equip) location.reload(); });
 function toast(m,t='success'){let el=document.getElementById('toast-live');if(!el){el=document.createElement('div');el.id='toast-live';el.setAttribute('role','status');el.setAttribute('aria-live','polite');el.setAttribute('aria-atomic','true');document.body.appendChild(el);}clearTimeout(el._hideTimer);el.style.cssText=`position:fixed;top:20px;right:20px;z-index:9999;padding:12px 20px;border-radius:12px;font-size:13px;font-weight:600;background:${t==='success'?'#27ae60':'#e74c3c'};color:white`;el.textContent=m;el._hideTimer=setTimeout(()=>{el.style.display='none';},3500);}
 
+// Libellé affiché -> id de l'agent (Annuaire des agents)
+const AGENTS_EQUIP = <?= json_encode(array_combine(
+    array_map('agent_libelle_equip', $agents_list), array_map(fn($a) => (int)$a['id'], $agents_list)) ?: new stdClass(), JSON_UNESCAPED_UNICODE) ?>;
+const AGENTS_PAR_ID = Object.fromEntries(Object.entries(AGENTS_EQUIP).map(([l, id]) => [id, l]));
+function choisirAgent(){
+  const inp = document.getElementById('eAgent'); if (!inp) return;
+  const id  = AGENTS_EQUIP[inp.value.trim()] || '';
+  document.getElementById('eAgentId').value = id;
+  const info = document.getElementById('eAgentInfo');
+  if (!inp.value.trim()) { info.textContent = "Agent de l'annuaire qui utilise l'équipement (facultatif)"; info.style.color = 'var(--muted)'; }
+  else if (id)           { info.textContent = '✔ Agent sélectionné'; info.style.color = '#166534'; }
+  else                   { info.textContent = 'Choisissez un agent dans la liste proposée'; info.style.color = 'var(--danger-d)'; }
+}
+function remplirAgent(id){
+  const inp = document.getElementById('eAgent'); if (!inp) return;
+  inp.value = id ? (AGENTS_PAR_ID[id] || '') : '';
+  choisirAgent();
+}
+
 function ouvrirCreation(){
   document.getElementById('titleModal').textContent='Nouvel équipement';
   document.getElementById('eAction').value='creer';
   document.getElementById('eId').value='';
   ['eMarque','eModele','eNsi','eNse','ePrix','eEmplacement'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('eEtat').value='neuf';
+  remplirAgent(null);
   document.getElementById('eStatutStock').value='affecte';
   document.getElementById('eAlert').innerHTML='';
   document.getElementById('modalEquip').style.display='flex';
@@ -1011,6 +1102,7 @@ function modifierEquip(e){
   document.getElementById('eSite').value=e.site_id||'';
   document.getElementById('eEmplacement').value=e.emplacement||'';
   document.getElementById('eEtat').value=e.etat||'bon';
+  remplirAgent(e.agent_id||null);
   document.getElementById('eStatutStock').value=e.statut_stock||'affecte';
   document.getElementById('eDate').value=e.date_acquisition||'';
   document.getElementById('ePrix').value=e.prix_achat||0;
@@ -1030,6 +1122,11 @@ async function sauvegarder(){
     document.getElementById('eAlert').innerHTML = '<div class="alert alert-danger">Le type (nomenclature) est obligatoire.</div>';
     return;
   }
+  const agInp = document.getElementById('eAgent');
+  if (agInp && agInp.value.trim() && !document.getElementById('eAgentId').value) {
+    document.getElementById('eAlert').innerHTML = '<div class="alert alert-danger">Utilisateur inconnu : choisissez un agent dans la liste proposée, ou laissez le champ vide.</div>';
+    return;
+  }
   const btn = document.getElementById('btnSave');
   btn.disabled = true;
   btn.textContent = '⏳ Enregistrement…';
@@ -1045,6 +1142,7 @@ async function sauvegarder(){
       site_id             : document.getElementById('eSite').value,
       emplacement         : document.getElementById('eEmplacement').value.trim(),
       etat                : document.getElementById('eEtat').value,
+      agent_id            : document.getElementById('eAgentId')?.value || '',
       statut_stock        : document.getElementById('eStatutStock').value,
       date_achat          : document.getElementById('eDate').value,
       prix_achat          : document.getElementById('ePrix').value,

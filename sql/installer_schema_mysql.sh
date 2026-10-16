@@ -90,7 +90,8 @@ FICHIERS="stockapp.sql demandes_internes_mysql.sql agents_mysql.sql achats_mysql
  migration_operation_sites_duplicata_postimmat_mysql.sql
  migration_permission_vue_pdg_mysql.sql
  migration_optoplate_desactivations_mysql.sql
- migration_optoplate_justification_superviseur_mysql.sql"
+ migration_optoplate_justification_superviseur_mysql.sql
+ migration_equipements_agent_mysql.sql"
 
 echo "==> Installation du schéma dans $DB_NAME@$DB_HOST"
 for f in $FICHIERS; do
@@ -120,6 +121,7 @@ verif "plus aucune liste fermée (ENUM) hors colonnes calculées, comme sur main
 verif "droits des modules scindés (Nouvelle demande, À valider, Traitements IT, Vignette…)" "SELECT COUNT(DISTINCT module) = 5 FROM permissions WHERE module IN ('demandes_new','demandes_valider','demandes_it','equipements_operationnel','vignette')"
 verif "report du 14/10/2026 : Re-Immatriculation, endommagements par unité, non conformes" "SELECT COUNT(*) = 9 FROM information_schema.columns WHERE table_schema = DATABASE() AND ((table_name = 'sites' AND column_name = 'operation') OR (table_name = 'op_points_journaliers' AND column_name IN ('total_plaques_duplicata','total_plaques_postimmat','rivets_gonflables_end','rivets_eclates_end')) OR (table_name = 'op_endommagements' AND column_name IN ('objet','numero_consommable')) OR (table_name IN ('op_pmma_utilises','op_films_utilises') AND column_name = 'non_conformes'))"
 verif "comparaison OptoPlate : désactivations, index par consommable, justification" "SELECT (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND ((table_name = 'import_optoplate' AND column_name IN ('categorie','ancienne_plaque','type_desactivation','motif_desactivation','date_desactivation')) OR (table_name = 'op_points_journaliers' AND column_name IN ('justification_superviseur','ecart_optoplate')))) = 7 AND (SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'import_optoplate' AND index_name = 'idx_optoplate_num_consommable' AND non_unique = 0) = 1"
+verif "équipements : utilisateur (agent de l'annuaire), clé étrangère et index" "SELECT (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'equipements' AND column_name = 'agent_id') = 1 AND (SELECT COUNT(*) FROM information_schema.table_constraints WHERE table_schema = DATABASE() AND table_name = 'equipements' AND constraint_name = 'fk_equipements_agent') = 1 AND (SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'equipements' AND index_name = 'idx_equipements_agent') >= 1"
 verif "droit Vue exécutive (PDG) pour chaque rôle" "SELECT COUNT(*) = (SELECT COUNT(*) FROM roles) FROM permissions WHERE module = 'pdg_overview'"
 [ "$ECHEC" = "0" ] && echo "==> Schéma complet." || { echo "==> Schéma INCOMPLET : ne pas continuer."; exit 1; }
 
