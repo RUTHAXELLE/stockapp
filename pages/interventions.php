@@ -21,6 +21,30 @@ $site_force  = ($is_coord && $user['site_id']) ? (int)$user['site_id'] : 0;
 $can_create  = can('interventions','can_create');
 $sites_list  = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
 
+// Types d'intervention : préventive / curative / autre (nature précisée).
+const INTERV_NATURES = [
+    'installation' => 'Installation de matériel',
+    'remplacement' => 'Remplacement',
+    'diagnostic'   => 'Diagnostic',
+    'autre'        => 'Autre',
+];
+function interv_type_code(?string $type_action): string {
+    if ($type_action === 'maintenance_preventive') return 'preventive';
+    if ($type_action === 'maintenance_corrective') return 'curative';
+    return 'autre';
+}
+// statut_apres en base (en_attente / resolu / partiel / escalade) -> statut
+// affiché. La page comparait des valeurs (planifiee, en_cours, demandee…)
+// jamais écrites en base : compteurs à 0, aucun bouton d'action.
+function interv_statut(array $i): string {
+    switch ($i['statut_apres'] ?? '') {
+        case 'resolu':   return 'terminee';
+        case 'partiel':  return 'partiel';
+        case 'escalade': return 'annulee';
+        default:         return !empty($i['probleme_signale']) ? 'demandee' : 'en_cours';
+    }
+}
+
 // ── AJAX
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     header('Content-Type: application/json');
@@ -36,15 +60,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $date_prevue   = trim($_POST['date_prevue'] ?? date('Y-m-d'));
         $priorite      = trim($_POST['priorite'] ?? 'normale');
 
-        if (!in_array($type, ['preventive','curative']))
-            json_response(false,'Type invalide. Choisir preventive ou curative.');
+        if (!in_array($type, ['preventive','curative','autre'], true))
+            json_response(false,'Type invalide. Choisir préventive, curative ou autre.');
         if (!$description) json_response(false,'Description obligatoire.');
 
-        $statut = $type === 'preventive' ? 'planifiee' : 'en_cours';
-
-        // Mapper les nouveaux champs vers la structure existante
+        // Mapper les nouveaux champs vers la structure existante. « Autre »
+        // porte sa nature (installation de matériel, remplacement…) dans
+        // type_action, valeurs déjà prévues par le schéma d'origine.
         $type_action_map = ['preventive'=>'maintenance_preventive','curative'=>'maintenance_corrective'];
-        $type_action = $type_action_map[$type] ?? 'maintenance_corrective';
+        if ($type === 'autre') {
+            $type_action = trim($_POST['nature'] ?? '');
+            if (!isset(INTERV_NATURES[$type_action])) json_response(false,"Choisissez la nature de l'intervention.");
+        } else {
+            $type_action = $type_action_map[$type];
+        }
         db_query(
             "INSERT INTO interventions_maintenance
              (technicien_id,site_id,equipement_id,date_intervention,type_action,description,statut_apres)
@@ -137,7 +166,7 @@ $interventions = db_fetch_all(
             CONCAT(u.prenom,' ',u.nom) AS createur,
             -- Mapping colonnes existantes vers noms attendus
             i.type_action AS type_intervention,
-            i.statut_apres AS statut,
+            i.statut_apres,
             i.date_intervention AS date_prevue,
             i.technicien_id AS created_by_id,
             'normale' AS priorite,
@@ -150,6 +179,11 @@ $interventions = db_fetch_all(
      ORDER BY i.created_at DESC LIMIT 100",
     $params
 );
+foreach ($interventions as &$iv) {
+    $iv['type_code'] = interv_type_code($iv['type_action']);
+    $iv['statut']    = interv_statut($iv);
+}
+unset($iv);
 
 $equipements_site = db_fetch_all(
     "SELECT id, CONCAT(numero_serie_interne, CASE WHEN marque IS NOT NULL THEN CONCAT(' — ', marque, ' ', COALESCE(modele,'')) ELSE '' END) AS nom,numero_serie_interne,categorie FROM equipements WHERE actif=1"
@@ -158,21 +192,24 @@ $equipements_site = db_fetch_all(
 );
 
 // KPIs
-$nb_preventive  = count(array_filter($interventions, fn($i)=>$i['type_intervention']==='preventive'));
-$nb_curative    = count(array_filter($interventions, fn($i)=>$i['type_intervention']==='curative'));
+$nb_preventive  = count(array_filter($interventions, fn($i)=>$i['type_code']==='preventive'));
+$nb_curative    = count(array_filter($interventions, fn($i)=>$i['type_code']==='curative'));
+$nb_autre       = count(array_filter($interventions, fn($i)=>$i['type_code']==='autre'));
 $nb_demandees   = count(array_filter($interventions, fn($i)=>$i['statut']==='demandee'));
 $nb_en_cours    = count(array_filter($interventions, fn($i)=>$i['statut']==='en_cours'));
 
 include __DIR__ . '/../templates/header.php';
 ?>
 <style>
-.int-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+.int-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:22px}
 .ik{background:white;border-radius:14px;border:1px solid var(--border);padding:16px 20px;border-left:4px solid var(--blue)}
 .ik.orange{border-left-color:#f39c12} .ik.red{border-left-color:var(--danger)} .ik.green{border-left-color:var(--success)}
 .ik-val{font-family:'Plus Jakarta Sans',sans-serif;font-size:26px;font-weight:900;color:var(--navy)}
 .ik-lbl{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-top:4px}
 .type-badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700}
 .type-preventive{background:#e8f4f9;color:var(--blue)} .type-curative{background:#fee2e2;color:#991b1b}
+.type-autre{background:#ede9fe;color:#5b21b6} .ik.violet{border-left-color:#7c3aed}
+.statut-partiel{background:#fef3c7;color:#92400e}
 .statut-planifiee{background:#dbeafe;color:#1d4ed8} .statut-en_cours{background:#fef3c7;color:#92400e}
 .statut-terminee{background:#d1fae5;color:#065f46} .statut-demandee{background:#fee2e2;color:#991b1b}
 .statut-annulee{background:#f1f5f9;color:#64748b}
@@ -187,6 +224,7 @@ include __DIR__ . '/../templates/header.php';
 <div class="int-kpis">
   <div class="ik"><div class="ik-val"><?= $nb_preventive ?></div><div class="ik-lbl"><i class="ph ph-calendar" aria-hidden="true"></i> Préventives</div></div>
   <div class="ik red"><div class="ik-val" style="color:var(--danger-d)"><?= $nb_curative ?></div><div class="ik-lbl"><i class="ph ph-wrench" aria-hidden="true"></i> Curatives</div></div>
+  <div class="ik violet"><div class="ik-val" style="color:#7c3aed"><?= $nb_autre ?></div><div class="ik-lbl"><i class="ph ph-toolbox" aria-hidden="true"></i> Autres</div></div>
   <div class="ik orange"><div class="ik-val" style="color:#f39c12"><?= $nb_demandees ?></div><div class="ik-lbl"><i class="ph ph-tray" aria-hidden="true"></i> Demandes en attente</div></div>
   <div class="ik green"><div class="ik-val" style="color:#f39c12"><?= $nb_en_cours ?></div><div class="ik-lbl"><i class="ph ph-gear" aria-hidden="true"></i> En cours</div></div>
 </div>
@@ -196,6 +234,7 @@ include __DIR__ . '/../templates/header.php';
   <button class="tab-btn <?= $onglet==='toutes'?'active':'' ?>" onclick="showTab('toutes',this)"><i class="ph ph-wrench" aria-hidden="true"></i> Toutes</button>
   <button class="tab-btn <?= $onglet==='preventive'?'active':'' ?>" onclick="showTab('preventive',this)"><i class="ph ph-calendar" aria-hidden="true"></i> Préventives</button>
   <button class="tab-btn <?= $onglet==='curative'?'active':'' ?>" onclick="showTab('curative',this)"><i class="ph ph-warning-octagon" aria-hidden="true"></i> Curatives</button>
+  <button class="tab-btn <?= $onglet==='autre'?'active':'' ?>" onclick="showTab('autre',this)"><i class="ph ph-toolbox" aria-hidden="true"></i> Autres</button>
   <?php if($nb_demandees>0): ?>
   <button class="tab-btn <?= $onglet==='demandes'?'active':'' ?>" onclick="showTab('demandes',this)">
     <i class="ph ph-tray" aria-hidden="true"></i> Demandes <span style="background:var(--danger);color:white;border-radius:10px;padding:1px 7px;font-size:12px;margin-left:4px"><?= $nb_demandees ?></span>
@@ -223,24 +262,25 @@ include __DIR__ . '/../templates/header.php';
     <?php if($can_create && !$is_coord): ?>
     <button class="btn btn-primary" onclick="ouvrirCreation('preventive')"><i class="ph ph-calendar" aria-hidden="true"></i> + Préventive</button>
     <button class="btn" style="background:#fee2e2;color:#991b1b;border:1.5px solid #fca5a5" onclick="ouvrirCreation('curative')"><i class="ph ph-warning-octagon" aria-hidden="true"></i> + Curative</button>
+    <button class="btn" style="background:#ede9fe;color:#5b21b6;border:1.5px solid #c4b5fd" onclick="ouvrirCreation('autre')"><i class="ph ph-toolbox" aria-hidden="true"></i> + Autre</button>
     <?php endif; ?>
   </div>
 </div>
 
 <!-- LISTES PAR ONGLET -->
 <?php
-$types_onglets = ['toutes'=>null,'preventive'=>'preventive','curative'=>'curative','demandes'=>null];
+$types_onglets = ['toutes'=>null,'preventive'=>'preventive','curative'=>'curative','autre'=>'autre','demandes'=>null];
 foreach($types_onglets as $tab_key => $type_filtre):
   $items = $tab_key === 'demandes'
     ? array_filter($interventions, fn($i)=>$i['statut']==='demandee')
-    : ($type_filtre ? array_filter($interventions,fn($i)=>$i['type_intervention']===$type_filtre) : $interventions);
+    : ($type_filtre ? array_filter($interventions,fn($i)=>$i['type_code']===$type_filtre) : $interventions);
   $items = array_values($items);
 ?>
 <div id="tab-<?= $tab_key ?>" style="display:<?= $onglet===$tab_key?'block':'none' ?>">
   <div class="card">
     <div class="card-header">
       <h3>
-        <?= $tab_key==='preventive'?'<i class="ph ph-calendar" aria-hidden="true"></i> Interventions Préventives':($tab_key==='curative'?'<i class="ph ph-warning-octagon" aria-hidden="true"></i> Interventions Curatives':($tab_key==='demandes'?'<i class="ph ph-tray" aria-hidden="true"></i> Demandes Coordinateurs':'<i class="ph ph-wrench" aria-hidden="true"></i> Toutes les Interventions')) ?>
+        <?= $tab_key==='preventive'?'<i class="ph ph-calendar" aria-hidden="true"></i> Interventions Préventives':($tab_key==='curative'?'<i class="ph ph-warning-octagon" aria-hidden="true"></i> Interventions Curatives':($tab_key==='autre'?'<i class="ph ph-toolbox" aria-hidden="true"></i> Autres interventions':($tab_key==='demandes'?'<i class="ph ph-tray" aria-hidden="true"></i> Demandes Coordinateurs':'<i class="ph ph-wrench" aria-hidden="true"></i> Toutes les Interventions'))) ?>
         <span style="font-size:13px;font-weight:400;color:var(--muted)">(<?= count($items) ?>)</span>
       </h3>
     </div>
@@ -258,8 +298,11 @@ foreach($types_onglets as $tab_key => $type_filtre):
         <?php else: foreach($items as $int): ?>
           <tr style="<?= $int['statut']==='demandee'?'background:#fffbf0':'' ?>">
             <td style="font-weight:600;white-space:nowrap"><?= fmt_date($int['date_intervention']??$int['created_at'],'d/m/Y') ?></td>
-            <?php $is_prev = in_array($int['type_action']??'',['maintenance_preventive']); ?>
-            <td><span class="type-badge type-<?= $is_prev?'preventive':'curative' ?>"><?= $is_prev ? '<i class="ph ph-calendar" aria-hidden="true"></i> Préventive' : '<i class="ph ph-warning-octagon" aria-hidden="true"></i> Curative' ?></span></td>
+            <td><span class="type-badge type-<?= $int['type_code'] ?>"><?= match($int['type_code']) {
+              'preventive' => '<i class="ph ph-calendar" aria-hidden="true"></i> Préventive',
+              'curative'   => '<i class="ph ph-warning-octagon" aria-hidden="true"></i> Curative',
+              default      => '<i class="ph ph-toolbox" aria-hidden="true"></i> ' . h(INTERV_NATURES[$int['type_action']] ?? 'Autre'),
+            } ?></span></td>
             <td style="font-size:13px">
               <?= h($int['equip_nom']??'—') ?>
               <?php if($int['numero_serie_interne']): ?><div style="font-size:12px;color:var(--muted)"><?= h($int['numero_serie_interne']) ?></div><?php endif; ?>
@@ -269,15 +312,13 @@ foreach($types_onglets as $tab_key => $type_filtre):
             <td style="text-align:center"><span class="type-badge prio-<?= 'normale' ?>"><?= ucfirst('normale') ?></span></td>
             <td><span class="type-badge statut-<?= $int['statut'] ?>"><?= [
               'planifiee'=>'<i class="ph ph-calendar" aria-hidden="true"></i> Planifiée','en_cours'=>'<i class="ph ph-gear" aria-hidden="true"></i> En cours','terminee'=>'<i class="ph ph-check-circle" aria-hidden="true"></i> Terminée',
-              'demandee'=>'<i class="ph ph-tray" aria-hidden="true"></i> Demandée','annulee'=>'<i class="ph ph-x-circle" aria-hidden="true"></i> Annulée'
+              'demandee'=>'<i class="ph ph-tray" aria-hidden="true"></i> Demandée','annulee'=>'<i class="ph ph-x-circle" aria-hidden="true"></i> Annulée',
+              'partiel'=>'<i class="ph ph-warning" aria-hidden="true"></i> Partiel'
             ][$int['statut']] ?? $int['statut'] ?></span></td>
             <td style="font-size:12px;color:var(--muted)"><?= h($int['createur']??'—') ?></td>
             <?php if(!$is_coord): ?>
             <td style="text-align:center;white-space:nowrap">
-              <?php if(in_array($int['statut'],['demandee','planifiee'])): ?>
-              <button class="btn btn-primary btn-sm" onclick="changerStatut(<?= $int['id'] ?>,'en_cours')">▶️ Démarrer</button>
-              <?php endif; ?>
-              <?php if($int['statut']==='en_cours'): ?>
+              <?php if(in_array($int['statut'],['en_cours','demandee','partiel'])): ?>
               <button class="btn btn-success btn-sm" onclick="terminer(<?= $int['id'] ?>)"><i class="ph ph-check-circle" aria-hidden="true"></i> Terminer</button>
               <?php endif; ?>
             </td>
@@ -354,6 +395,15 @@ foreach($types_onglets as $tab_key => $type_filtre):
         <?php endforeach; ?>
       </select>
     </div>
+    <div class="form-group" id="cNatureWrap" style="margin-bottom:14px;display:none">
+      <label>Nature de l'intervention *</label>
+      <select class="form-control" id="cNature">
+        <option value="">— Sélectionner —</option>
+        <?php foreach (INTERV_NATURES as $k => $l): ?>
+        <option value="<?= $k ?>"><?= h($l) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </div>
     <div class="form-group" style="margin-bottom:14px">
       <label>Priorité</label>
       <select class="form-control" id="cPrio">
@@ -422,11 +472,14 @@ async function envoyerDemande(){
 
 function ouvrirCreation(type){
   document.getElementById('cType').value=type;
-  document.getElementById('titleCreation').textContent=type==='preventive'?'📅 Nouvelle intervention préventive':'🚨 Nouvelle intervention curative';
+  document.getElementById('titleCreation').textContent=
+    type==='preventive'?'📅 Nouvelle intervention préventive':type==='autre'?'🧰 Nouvelle intervention (autre)':'🚨 Nouvelle intervention curative';
+  document.getElementById('cNatureWrap').style.display = type==='autre' ? 'block' : 'none';
+  document.getElementById('cNature').value='';
   document.getElementById('modalCreation').style.display='flex';
 }
 async function creer(){
-  const d=await ap({action:'creer',type_intervention:document.getElementById('cType').value,site_id:document.getElementById('cSite').value,equipement_id:document.getElementById('cEquip').value,date_prevue:document.getElementById('cDate').value,priorite:document.getElementById('cPrio').value,description:document.getElementById('cDesc').value});
+  const d=await ap({action:'creer',type_intervention:document.getElementById('cType').value,site_id:document.getElementById('cSite').value,equipement_id:document.getElementById('cEquip').value,date_prevue:document.getElementById('cDate').value,priorite:document.getElementById('cPrio').value,nature:document.getElementById('cNature').value,description:document.getElementById('cDesc').value});
   if(d.success){toast(d.message);fermer('Creation');setTimeout(()=>location.reload(),800);}else toast(d.message,'error');
 }
 
