@@ -186,7 +186,7 @@ foreach ($interventions as &$iv) {
 unset($iv);
 
 $equipements_site = db_fetch_all(
-    "SELECT id, CONCAT(numero_serie_interne, CASE WHEN marque IS NOT NULL THEN CONCAT(' — ', marque, ' ', COALESCE(modele,'')) ELSE '' END) AS nom,numero_serie_interne,categorie FROM equipements WHERE actif=1"
+    "SELECT id, CONCAT(numero_serie_interne, CASE WHEN marque IS NOT NULL THEN CONCAT(' — ', marque, ' ', COALESCE(modele,'')) ELSE '' END) AS nom,numero_serie_interne,categorie,site_id FROM equipements WHERE actif=1"
     . ($site_force ? " AND site_id=$site_force" : "")
     . " ORDER BY nom"
 );
@@ -374,7 +374,7 @@ foreach($types_onglets as $tab_key => $type_filtre):
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
       <div class="form-group">
         <label>Site</label>
-        <select class="form-control" id="cSite">
+        <select class="form-control" id="cSite" onchange="filtrerEquipSite()">
           <option value="">Tous</option>
           <?php foreach($sites_list as $s): ?>
           <option value="<?= $s['id'] ?>"><?= h($s['nom']) ?></option>
@@ -391,9 +391,10 @@ foreach($types_onglets as $tab_key => $type_filtre):
       <select class="form-control" id="cEquip">
         <option value="">— Sélectionner —</option>
         <?php foreach($equipements_site as $e): ?>
-        <option value="<?= $e['id'] ?>"><?= h($e['nom']) ?> (<?= h($e['categorie']) ?>)</option>
+        <option value="<?= $e['id'] ?>" data-site="<?= (int)$e['site_id'] ?>"><?= h($e['nom']) ?> (<?= h($e['categorie']) ?>)</option>
         <?php endforeach; ?>
       </select>
+      <div id="cEquipInfo" style="font-size:12px;color:var(--muted);margin-top:3px"></div>
     </div>
     <div class="form-group" id="cNatureWrap" style="margin-bottom:14px;display:none">
       <label>Nature de l'intervention *</label>
@@ -476,7 +477,23 @@ function ouvrirCreation(type){
     type==='preventive'?'📅 Nouvelle intervention préventive':type==='autre'?'🧰 Nouvelle intervention (autre)':'🚨 Nouvelle intervention curative';
   document.getElementById('cNatureWrap').style.display = type==='autre' ? 'block' : 'none';
   document.getElementById('cNature').value='';
+  filtrerEquipSite();
   document.getElementById('modalCreation').style.display='flex';
+}
+// Liste complète des équipements, filtrée sur le site choisi : on ne propose
+// que les équipements de ce site (tous si aucun site n'est choisi).
+let EQUIP_OPTS = null;
+function filtrerEquipSite(){
+  const sel = document.getElementById('cEquip'); if (!sel) return;
+  if (!EQUIP_OPTS) EQUIP_OPTS = Array.from(sel.options).slice(1).map(o => o.cloneNode(true));
+  const site = document.getElementById('cSite').value;
+  const garde = sel.value;
+  sel.length = 1;
+  const liste = EQUIP_OPTS.filter(o => !site || o.dataset.site === site);
+  liste.forEach(o => sel.appendChild(o.cloneNode(true)));
+  sel.value = liste.some(o => o.value === garde) ? garde : '';
+  sel.options[0].textContent = site && !liste.length ? '— Aucun équipement sur ce site —' : '— Sélectionner —';
+  document.getElementById('cEquipInfo').textContent = site ? liste.length + ' équipement(s) sur ce site' : '';
 }
 async function creer(){
   const d=await ap({action:'creer',type_intervention:document.getElementById('cType').value,site_id:document.getElementById('cSite').value,equipement_id:document.getElementById('cEquip').value,date_prevue:document.getElementById('cDate').value,priorite:document.getElementById('cPrio').value,nature:document.getElementById('cNature').value,description:document.getElementById('cDesc').value});
