@@ -45,11 +45,33 @@ function markAllRead() {
     body: 'action=mark_all'
   }).then(() => refreshNotifs());
 }
+// ── Session expirée : l'onglet reste affiché avec sa saisie, mais toute requête
+//    ramène désormais la page de connexion. Sans avertissement, on ne le
+//    découvrait qu'au clic sur « Enregistrer », devant un message illisible.
+//    Se reconnecter dans un AUTRE onglet suffit (même cookie) : le formulaire
+//    de celui-ci n'est pas perdu.
+function sessionExpiree() {
+  if (document.getElementById('bandeau-session')) return;
+  const b = document.createElement('div');
+  b.id = 'bandeau-session';
+  b.setAttribute('role', 'alert');
+  b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;padding:12px 20px;background:#FEF3C7;color:#8A5A00;border-bottom:2px solid #FBBF24;font-size:14px;font-weight:600;text-align:center';
+  b.innerHTML = 'Votre session a expiré (inactivité). <a href="<?= APP_URL ?>/login.php" target="_blank" rel="noopener" style="color:#8A5A00;text-decoration:underline">Reconnectez-vous dans un nouvel onglet</a>, puis revenez ici : ce que vous avez saisi est conservé.';
+  document.body.appendChild(b);
+}
+function sessionRetablie() {
+  const b = document.getElementById('bandeau-session');
+  if (b) b.remove();
+}
 function refreshNotifs() {
   fetch('<?= APP_URL ?>/api/notifications.php?action=get', {
     headers: {'X-Requested-With':'XMLHttpRequest'}
-  }).then(r=>r.json()).then(d=>{
-    if (!d.success) return;
+  }).then(r => {
+    if (r.redirected && /\/login\.php/i.test(r.url)) { sessionExpiree(); return null; }
+    sessionRetablie();
+    return r.json();
+  }).then(d=>{
+    if (!d || !d.success) return;
     const count = d.data.count || 0;
     const badge = document.querySelector('.notif-count');
     const btn   = document.querySelector('.notif-btn');
@@ -77,6 +99,9 @@ function refreshNotifs() {
 // visible, même principe que liveRefresh() ci-dessous : pas la peine
 // d'interroger le serveur pour un écran que personne ne regarde.
 setInterval(() => { if (!document.hidden) refreshNotifs(); }, 20000);
+// Retour sur l'onglet (téléphone, autre application, écran verrouillé) : on
+// vérifie tout de suite que la session tient, sans attendre les 20 secondes.
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshNotifs(); });
 
 // ===== RAFRAICHISSEMENT LIVE (polling léger) =====
 // Remplace périodiquement le contenu d'un conteneur par un fragment HTML
@@ -196,9 +221,29 @@ function toast(msg, type = 'success') {
 //    « ne répond pas », sans aucun message ni dans l'écran ni ailleurs.
 function achParseJson(r) {
   return r.text().then(t => {
+    // Session perdue : require_auth() renvoie un 302 vers login.php, que fetch()
+    // suit sans le dire — la « réponse » est la page de connexion, en HTTP 200.
+    // Message clair plutôt que le début de ce HTML.
+    if (r.redirected && /\/login\.php/i.test(r.url)) {
+      if (typeof sessionExpiree === 'function') sessionExpiree();
+      throw new Error('Votre session a expiré (inactivité). Reconnectez-vous dans un nouvel onglet : ce que vous avez saisi ici est conservé. Revenez ensuite sur cet onglet et recommencez.');
+    }
     try {
       return JSON.parse(t);
     } catch (e) {
+      // Avertissement ou notice PHP écrits avant la réponse : le serveur a
+      // bien répondu (et exécuté l'action), seule la lecture échouait — et le
+      // bouton restait muet. On récupère le JSON qui suit, et on signale la
+      // sortie parasite dans la console pour qu'elle soit corrigée.
+      const i = t.search(/\{\s*"success"\s*:/);
+      const j = t.lastIndexOf('}');
+      if (i > 0 && j > i) {
+        try {
+          const d = JSON.parse(t.slice(i, j + 1));
+          console.warn('Sortie inattendue du serveur avant la réponse :', t.slice(0, i).trim());
+          return d;
+        } catch (e2) { /* illisible : erreur ci-dessous */ }
+      }
       throw new Error(`Réponse serveur invalide (HTTP ${r.status}) : ${t.slice(0, 300)}`);
     }
   });

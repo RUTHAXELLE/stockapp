@@ -3596,8 +3596,11 @@ function confirmerRejet(){
   if(!motif){alert('Veuillez saisir un motif de rejet.');return;}
   ap({action:'rejeter_point', point_id:id, motif_rejet:motif}).then(d=>{
     toast(d.message, d.success?'success':'danger');
-    document.getElementById('mRejet').classList.remove('open');
-    if(d.success) setTimeout(()=>location.reload(), 900);
+    // En cas d'échec la fenêtre reste ouverte : le motif saisi n'est pas perdu.
+    if(d.success){
+      document.getElementById('mRejet').classList.remove('open');
+      setTimeout(()=>location.reload(), 900);
+    }
   });
 }
 document.getElementById('mRejet').addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.classList.remove('open');});
@@ -3605,7 +3608,18 @@ document.getElementById('mRejet').addEventListener('click',e=>{if(e.target===e.c
 function ap(data){
   const fd=new FormData();
   for(const[k,v]of Object.entries(data))if(v!==undefined)fd.append(k,v);
-  return fetch(window.location.href,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd}).then(achParseJson);
+  return fetch(window.location.href,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd}).then(achParseJson).catch(err=>{
+    // Sans ceci, une réponse illisible (session expirée, erreur serveur, coupure
+    // réseau) ne produisait AUCUN effet visible : le bouton semblait mort alors
+    // que l'action avait parfois bien été exécutée. Même forme qu'un refus du
+    // serveur : les appelants affichent déjà d.message.
+    console.error(err);
+    const brut = String((err && err.message) || err);
+    const page = /<\s*(!doctype|html|body|br|b)\b/i.test(brut);
+    return {success:false, message: page
+      ? 'Réponse inattendue du serveur (session expirée ou erreur). Rechargez la page, reconnectez-vous si besoin, puis vérifiez le statut du point avant de réessayer.'
+      : (/failed to fetch|networkerror|load failed/i.test(brut) ? 'Connexion au serveur impossible. Vérifiez le réseau et réessayez.' : brut)};
+  });
 }
 document.getElementById('mPoint').addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.classList.remove('open');});
 document.getElementById('mDetail').addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.classList.remove('open');});
