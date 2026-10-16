@@ -10,6 +10,7 @@ require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/referentiels.php';
 require_once __DIR__ . '/../includes/validation_stock.php';
+require_once __DIR__ . '/../includes/historique_optoplate.php';
 
 require_auth();
 
@@ -390,6 +391,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
 }
 
 // ============================================================
+// POST — ALIMENTER LE DASHBOARD AVEC LA PRODUCTION D'AVANT L'ERP
+//        (simulation, puis application sur confirmation)
+// ============================================================
+$rapport_historique = null;
+$msg_historique = null;
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'historique_optoplate') {
+    require_permission('import_emuci', 'can_create');
+    $h_du      = trim($_POST['hist_du'] ?? '');
+    $h_au      = trim($_POST['hist_au'] ?? '');
+    $h_site    = (int)($_POST['hist_site'] ?? 0);
+    $h_refaire = !empty($_POST['hist_refaire']);
+    $h_appliquer = ($_POST['mode'] ?? '') === 'appliquer';
+    $date_ok = fn($d) => (bool)preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) && strtotime($d) !== false;
+
+    if (!$date_ok($h_du) || !$date_ok($h_au)) {
+        $msg_historique = ['type'=>'danger','text'=>'Dates invalides : indiquez le début et la fin de la période.'];
+    } elseif ($h_au > date('Y-m-d', strtotime('-1 day'))) {
+        $msg_historique = ['type'=>'danger','text'=>"La période doit se terminer au plus tard hier : la journée en cours n'est pas terminée."];
+    } elseif ($h_du > $h_au) {
+        $msg_historique = ['type'=>'danger','text'=>"Période vide : le début est après la fin."];
+    } else {
+        try {
+            set_time_limit(0);
+            ini_set('memory_limit', '1G');
+            $rapport_historique = historique_optoplate($h_du, $h_au, $h_appliquer, $h_site, $h_refaire);
+            if ($h_appliquer && $rapport_historique['stats']['points'] > 0) {
+                audit_log($user['id'], 'CREATE', 'operations', 0,
+                    "Reconstitution historique OptoPlate $h_du au $h_au : {$rapport_historique['stats']['points']} point(s), {$rapport_historique['stats']['engins']} engins");
+            }
+        } catch (Throwable $e) {
+            $msg_historique = ['type'=>'danger','text'=>$e->getMessage()];
+        }
+    }
+}
+
+// ============================================================
 // POST — IMPORT OPTOTRACE (XLSX)
 // ============================================================
 $msg_optotrace = null;
@@ -652,6 +690,11 @@ if (!isset($_GET['date']) && !empty($result_optoplate)) {
 }
 $f_site = (int)($_GET['site'] ?? 0);
 $onglet = $_GET['tab'] ?? 'optoplate';
+
+// Encadré « Alimenter le dashboard » : période proposée (de la première plaque importée à la
+// veille du premier vrai point de l'ERP).
+$hist_prereq  = historique_optoplate_prerequis();
+$hist_periode = $hist_prereq ? null : historique_optoplate_periode();
 
 // Stats OptoPlate du jour — "in_use" (plaque réellement posée) compté sur sa
 // vraie date d'installation (date_installation), pas la date saisie à l'import
@@ -999,6 +1042,164 @@ include __DIR__ . '/../templates/header.php';
       </form>
     </div>
   </div>
+
+  <!-- Alimenter le dashboard : production d'avant l'ERP -->
+  <?php if(can('import_emuci', 'can_create')): ?>
+  <div class="card" style="margin-bottom:20px" id="alimenter-dashboard">
+    <div class="card-header">
+      <h3><i class="ph ph-chart-line-up" aria-hidden="true"></i> Alimenter le dashboard avec la production d'avant l'ERP</h3>
+    </div>
+    <div class="card-body">
+      <?php if($hist_prereq): ?>
+      <div class="alert alert-warning"><?= h($hist_prereq) ?></div>
+      <?php elseif(!$hist_periode['du']): ?>
+      <p style="margin:0;color:var(--muted);font-size:13px">Aucune plaque OptoPlate importée : importez d'abord un export ci-dessus.</p>
+      <?php else:
+        $hv_du = $rapport_historique['du'] ?? ($_POST['hist_du'] ?? $hist_periode['du']);
+        $hv_au = $rapport_historique['au'] ?? ($_POST['hist_au'] ?? $hist_periode['au']);
+        $hv_site = (int)($_POST['hist_site'] ?? 0);
+        $hv_refaire = !empty($_POST['hist_refaire']);
+        $champ = 'padding:9px 12px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;outline:none';
+      ?>
+      <p style="margin:0 0 10px;font-size:13px;color:var(--muted)">
+        Le dashboard ne lit que les points journaliers de l'ERP. Cette étape crée un point « historique » par site et par jour
+        à partir des plaques OptoPlate déjà importées. <strong>Aucun stock n'est modifié</strong>, et un jour déjà saisi dans l'ERP
+        n'est jamais touché. Vous voyez d'abord une simulation : rien n'est écrit sans votre clic sur « Alimenter ».
+      </p>
+      <p style="margin:0 0 14px;font-size:12.5px;color:var(--muted)">
+        Plaques importées depuis le <?= fmt_date($hist_periode['du'], 'd/m/Y') ?>.
+        <?php if($hist_periode['coupe_a_la_mise_en_service']): ?>
+        Premier point saisi dans l'ERP : <?= fmt_date($hist_periode['premier_reel'], 'd/m/Y') ?> (période proposée : jusqu'à la veille).
+        <?php elseif($hist_periode['premier_reel']): ?>
+        Le premier point saisi dans l'ERP (<?= fmt_date($hist_periode['premier_reel'], 'd/m/Y') ?>) précède les plaques importées : période proposée jusqu'à hier, les jours déjà saisis restent intacts.
+        <?php else: ?>Aucun point saisi dans l'ERP pour le moment (période proposée : jusqu'à hier).<?php endif; ?>
+      </p>
+
+      <?php if($msg_historique): ?>
+      <div class="alert alert-<?= $msg_historique['type'] ?>" style="margin-bottom:14px"><?= h($msg_historique['text']) ?></div>
+      <?php endif; ?>
+
+      <form method="POST" action="#alimenter-dashboard" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap"
+            onsubmit="var b=this.querySelector('button[type=submit]');b.disabled=true;b.textContent='Calcul en cours…'">
+        <input type="hidden" name="action" value="historique_optoplate">
+        <input type="hidden" name="mode" value="simuler">
+        <div>
+          <label for="hist-du" style="font-size:12.5px;font-weight:600;color:var(--navy);display:block;margin-bottom:5px">Du</label>
+          <input type="date" id="hist-du" name="hist_du" value="<?= h($hv_du) ?>" max="<?= date('Y-m-d', strtotime('-1 day')) ?>" style="<?= $champ ?>">
+        </div>
+        <div>
+          <label for="hist-au" style="font-size:12.5px;font-weight:600;color:var(--navy);display:block;margin-bottom:5px">Au</label>
+          <input type="date" id="hist-au" name="hist_au" value="<?= h($hv_au) ?>" max="<?= date('Y-m-d', strtotime('-1 day')) ?>" style="<?= $champ ?>">
+        </div>
+        <div>
+          <label for="hist-site" style="font-size:12.5px;font-weight:600;color:var(--navy);display:block;margin-bottom:5px">Site</label>
+          <select id="hist-site" name="hist_site" style="<?= $champ ?>">
+            <option value="0">Tous les sites</option>
+            <?php foreach($sites_list as $_s): ?>
+            <option value="<?= (int)$_s['id'] ?>"<?= $hv_site === (int)$_s['id'] ? ' selected' : '' ?>><?= h($_s['nom']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <label style="font-size:12.5px;color:var(--navy);display:flex;align-items:center;gap:6px;padding-bottom:10px">
+          <input type="checkbox" name="hist_refaire" value="1"<?= $hv_refaire ? ' checked' : '' ?>> Recalculer les jours déjà reconstitués
+        </label>
+        <button type="submit" class="btn btn-secondary"><i class="ph ph-magnifying-glass" aria-hidden="true"></i> Simuler</button>
+      </form>
+
+      <?php if($rapport_historique): $rh = $rapport_historique; $st = $rh['stats']; ?>
+      <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:16px">
+        <?php if(!$st['points']): ?>
+        <div class="alert alert-warning">
+          Rien à <?= $rh['appliquer'] ? 'écrire' : 'reconstituer' ?> du <?= fmt_date($rh['du'], 'd/m/Y') ?> au <?= fmt_date($rh['au'], 'd/m/Y') ?> :
+          <?= (int)$st['ignores_reels'] ?> jour(s) ont déjà un point saisi dans l'ERP, <?= (int)$st['ignores_hist'] ?> sont déjà reconstitué(s)
+          <?= $st['ignores_hist'] ? '(cochez « Recalculer » pour les refaire)' : '' ?>.
+          <?php if($rh['sans_site']): ?> <?= (int)$rh['sans_site'] ?> plaque(s) appartiennent à un site inconnu.<?php endif; ?>
+        </div>
+        <?php else: ?>
+        <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:15px;font-weight:700;color:var(--navy);margin-bottom:10px">
+          <?php if($rh['appliquer']): ?>
+          <i class="ph ph-check-circle" aria-hidden="true" style="color:#059669"></i> Dashboard alimenté
+          <?php else: ?>
+          <i class="ph ph-eye" aria-hidden="true"></i> Simulation : rien n'est encore écrit
+          <?php endif; ?>
+          — du <?= fmt_date($rh['du'], 'd/m/Y') ?> au <?= fmt_date($rh['au'], 'd/m/Y') ?>
+        </div>
+        <div class="stat-grid" style="margin-bottom:14px">
+          <div class="stat-card green"><div class="stat-val"><?= fmt_number($st['points']) ?></div><div class="stat-lbl">Points <?= $rh['appliquer'] ? 'créés' : 'à créer' ?> (site × jour)</div></div>
+          <div class="stat-card"><div class="stat-val"><?= fmt_number($st['engins']) ?></div><div class="stat-lbl">Engins</div></div>
+          <div class="stat-card"><div class="stat-val"><?= fmt_number($st['plaques']) ?></div><div class="stat-lbl">Plaques</div></div>
+        </div>
+        <div class="table-wrap" style="margin-bottom:12px">
+          <table>
+            <thead><tr><th>Mois</th><th style="text-align:center">Points</th><th style="text-align:center">Engins</th><th style="text-align:center">Plaques</th></tr></thead>
+            <tbody>
+            <?php foreach($rh['par_mois'] as $m => $v): ?>
+            <tr>
+              <td style="font-weight:600"><?= h(fmt_date($m . '-01', 'm/Y')) ?></td>
+              <td style="text-align:center"><?= (int)$v['points'] ?></td>
+              <td style="text-align:center;font-weight:700"><?= fmt_number($v['engins']) ?></td>
+              <td style="text-align:center"><?= fmt_number($v['plaques']) ?></td>
+            </tr>
+            <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+        <details style="margin-bottom:12px">
+          <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--navy)">Détail par site (<?= count($rh['par_site']) ?>)</summary>
+          <div class="table-wrap" style="margin-top:8px">
+            <table>
+              <thead><tr><th>Site</th><th style="text-align:center">Jours</th><th style="text-align:center">Engins</th><th style="text-align:center">dont duplicata / post-immat</th></tr></thead>
+              <tbody>
+              <?php foreach($rh['par_site'] as $v): ?>
+              <tr>
+                <td style="font-weight:600"><?= h($v['nom']) ?></td>
+                <td style="text-align:center"><?= (int)$v['points'] ?></td>
+                <td style="text-align:center"><?= fmt_number($v['engins']) ?></td>
+                <td style="text-align:center"><?= (int)$v['dup_pi'] ?></td>
+              </tr>
+              <?php endforeach; ?>
+              </tbody>
+            </table>
+          </div>
+        </details>
+
+        <?php if($st['ignores_reels']): ?><p style="margin:4px 0;font-size:12.5px;color:var(--muted)"><i class="ph ph-info" aria-hidden="true"></i> <?= (int)$st['ignores_reels'] ?> jour(s) ignoré(s) : déjà saisis dans l'ERP.</p><?php endif; ?>
+        <?php if($st['ignores_hist']): ?><p style="margin:4px 0;font-size:12.5px;color:var(--muted)"><i class="ph ph-info" aria-hidden="true"></i> <?= (int)$st['ignores_hist'] ?> jour(s) ignoré(s) : déjà reconstitués (cochez « Recalculer » pour les refaire).</p><?php endif; ?>
+        <?php if($rh['appliquer'] && $st['refaits']): ?><p style="margin:4px 0;font-size:12.5px;color:var(--muted)"><i class="ph ph-info" aria-hidden="true"></i> <?= (int)$st['refaits'] ?> jour(s) reconstitué(s) puis refait(s).</p><?php endif; ?>
+        <?php if($rh['sans_site']): ?><p style="margin:4px 0;font-size:12.5px;color:#92400E"><i class="ph ph-warning" aria-hidden="true"></i> <?= (int)$rh['sans_site'] ?> plaque(s) d'un site inconnu ne sont dans aucun point : créez le site dans l'écran Sites, puis réimportez le fichier.</p><?php endif; ?>
+        <?php if($st['vehicules_autre']): ?><p style="margin:4px 0;font-size:12.5px;color:#92400E"><i class="ph ph-warning" aria-hidden="true"></i> <?= (int)$st['vehicules_autre'] ?> véhicule(s) de catégorie inconnue comptés en VP.</p><?php endif; ?>
+        <?php if($st['plaques_sans_bobine']): ?>
+        <p style="margin:4px 0;font-size:12.5px;color:#92400E"><i class="ph ph-warning" aria-hidden="true"></i>
+          Films : <?= (int)$st['plaques_sans_bobine'] ?> plaque(s) sur <?= (int)$st['plaques_total'] ?> sont sur des bobines absentes de l'ERP ;
+          les films par bobine du dashboard seront en dessous des engins.
+          <?php if($rh['bobines_inconnues']): ?>Bobines les plus concernées : <?= h(implode(', ', array_map(fn($n, $v) => "$n ($v)", array_keys($rh['bobines_inconnues']), $rh['bobines_inconnues']))) ?>.<?php endif; ?>
+        </p>
+        <?php endif; ?>
+
+        <?php if(!$rh['appliquer']): ?>
+        <form method="POST" action="#alimenter-dashboard" style="margin-top:14px"
+              onsubmit="var b=this.querySelector('button[type=submit]');b.disabled=true;b.textContent='Écriture en cours…'">
+          <input type="hidden" name="action" value="historique_optoplate">
+          <input type="hidden" name="mode" value="appliquer">
+          <input type="hidden" name="hist_du" value="<?= h($rh['du']) ?>">
+          <input type="hidden" name="hist_au" value="<?= h($rh['au']) ?>">
+          <input type="hidden" name="hist_site" value="<?= (int)$rh['site_seul'] ?>">
+          <?php if($rh['refaire']): ?><input type="hidden" name="hist_refaire" value="1"><?php endif; ?>
+          <button type="submit" class="btn btn-primary"><i class="ph ph-chart-line-up" aria-hidden="true"></i> Alimenter le dashboard (<?= fmt_number($st['points']) ?> points)</button>
+        </form>
+        <?php else: $dernier_mois = array_key_last($rh['par_mois']); ?>
+        <p style="margin:8px 0 0;font-size:13px">
+          Aucun stock n'a été modifié.
+          <a href="pdg_overview.php?periode=mensuel&amp;mois=<?= h($dernier_mois) ?>" style="color:var(--blue);font-weight:600">Voir la vue PDG de <?= h(fmt_date($dernier_mois . '-01', 'm/Y')) ?></a>
+        </p>
+        <?php endif; ?>
+        <?php endif; ?>
+      </div>
+      <?php endif; ?>
+      <?php endif; ?>
+    </div>
+  </div>
+  <?php endif; ?>
 
   <!-- Résultats du jour -->
   <?php if(!empty($stats_optoplate)): ?>
