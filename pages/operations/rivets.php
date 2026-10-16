@@ -114,27 +114,40 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     header('Content-Type: application/json');
     $action = $_POST['action'] ?? '';
 
+    // Type obligatoire : sans lui, l'INSERT prenait la valeur par défaut de la
+    // colonne ('gonflable') et tout approvisionnement / ajustement tombait sur
+    // les gonflables, même pour des rivets éclatés.
+    $types_ok = ['gonflable' => 'gonflables', 'eclate' => 'éclatés'];
+
     if ($action==='approvisionner') {
         $site_id = (int)($_POST['site_id'] ?? 0);
+        $type    = trim($_POST['type_rivet'] ?? '');
         $qte     = (int)($_POST['quantite'] ?? 0);
         $notes   = trim($_POST['notes'] ?? '');
         if (!$site_id || $qte <= 0) json_response(false,'Site et quantité obligatoires.');
+        if (!isset($types_ok[$type])) json_response(false,'Type de rivet obligatoire (gonflables ou éclatés).');
         $site = db_fetch_one("SELECT nom FROM sites WHERE id=?",[$site_id]);
-        db_query("INSERT INTO op_stock_rivets (site_id,quantite) VALUES (?,?)
-                  ON DUPLICATE KEY UPDATE quantite=quantite+VALUES(quantite)",[$site_id,$qte]);
-        audit_log($user['id'],'CREATE','operations',$site_id,"Approvisionnement $qte rivets → {$site['nom']} ($notes)");
-        $nouveau = (int)db_fetch_value("SELECT quantite FROM op_stock_rivets WHERE site_id=?",[$site_id]);
-        json_response(true,"$qte rivets ajoutés. Stock total : $nouveau.");
+        db_query("INSERT INTO op_stock_rivets (site_id,type_rivet,quantite) VALUES (?,?,?)
+                  ON DUPLICATE KEY UPDATE quantite=quantite+VALUES(quantite), updated_at=CURRENT_TIMESTAMP",
+            [$site_id,$type,$qte]);
+        audit_log($user['id'],'CREATE','operations',$site_id,"Approvisionnement $qte rivets {$types_ok[$type]} → {$site['nom']} ($notes)");
+        $nouveau = (int)db_fetch_value("SELECT quantite FROM op_stock_rivets WHERE site_id=? AND type_rivet=?",[$site_id,$type]);
+        json_response(true,"$qte rivets {$types_ok[$type]} ajoutés. Stock {$types_ok[$type]} : $nouveau.");
     }
 
     if ($action==='ajuster') {
         $site_id = (int)($_POST['site_id'] ?? 0);
+        $type    = trim($_POST['type_rivet'] ?? '');
         $new_qte = (int)($_POST['new_qte']  ?? 0);
         $motif   = trim($_POST['motif']      ?? '');
-        $old     = (int)db_fetch_value("SELECT COALESCE(quantite,0) FROM op_stock_rivets WHERE site_id=?",[$site_id]);
-        db_query("INSERT INTO op_stock_rivets (site_id,quantite) VALUES (?,?) ON DUPLICATE KEY UPDATE quantite=VALUES(quantite)",
-            [$site_id,$new_qte]);
-        audit_log($user['id'],'UPDATE','operations',$site_id,"Ajustement rivets site:$site_id : $old → $new_qte ($motif)");
+        if (!$site_id) json_response(false,'Site obligatoire.');
+        if (!isset($types_ok[$type])) json_response(false,'Type de rivet obligatoire (gonflables ou éclatés).');
+        if ($new_qte < 0) json_response(false,'Le stock ne peut pas être négatif.');
+        $old     = (int)db_fetch_value("SELECT COALESCE(quantite,0) FROM op_stock_rivets WHERE site_id=? AND type_rivet=?",[$site_id,$type]);
+        db_query("INSERT INTO op_stock_rivets (site_id,type_rivet,quantite) VALUES (?,?,?)
+                  ON DUPLICATE KEY UPDATE quantite=VALUES(quantite), updated_at=CURRENT_TIMESTAMP",
+            [$site_id,$type,$new_qte]);
+        audit_log($user['id'],'UPDATE','operations',$site_id,"Ajustement rivets {$types_ok[$type]} site:$site_id : $old → $new_qte ($motif)");
         json_response(true,'Stock ajusté.');
     }
 
@@ -684,6 +697,13 @@ foreach ($stocks as $r) {
           <?php foreach($sites_list as $s): ?><option value="<?= $s['id'] ?>"><?= h($s['nom']) ?></option><?php endforeach; ?>
         </select>
       </div>
+      <div class="form-group"><label>Type de rivet *</label>
+        <select class="form-control" id="ap-type">
+          <option value="">— Sélectionner —</option>
+          <option value="gonflable">Gonflables</option>
+          <option value="eclate">Éclatés</option>
+        </select>
+      </div>
       <div class="form-group"><label>Quantité de rivets *</label>
         <input type="number" class="form-control" id="ap-qte" min="1" placeholder="Ex: 5000">
       </div>
@@ -710,6 +730,13 @@ foreach ($stocks as $r) {
           <?php foreach($sites_list as $s): ?><option value="<?= $s['id'] ?>"><?= h($s['nom']) ?></option><?php endforeach; ?>
         </select>
       </div>
+      <div class="form-group"><label>Type de rivet *</label>
+        <select class="form-control" id="aj-type">
+          <option value="">— Sélectionner —</option>
+          <option value="gonflable">Gonflables</option>
+          <option value="eclate">Éclatés</option>
+        </select>
+      </div>
       <div class="form-group"><label>Nouveau stock *</label>
         <input type="number" class="form-control" id="aj-qte" min="0">
       </div>
@@ -727,11 +754,11 @@ foreach ($stocks as $r) {
 <script>
 function ap(data){const fd=new FormData();for(const[k,v]of Object.entries(data))if(v!==undefined)fd.append(k,v);return fetch(window.location.href,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd}).then(r=>r.json());}
 function saveAppro(){
-  ap({action:'approvisionner',site_id:document.getElementById('ap-site').value,quantite:document.getElementById('ap-qte').value,notes:document.getElementById('ap-notes').value})
+  ap({action:'approvisionner',site_id:document.getElementById('ap-site').value,type_rivet:document.getElementById('ap-type').value,quantite:document.getElementById('ap-qte').value,notes:document.getElementById('ap-notes').value})
     .then(d=>{if(d.success){toast(d.message,'success');document.getElementById('mAppro').classList.remove('open');setTimeout(()=>location.reload(),800);}else document.getElementById('apAlert').innerHTML=`<div class="alert alert-danger">${d.message}</div>`;});
 }
 function saveAjust(){
-  ap({action:'ajuster',site_id:document.getElementById('aj-site').value,new_qte:document.getElementById('aj-qte').value,motif:document.getElementById('aj-motif').value})
+  ap({action:'ajuster',site_id:document.getElementById('aj-site').value,type_rivet:document.getElementById('aj-type').value,new_qte:document.getElementById('aj-qte').value,motif:document.getElementById('aj-motif').value})
     .then(d=>{if(d.success){toast(d.message,'success');document.getElementById('mAjust').classList.remove('open');setTimeout(()=>location.reload(),800);}else document.getElementById('ajAlert').innerHTML=`<div class="alert alert-danger">${d.message}</div>`;});
 }
 // ── Filtres sans rechargement de page (meme pattern que equipements.php et
