@@ -273,7 +273,7 @@ include __DIR__ . '/../templates/header.php';
     </div>
   <?php else: ?>
     <div<?= count($a_valider) > 4 ? ' class="di-scroll"' : '' ?>>
-    <table class="di-tbl">
+    <table data-paginer="25" class="di-tbl">
       <thead><tr><th>Référence</th><th>Type</th><th>Demandeur</th><th>Étape</th><th>Soumise le</th><th>Statut</th></tr></thead>
       <tbody>
       <?php foreach ($a_valider as $d): ?>
@@ -305,7 +305,7 @@ include __DIR__ . '/../templates/header.php';
     </div>
   <?php else: ?>
     <div<?= count($a_traiter) > 4 ? ' class="di-scroll"' : '' ?>>
-    <table class="di-tbl">
+    <table data-paginer="25" class="di-tbl">
       <thead><tr><th>Référence</th><th>Type</th><th>Demandeur</th><th>Approuvée le</th><th>Statut</th></tr></thead>
       <tbody>
       <?php foreach ($a_traiter as $d): ?>
@@ -331,7 +331,7 @@ include __DIR__ . '/../templates/header.php';
   </div>
   <?php // Au-delà de quatre lignes la liste défile dans son cadre. ?>
   <div<?= count($deja_traite) > 4 ? ' class="di-scroll"' : '' ?>>
-    <table class="di-tbl">
+    <table data-paginer="25" class="di-tbl">
       <thead><tr><th>Référence</th><th>Type</th><th>Demandeur</th><th>Étape courante</th><th>Ticket GLPI</th><th>Soumise le</th><th>Statut</th></tr></thead>
       <tbody>
       <?php foreach ($deja_traite as $d): ?>

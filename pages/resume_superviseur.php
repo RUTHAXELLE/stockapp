@@ -291,7 +291,7 @@ include __DIR__ . '/../templates/header.php';
     <span style="font-size:13px;color:var(--muted)"><?= count($pj_jour) ?> point(s)</span>
   </div>
   <div class="table-wrap">
-    <table>
+    <table data-paginer="25">
       <thead><tr>
         <th>Site</th><th>Type</th>
         <th style="text-align:center">VP</th>

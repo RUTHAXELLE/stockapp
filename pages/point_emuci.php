@@ -250,7 +250,7 @@ include __DIR__ . '/../templates/header.php';
 </div>
 <?php else: ?>
 <div class="card" style="padding:0;overflow:hidden">
-  <table class="data-table" style="margin:0">
+  <table data-paginer="25" class="data-table" style="margin:0">
     <thead>
       <tr>
         <th>Site</th>

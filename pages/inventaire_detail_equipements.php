@@ -460,7 +460,7 @@ include __DIR__ . '/../templates/header.php';
 <!-- TABLEAU PRINCIPAL -->
 <div class="card" style="padding:0;overflow:hidden">
   <div class="table-wrap" style="overflow-x:auto">
-    <table id="invTable">
+    <table data-paginer="25" id="invTable">
       <thead>
         <tr style="background:#0d1f35;color:white">
           <th style="padding:10px 14px;text-align:left">N° série interne</th>

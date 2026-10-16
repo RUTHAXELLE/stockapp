@@ -884,7 +884,7 @@ include __DIR__ . '/../templates/header.php';
     </h3>
   </div>
   <div class="table-wrap">
-    <table>
+    <table data-paginer="25">
       <thead><tr>
         <th>Date</th>
         <?php if (!$site_force): ?><th>Site</th><?php endif; ?>
@@ -922,7 +922,7 @@ include __DIR__ . '/../templates/header.php';
         </tr>
       <?php endforeach; endif; ?>
       <?php if (!empty($conso)): ?>
-        <tr style="background:#f0f4ff">
+        <tr data-pg-fixe style="background:#f0f4ff">
           <td colspan="<?= $site_force ? 2 : 3 ?>" style="font-weight:700;color:var(--navy)">TOTAL PÉRIODE</td>
           <td style="text-align:center;font-family:'Montserrat',sans-serif;font-weight:900;color:var(--blue)"><?= $grand_total['utilises'] ?></td>
           <td style="text-align:center;font-family:'Montserrat',sans-serif;font-weight:900;color:var(--danger-d)"><?= $grand_total['endommages'] ?: '—' ?></td>

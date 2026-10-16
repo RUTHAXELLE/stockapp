@@ -135,7 +135,7 @@ function ach_suivi_render_zone(array $lignes, bool $can_edit, array $user): void
         <div class="ach-empty">Aucune ligne de suivi pour ces filtres.</div>
       <?php else: ?>
       <div style="overflow-x:auto">
-      <table class="ach-table">
+      <table data-paginer="25" class="ach-table">
         <thead><tr>
           <th>FEB</th><th>Article</th><th>Qté</th><th>Fournisseur</th><th>N° DA</th><th>N° BC</th>
           <th>Livraison prévue</th><th>Reçu / Écart</th><th>Statut</th><th>Actions</th>

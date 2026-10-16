@@ -1360,7 +1360,7 @@ include __DIR__ . '/../templates/header.php';
       <span style="font-size:12px;color:var(--muted)">keyname = N° bobine</span>
     </div>
     <div class="table-wrap">
-      <table>
+      <table data-paginer="25">
         <thead><tr>
           <th>N° Bobine (keyname)</th>
           <th>Format</th>
@@ -1416,7 +1416,7 @@ include __DIR__ . '/../templates/header.php';
          class="btn btn-secondary btn-sm"><i class="ph ph-download-simple" aria-hidden="true"></i> Export Excel</a>
     </div>
     <div class="table-wrap">
-      <table>
+      <table data-paginer="25">
         <thead><tr>
           <th>Site</th>
           <th style="text-align:center">In Use EMUCI</th>
@@ -1460,7 +1460,7 @@ include __DIR__ . '/../templates/header.php';
   <div class="card">
     <div class="card-header"><h3><i class="ph ph-calendar" aria-hidden="true"></i> Historique des imports</h3></div>
     <div class="table-wrap">
-      <table>
+      <table data-paginer="25">
         <thead><tr>
           <th>Date</th>
           <th>Type</th>

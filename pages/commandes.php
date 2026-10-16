@@ -1360,7 +1360,7 @@ include __DIR__ . '/../templates/header.php';
     <h3><i class="ph-duotone ph-shopping-cart"></i> Commandes <span style="font-size:12px;font-weight:400;color:var(--muted)">(<?= count($commandes) ?>)</span></h3>
   </div>
   <div class="table-wrap">
-    <table>
+    <table data-paginer="25">
       <thead><tr>
         <th>N° Commande</th><th>Site</th><th>Date</th>
         <th style="text-align:center">Articles</th>

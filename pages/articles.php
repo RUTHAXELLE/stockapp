@@ -684,7 +684,7 @@ include __DIR__ . '/../templates/header.php';
   </div>
   <?php endif; ?>
 
-  <div class="art-grid" id="artGrid">
+  <div data-paginer="25" class="art-grid" id="artGrid">
   <?php foreach($articles_list as $a):
     // Un site est filtré : la carte montre sa quantité sur CE site plutôt
     // que le stock central agrégé (remplace l'ancien écran « Stock magasin »).
@@ -934,7 +934,7 @@ include __DIR__ . '/../templates/header.php';
       <h3><i class="ph-duotone ph-list"></i> Historique mouvements (80 derniers)</h3>
     </div>
     <div class="table-wrap">
-      <table>
+      <table data-paginer="25">
         <thead><tr>
           <th>Date</th><th>Type</th><th>Article</th>
           <th style="text-align:right">Quantité</th>

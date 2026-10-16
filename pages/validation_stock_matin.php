@@ -1648,7 +1648,7 @@ $nb_total_bobines = count($coord_reajust_details);
     Aucune validation enregistrée pour le <?= fmt_date($f_date,'d/m/Y') ?>.
   </div>
   <?php else: ?>
-  <table class="vsm-tbl">
+  <table data-paginer="25" class="vsm-tbl">
     <thead><tr>
       <th>Site</th>
       <th class="tc">Date validation</th>
@@ -1769,7 +1769,7 @@ $nb_total_bobines = count($coord_reajust_details);
     </div>
     <span style="font-size:12px;color:var(--muted)" id="hist-filter-info"></span>
   </div>
-  <table class="vsm-tbl" id="hist-table">
+  <table data-paginer="25" class="vsm-tbl" id="hist-table">
     <thead><tr>
       <th>Site</th>
       <th class="tc">Date validation</th>

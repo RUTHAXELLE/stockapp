@@ -566,7 +566,7 @@ $type_colors = [
 <!-- ── TABLEAU DES SITES ────────────────────────── -->
 <div class="card">
   <div class="table-wrap sites-table-wrap">
-    <table class="sites-table" style="width:100%">
+    <table data-paginer="25" class="sites-table" style="width:100%">
       <thead>
         <tr>
           <th>Site</th>

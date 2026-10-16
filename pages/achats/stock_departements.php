@@ -151,7 +151,7 @@ include __DIR__ . '/../../templates/header.php';
     <div class="ach-empty">Aucun stock départemental pour ces filtres.</div>
   <?php else: ?>
   <div style="overflow-x:auto">
-  <table class="ach-table">
+  <table data-paginer="25" class="ach-table">
     <thead><tr>
       <th>Département</th><th>Article</th><th>Code</th><th>Quantité</th><th>Valorisation</th><th>Dernière réception</th>
     </tr></thead>
@@ -184,7 +184,7 @@ include __DIR__ . '/../../templates/header.php';
     <div class="ach-empty">Aucun équipement affecté pour ces filtres.</div>
   <?php else: ?>
   <div style="overflow-x:auto">
-  <table class="ach-table">
+  <table data-paginer="25" class="ach-table">
     <thead><tr>
       <th>Département</th><th>Équipement</th><th>N° série</th><th>Localisation</th><th>Valeur</th><th>Mise en service</th>
     </tr></thead>

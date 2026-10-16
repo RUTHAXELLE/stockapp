@@ -327,7 +327,7 @@ include __DIR__ . '/../templates/header.php';
 <!-- TABLEAU -->
 <div class="card" style="padding:0;overflow:hidden">
   <div class="table-wrap" style="overflow-x:auto">
-    <table>
+    <table data-paginer="25">
       <thead><tr>
         <th>Date</th><th>Site</th><th>Élément</th>
         <th style="text-align:center">N°</th>

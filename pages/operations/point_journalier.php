@@ -1620,7 +1620,7 @@ $corrections_demandees = ($role_slug_pj === 'coordinateur_site' && $user['site_i
   <div style="font-size:13px;margin-top:4px">Cliquez sur "Nouveau point" pour commencer</div>
 </div>
 <?php else: ?>
-<div style="display:flex;flex-direction:column;gap:8px">
+<div data-paginer="25" style="display:flex;flex-direction:column;gap:8px">
 <?php
 $statut_cfg = [
   'valide'                => ['bg'=>'#d1fae5','col'=>'#065f46','icon'=>'<i class="ph ph-check-circle" aria-hidden="true"></i>','lbl'=>'Validé'],

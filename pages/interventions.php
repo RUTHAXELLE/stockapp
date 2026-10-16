@@ -245,7 +245,7 @@ foreach($types_onglets as $tab_key => $type_filtre):
       </h3>
     </div>
     <div class="table-wrap">
-      <table>
+      <table data-paginer="25">
         <thead><tr>
           <th>Date</th><th>Type</th><th>Équipement</th><th>Site</th>
           <th>Description</th><th style="text-align:center">Priorité</th>

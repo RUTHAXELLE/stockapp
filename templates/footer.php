@@ -265,7 +265,106 @@ function achParseJson(r) {
 .toast-danger  { background: #fdf0ef; color: #922b21; border-left: 3px solid #e74c3c; }
 .toast-warning { background: #fef9e7; color: #9a7d0a; border-left: 3px solid #f39c12; }
 .toast-info    { background: #ebf5fb; color: #1a5276; border-left: 3px solid #2980b9; }
+
+/* Pagination côté navigateur (voir script ci-dessous) */
+.pg-hors-page { display: none !important; }
+.pg-nav { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+          padding:12px 18px; border-top:1px solid var(--border); font-size:13px; color:var(--muted); }
+.pg-nav .pg-btns { display:flex; gap:4px; align-items:center; flex-wrap:wrap; }
+.pg-nav button { padding:6px 11px; border-radius:8px; border:1.5px solid var(--border); background:white;
+                 color:var(--navy); font-size:13px; font-family:inherit; cursor:pointer; }
+.pg-nav button.pg-actif { background:var(--navy); color:white; border-color:var(--navy); font-weight:700; }
+.pg-nav button:disabled { opacity:.35; cursor:default; }
+@media print { .pg-hors-page { display: revert !important; } .pg-nav { display:none !important; } }
 </style>
+
+<script>
+// ===== PAGINATION CÔTÉ NAVIGATEUR =====
+// Tout élément portant data-paginer="25" est découpé en pages de 25 :
+//  - un <table> : ses lignes de <tbody> (sauf .total-row et [data-pg-fixe]) ;
+//  - tout autre conteneur : ses enfants directs (cartes, blocs…).
+// Les requêtes, indicateurs et exports de la page ne changent pas. Les lignes
+// déjà masquées par un filtre de la page (style display:none) sont ignorées,
+// et la pagination se recalcule quand un filtre ou un rechargement AJAX
+// modifie le contenu (MutationObserver).
+(function () {
+  function elements(el) {
+    if (el.tagName === 'TABLE') {
+      return Array.from(el.tBodies).flatMap(tb => Array.from(tb.rows))
+        .filter(r => !r.matches('.total-row,[data-pg-fixe]'));
+    }
+    return Array.from(el.children).filter(c => !c.matches('.pg-nav,[data-pg-fixe],script,style'));
+  }
+  function emplacementNav(el) {
+    return el.closest('.table-wrap,.overflow-wrap,[data-pg-wrap]') || el;
+  }
+  function rendre(el) {
+    const n   = parseInt(el.dataset.paginer, 10) || 25;
+    const tous = elements(el);
+    tous.forEach(r => r.classList.remove('pg-hors-page'));
+    const vis = tous.filter(r => r.style.display !== 'none' && !r.hidden);
+    const pages = Math.ceil(vis.length / n);
+    let nav = el._pgNav;
+    if (pages <= 1) { if (nav) nav.style.display = 'none'; return; }
+    el._pgPage = Math.min(Math.max(1, el._pgPage || 1), pages);
+    const p = el._pgPage;
+    vis.forEach((r, i) => { if (Math.floor(i / n) + 1 !== p) r.classList.add('pg-hors-page'); });
+    if (!nav || !nav.isConnected) {
+      nav = document.createElement('div');
+      nav.className = 'pg-nav';
+      emplacementNav(el).insertAdjacentElement('afterend', nav);
+      nav.addEventListener('click', e => {
+        const b = e.target.closest('button[data-pg]');
+        if (!b || b.disabled) return;
+        el._pgPage = +b.dataset.pg;
+        rendre(el);
+        const haut = emplacementNav(el).getBoundingClientRect().top;
+        if (haut < 0) window.scrollBy({ top: haut - 80, behavior: 'smooth' });
+      });
+      el._pgNav = nav;
+    }
+    const btn = (lbl, pg, actif, off) =>
+      `<button type="button" data-pg="${pg}" class="${actif ? 'pg-actif' : ''}" ${off ? 'disabled' : ''}>${lbl}</button>`;
+    let h = btn('‹', p - 1, false, p <= 1);
+    for (let i = 1; i <= pages; i++) {
+      if (i === 1 || i === pages || Math.abs(i - p) <= 2) h += btn(i, i, i === p, false);
+      else if (Math.abs(i - p) === 3) h += '<span style="padding:6px 4px">…</span>';
+    }
+    h += btn('›', p + 1, false, p >= pages);
+    const de = (p - 1) * n + 1, a = Math.min(p * n, vis.length);
+    nav.innerHTML = `<span>${de}–${a} sur ${vis.length.toLocaleString('fr-FR')} résultat${vis.length > 1 ? 's' : ''}</span><div class="pg-btns">${h}</div>`;
+    nav.style.display = 'flex';
+  }
+
+  const enAttente = new Set();
+  function planifier(el, retourPage1) {
+    if (retourPage1) el._pgPage = 1;
+    if (enAttente.has(el)) return;
+    enAttente.add(el);
+    requestAnimationFrame(() => { enAttente.delete(el); rendre(el); });
+  }
+  window.paginerTableaux = function (racine) {
+    (racine || document).querySelectorAll('[data-paginer]').forEach(el => planifier(el, false));
+  };
+  document.addEventListener('DOMContentLoaded', () => window.paginerTableaux());
+
+  // Filtres (style des lignes) et rechargements AJAX (lignes remplacées) :
+  // on recalcule et on revient à la page 1.
+  new MutationObserver(muts => {
+    for (const m of muts) {
+      const t = m.target.nodeType === 1 ? m.target : m.target.parentElement;
+      if (!t) continue;
+      const el = t.closest('[data-paginer]');
+      if (el) planifier(el, true);
+      if (m.type === 'childList') m.addedNodes.forEach(nd => {
+        if (nd.nodeType !== 1) return;
+        if (nd.matches('[data-paginer]')) planifier(nd, true);
+        nd.querySelectorAll && nd.querySelectorAll('[data-paginer]').forEach(x => planifier(x, true));
+      });
+    }
+  }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'hidden'] });
+})();
+</script>
 
 </body>
 </html>

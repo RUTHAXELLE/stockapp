@@ -612,7 +612,7 @@ include __DIR__ . '/../templates/header.php';
       <?php endif; ?>
     </div>
   <?php else: ?>
-    <table class="di-tbl">
+    <table data-paginer="25" class="di-tbl">
       <thead><tr>
         <th style="width:42px">N°</th><th>Réf.</th><th>Type</th><th>Demandeur</th><th>Statut</th><th>Étape</th><th>Date</th><th></th>
       </tr></thead>

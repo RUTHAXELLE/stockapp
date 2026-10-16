@@ -312,7 +312,7 @@ function ach_fa_render_section(string $titre, array $feb_list, string $mode, boo
           <div class="ach-empty">Aucune FEB dans cette section.</div>
         <?php else: ?>
         <div style="overflow-x:auto">
-        <table class="ach-table">
+        <table data-paginer="25" class="ach-table">
           <thead><tr>
             <th>Numéro</th><th>Objet</th><th>Demandeur</th><th>Site</th>
             <th>Urgence</th><th>Lignes</th><th>Ancienneté</th>

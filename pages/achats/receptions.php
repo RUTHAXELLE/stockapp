@@ -257,7 +257,7 @@ function ach_rc_render_zone(array $lignes_magasin, array $lignes_expedition, arr
         <div class="ach-empty">Aucune ligne à réceptionner<?= $site_force ? ' pour votre site' : '' ?>.</div>
       <?php else: ?>
       <div style="overflow-x:auto">
-      <table class="ach-table">
+      <table data-paginer="25" class="ach-table">
         <thead><tr>
           <th>FEB</th><th>Article</th><th>Nomenclature</th><th>Fournisseur</th><th>Commandée</th><th>Déjà reçue</th><th>Reste à recevoir</th>
           <th>Livraison prévue</th><th>Actions</th>
@@ -307,7 +307,7 @@ function ach_rc_render_zone(array $lignes_magasin, array $lignes_expedition, arr
         <div class="ach-empty">Rien au magasin en attente d'expédition.</div>
       <?php else: ?>
       <div style="overflow-x:auto">
-      <table class="ach-table">
+      <table data-paginer="25" class="ach-table">
         <thead><tr>
           <th>FEB</th><th>Article</th><th>Département</th><th>Reçu au magasin</th><th>Déjà expédié</th><th>Reste à expédier</th><th>Actions</th>
         </tr></thead>
@@ -348,7 +348,7 @@ function ach_rc_render_zone(array $lignes_magasin, array $lignes_expedition, arr
         <div class="ach-empty">Rien en attente de confirmation.</div>
       <?php else: ?>
       <div style="overflow-x:auto">
-      <table class="ach-table">
+      <table data-paginer="25" class="ach-table">
         <thead><tr>
           <th>FEB</th><th>Article</th><th>Département</th><th>Expédié</th><th>Déjà confirmé</th><th>Reste à confirmer</th><th>Actions</th>
         </tr></thead>

@@ -302,7 +302,7 @@ include __DIR__ . '/../templates/header.php';
     <span style="font-size:12px;color:var(--muted)"><?= count($receptions) ?> enregistrement(s)</span>
   </div>
   <div class="table-wrap">
-    <table>
+    <table data-paginer="25">
       <thead><tr>
         <th>Date</th>
         <th>Site</th>

@@ -222,7 +222,7 @@ include __DIR__ . '/../../templates/header.php';
     <div class="ach-empty">Aucun exemplaire en attente d'affectation<?= $f_departement ? ' pour ce département' : '' ?>.</div>
   <?php else: ?>
   <div style="overflow-x:auto">
-  <table class="ach-table">
+  <table data-paginer="25" class="ach-table">
     <thead><tr>
       <th>N° série (provisoire)</th><th>Nomenclature</th><th>Département</th><th>FEB d'origine</th><th>Valeur</th><th>Date de réception</th>
       <?php if ($can_proposer): ?><th>Actions</th><?php endif; ?>
@@ -263,7 +263,7 @@ include __DIR__ . '/../../templates/header.php';
     <div class="ach-empty">Aucune proposition d'affectation en cours<?= $f_departement ? ' pour ce département' : '' ?>.</div>
   <?php else: ?>
   <div style="overflow-x:auto">
-  <table class="ach-table">
+  <table data-paginer="25" class="ach-table">
     <thead><tr>
       <th>N° série (provisoire)</th><th>Nomenclature</th><th>Département</th><th>Destination proposée</th><th>Valeur</th><th>Étape en attente</th><th>Proposée le</th>
     </tr></thead>
@@ -295,7 +295,7 @@ include __DIR__ . '/../../templates/header.php';
     <div class="ach-empty">Rien en attente de confirmation pour votre département.</div>
   <?php else: ?>
   <div style="overflow-x:auto">
-  <table class="ach-table">
+  <table data-paginer="25" class="ach-table">
     <thead><tr>
       <th>N° série (provisoire)</th><th>Nomenclature</th><th>Département</th><th>Destination</th><th>Valeur</th><th>Actions</th>
     </tr></thead>

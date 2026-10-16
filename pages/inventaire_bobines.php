@@ -292,7 +292,7 @@ include __DIR__ . '/../templates/header.php';
 <div class="card">
   <div class="card-header"><h3><i class="ph ph-clipboard-text" aria-hidden="true"></i> Inventaires <span style="font-size:13px;font-weight:400;color:var(--muted)">(<?= count($inventaires) ?>)</span></h3></div>
   <div class="table-wrap">
-    <table>
+    <table data-paginer="25">
       <thead><tr>
         <th>Date</th><th>Type</th><th>Site</th>
         <th style="text-align:center">Bobines</th>

@@ -634,7 +634,7 @@ foreach ($stocks as $r) {
     </h3>
   </div>
   <div class="table-wrap">
-    <table>
+    <table data-paginer="25">
       <thead><tr>
         <th>Date</th>
         <?php if(!$site_force_r): ?><th>Site</th><?php endif; ?>
@@ -658,7 +658,7 @@ foreach ($stocks as $r) {
           <td style="text-align:center;font-family:'Montserrat',sans-serif;font-weight:800;font-size:15px"><?= $r['total_sortis'] ?></td>
         </tr>
       <?php endforeach; ?>
-        <tr style="background:#f0f4ff">
+        <tr data-pg-fixe style="background:#f0f4ff">
           <td colspan="<?= $site_force_r ? 2 : 3 ?>" style="font-weight:700;color:var(--navy)">TOTAL PÉRIODE</td>
           <td style="text-align:center;font-family:'Montserrat',sans-serif;font-weight:900;color:#1565c0"><?= $total_gonfl ?></td>
           <td style="text-align:center;font-family:'Montserrat',sans-serif;font-weight:900;color:#880e4f"><?= $total_eclat ?></td>

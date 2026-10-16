@@ -269,7 +269,7 @@ function ach_mv_render_zone(int $total_a_viser, float $anciennete_max, array $a_
         <div class="ach-empty">Aucune FEB en attente de votre aval.</div>
       <?php else: ?>
       <div style="overflow-x:auto">
-      <table class="ach-table">
+      <table data-paginer="25" class="ach-table">
         <thead><tr>
           <th>Numéro</th><th>Objet</th><th>Demandeur</th><th>Montant estimé</th><th>Actions</th>
         </tr></thead>
@@ -295,7 +295,7 @@ function ach_mv_render_zone(int $total_a_viser, float $anciennete_max, array $a_
         <div class="ach-empty">Aucune FEB en attente de votre visa.</div>
       <?php else: ?>
       <div style="overflow-x:auto">
-      <table class="ach-table">
+      <table data-paginer="25" class="ach-table">
         <thead><tr>
           <th>Numéro</th><th>Objet</th><th>Demandeur</th><th>Montant</th><th>Fournisseur retenu</th>
           <th>Ancienneté</th><th>Pièces jointes</th><th>Actions</th>
@@ -325,7 +325,7 @@ function ach_mv_render_zone(int $total_a_viser, float $anciennete_max, array $a_
         <div class="ach-empty">Aucune affectation en attente de votre visa.</div>
       <?php else: ?>
       <div style="overflow-x:auto">
-      <table class="ach-table">
+      <table data-paginer="25" class="ach-table">
         <thead><tr>
           <th>N° série</th><th>Nomenclature</th><th>Destination proposée</th><th>Valeur</th><th>Proposée par</th><th>Actions</th>
         </tr></thead>
@@ -407,7 +407,7 @@ include __DIR__ . '/../../templates/header.php';
 
     <div class="visa-lbl">Budget du département, par famille</div>
     <div style="overflow-x:auto;margin-bottom:18px">
-    <table class="ach-table">
+    <table data-paginer="25" class="ach-table">
       <thead><tr><th>Famille</th><th>Demandé (cette FEB)</th><th>Déjà engagé (hors cette FEB)</th><th>Enveloppe</th><th>Disponible avant cette FEB</th></tr></thead>
       <tbody id="mv-budget"></tbody>
     </table>
@@ -445,7 +445,7 @@ include __DIR__ . '/../../templates/header.php';
     </div>
     <div class="visa-lbl">Lignes</div>
     <div style="overflow-x:auto;margin-bottom:16px">
-    <table class="ach-table">
+    <table data-paginer="25" class="ach-table">
       <thead><tr><th>Désignation</th><th>Qté</th><th>Unité</th><th>Montant estimé</th></tr></thead>
       <tbody id="me-lignes"></tbody>
     </table>

@@ -498,7 +498,7 @@ include __DIR__ . '/../templates/header.php';
       </div>
     <?php else: ?>
       <div class="ag-scroll">
-        <table class="ag-table">
+        <table data-paginer="25" class="ag-table">
           <thead>
             <tr>
               <th>Matricule</th>

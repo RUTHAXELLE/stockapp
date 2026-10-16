@@ -203,7 +203,7 @@ include __DIR__ . '/../templates/header.php';
       </div>
     <?php else: ?>
     <div class="table-scroll">
-      <table class="ecarts-table">
+      <table data-paginer="25" class="ecarts-table">
         <thead>
           <tr>
             <th>Date constat</th>

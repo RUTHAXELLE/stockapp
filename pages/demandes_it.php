@@ -146,7 +146,7 @@ include __DIR__ . '/../templates/header.php';
     </div>
   <?php else: ?>
     <div<?= count($a_traiter) > 6 ? ' class="di-scroll"' : '' ?>>
-    <table class="di-tbl">
+    <table data-paginer="25" class="di-tbl">
       <thead><tr><th>Référence</th><th>Type</th><th>Demandeur</th><th>Approuvée le</th><th>Statut</th></tr></thead>
       <tbody>
       <?php foreach ($a_traiter as $d): ?>
@@ -173,7 +173,7 @@ include __DIR__ . '/../templates/header.php';
     <div class="di-empty">Aucune demande traitée<?= $fq !== '' ? ' ne correspond à cette recherche' : '' ?>.</div>
   <?php else: ?>
   <div<?= count($deja_traite) > 4 ? ' class="di-scroll"' : '' ?>>
-    <table class="di-tbl">
+    <table data-paginer="25" class="di-tbl">
       <thead><tr><th>Référence</th><th>Type</th><th>Demandeur</th><th>Ticket GLPI</th><th>Traitée par</th><th>Traitée le</th></tr></thead>
       <tbody>
       <?php foreach ($deja_traite as $d): ?>

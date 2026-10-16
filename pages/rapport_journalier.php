@@ -220,7 +220,7 @@ include __DIR__ . '/../templates/header.php';
     <h3><i class="ph ph-clipboard-text" aria-hidden="true"></i> Rapports journaliers <span style="font-size:13px;font-weight:400;color:var(--muted)">(<?= count($rapports) ?>)</span></h3>
   </div>
   <div class="table-wrap">
-    <table>
+    <table data-paginer="25">
       <thead><tr>
         <th>Date</th>
         <th>Site</th>

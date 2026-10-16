@@ -566,7 +566,7 @@ $coord_types = db_fetch_all(
   </div>
   <?php else: ?>
   <div class="table-wrap">
-    <table class="coord-bob-table" style="width:100%;border-collapse:collapse">
+    <table data-paginer="25" class="coord-bob-table" style="width:100%;border-collapse:collapse">
       <thead><tr>
         <th>N° Bobine</th>
         <th>Format</th>
@@ -771,7 +771,7 @@ endif;
       <span style="font-size:12px;color:var(--muted)">Stock total système : <strong><?= number_format($total_stock) ?> films</strong></span>
     </div>
     <div class="table-wrap" id="bobinesTableWrap">
-      <table>
+      <table data-paginer="25">
         <thead><tr>
           <th>Numéro</th><th>Format</th><th>Version</th><th>Site</th>
           <th style="text-align:center">Qté livrée</th>
@@ -956,7 +956,7 @@ endif;
       <h3>▶️ Bobines en utilisation <span style="font-size:13px;font-weight:400;color:var(--muted)">(<?= count($bobines_en_cours) ?>)</span></h3>
     </div>
     <div class="table-wrap">
-      <table>
+      <table data-paginer="25">
         <thead><tr>
           <th>Numéro</th><th>Format</th><th>Site</th>
           <th style="text-align:center">Stock système</th>
@@ -1012,7 +1012,7 @@ endif;
       <h3><i class="ph ph-package" aria-hidden="true"></i> Bobines en stock <span style="font-size:13px;font-weight:400;color:var(--muted)">(<?= count($bobines_en_stock) ?>)</span></h3>
     </div>
     <div class="table-wrap">
-      <table>
+      <table data-paginer="25">
         <thead><tr>
           <th>Numéro</th><th>Format</th><th>Site</th>
           <th style="text-align:center">Stock</th>
