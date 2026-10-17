@@ -59,10 +59,10 @@ $sf_b = $site_id ? "AND b.site_id = $site_id" : "";   // table op_bobines alias�
 $reimmat_migration_ok = db_colonne_existe('op_points_journaliers', 'nb_vp_duplicata')
     && db_colonne_existe('sites', 'operation');
 $reimmat_cols_select = $reimmat_migration_ok ? ",
-            COALESCE(SUM(total_engins_duplicata),0) AS total_engins_dup,
-            COALESCE(SUM(total_plaques_duplicata),0) AS total_plaques_dup,
-            COALESCE(SUM(total_engins_postimmat),0) AS total_engins_pi,
-            COALESCE(SUM(total_plaques_postimmat),0) AS total_plaques_pi" : "";
+            COALESCE(SUM(CASE WHEN statut='valide' THEN total_engins_duplicata END),0) AS total_engins_dup,
+            COALESCE(SUM(CASE WHEN statut='valide' THEN total_plaques_duplicata END),0) AS total_plaques_dup,
+            COALESCE(SUM(CASE WHEN statut='valide' THEN total_engins_postimmat END),0) AS total_engins_pi,
+            COALESCE(SUM(CASE WHEN statut='valide' THEN total_plaques_postimmat END),0) AS total_plaques_pi" : "";
 
 // ── OPÉRATIONS mois courant
 $ops = db_fetch_one(
@@ -70,10 +70,10 @@ $ops = db_fetch_one(
             SUM(CASE WHEN statut='valide' THEN 1 ELSE 0 END) AS points_valides,
             SUM(CASE WHEN statut='en_attente_validation' THEN 1 ELSE 0 END) AS points_attente,
             SUM(CASE WHEN statut='rejete' THEN 1 ELSE 0 END) AS points_rejetes,
-            COALESCE(SUM(total_engins),0) AS total_engins,
-            COALESCE(SUM(total_plaques),0) AS total_plaques,
-            COALESCE(SUM(rivets_utilises),0) AS rivets_utilises,
-            COALESCE(ROUND(AVG(NULLIF(moyenne_prod,0)),1),0) AS moy_prod
+            COALESCE(SUM(CASE WHEN statut='valide' THEN total_engins END),0) AS total_engins,
+            COALESCE(SUM(CASE WHEN statut='valide' THEN total_plaques END),0) AS total_plaques,
+            COALESCE(SUM(CASE WHEN statut='valide' THEN rivets_utilises END),0) AS rivets_utilises,
+            COALESCE(ROUND(AVG(CASE WHEN statut='valide' THEN NULLIF(moyenne_prod,0) END),1),0) AS moy_prod
             $reimmat_cols_select
      FROM op_points_journaliers
      WHERE DATE_FORMAT(date_point,'$date_fmt')=? AND statut != 'brouillon' $sf",
@@ -86,7 +86,7 @@ $ops_prec = db_fetch_one(
             COALESCE(SUM(total_plaques),0) AS total_plaques
             $reimmat_cols_select
      FROM op_points_journaliers
-     WHERE DATE_FORMAT(date_point,'$date_fmt')=? AND statut != 'brouillon' $sf",
+     WHERE DATE_FORMAT(date_point,'$date_fmt')=? AND statut = 'valide' $sf",
     [$periode_val_prec]
 );
 $engins_curr = (int)($ops['total_engins'] ?? 0);
@@ -113,7 +113,7 @@ if ($reimmat_migration_ok) {
                 COALESCE(SUM(p.total_plaques_postimmat),0) AS plaques_pi
          FROM sites s
          LEFT JOIN op_points_journaliers p ON p.site_id=s.id
-                    AND DATE_FORMAT(p.date_point,'$date_fmt')=? AND p.statut != 'brouillon'
+                    AND DATE_FORMAT(p.date_point,'$date_fmt')=? AND p.statut = 'valide'
          WHERE s.actif=1 AND s.operation='reimmat_post' $sf_s
          GROUP BY s.id, s.nom
          ORDER BY (COALESCE(SUM(p.total_engins_duplicata),0) + COALESCE(SUM(p.total_engins_postimmat),0)) DESC",
@@ -125,10 +125,10 @@ $has_reimmat = !empty($prod_par_site_reimmat);
 // ── SITES — performance par site
 $prod_par_site = db_fetch_all(
     "SELECT s.nom, s.type,
-            COUNT(p.id) AS nb_points,
-            COALESCE(SUM(p.total_engins),0) AS engins,
-            COALESCE(SUM(p.total_plaques),0) AS plaques,
-            COALESCE(ROUND(AVG(NULLIF(p.moyenne_prod,0)),1),0) AS moy_vh,
+            COUNT(CASE WHEN p.statut='valide' THEN p.id END) AS nb_points,
+            COALESCE(SUM(CASE WHEN p.statut='valide' THEN p.total_engins END),0) AS engins,
+            COALESCE(SUM(CASE WHEN p.statut='valide' THEN p.total_plaques END),0) AS plaques,
+            COALESCE(ROUND(AVG(CASE WHEN p.statut='valide' THEN NULLIF(p.moyenne_prod,0) END),1),0) AS moy_vh,
             SUM(CASE WHEN p.statut='en_attente_validation' THEN 1 ELSE 0 END) AS en_attente
      FROM sites s
      LEFT JOIN op_points_journaliers p ON p.site_id=s.id
@@ -158,20 +158,20 @@ $films_mois = (int)db_fetch_value(
     "SELECT COALESCE(SUM(fu.films_utilises),0)
      FROM op_films_utilises fu
      JOIN op_points_journaliers p ON p.id=fu.point_id
-     WHERE DATE_FORMAT(p.date_point,'$date_fmt')=? $sf_p",
+     WHERE DATE_FORMAT(p.date_point,'$date_fmt')=? AND p.statut='valide' $sf_p",
     [$periode_val]
 );
 $films_mois_prec = (int)db_fetch_value(
     "SELECT COALESCE(SUM(fu.films_utilises),0)
      FROM op_films_utilises fu
      JOIN op_points_journaliers p ON p.id=fu.point_id
-     WHERE DATE_FORMAT(p.date_point,'$date_fmt')=? $sf_p",
+     WHERE DATE_FORMAT(p.date_point,'$date_fmt')=? AND p.statut='valide' $sf_p",
     [$periode_val_prec]
 );
 $films_par_site = db_fetch_all(
     "SELECT s.nom, COALESCE(SUM(fu.films_utilises),0) AS films
      FROM sites s
-     LEFT JOIN op_points_journaliers p ON p.site_id=s.id AND DATE_FORMAT(p.date_point,'$date_fmt')=?
+     LEFT JOIN op_points_journaliers p ON p.site_id=s.id AND DATE_FORMAT(p.date_point,'$date_fmt')=? AND p.statut='valide'
      LEFT JOIN op_films_utilises fu ON fu.point_id=p.id
      WHERE s.actif=1 $sf_s
      GROUP BY s.id, s.nom ORDER BY films DESC",
@@ -180,7 +180,7 @@ $films_par_site = db_fetch_all(
 $films_detail_raw = db_fetch_all(
     "SELECT s.nom AS site, b.type_code, COALESCE(SUM(fu.films_utilises),0) AS films
      FROM sites s
-     JOIN op_points_journaliers p ON p.site_id=s.id AND DATE_FORMAT(p.date_point,'$date_fmt')=?
+     JOIN op_points_journaliers p ON p.site_id=s.id AND DATE_FORMAT(p.date_point,'$date_fmt')=? AND p.statut='valide'
      JOIN op_films_utilises fu ON fu.point_id=p.id
      JOIN op_bobines b ON b.id=fu.bobine_id
      WHERE s.actif=1 $sf_s
@@ -324,7 +324,7 @@ $evol = db_fetch_all(
             SUM(total_engins) AS engins,
             SUM(total_plaques) AS plaques
      FROM op_points_journaliers
-     WHERE date_point >= (CURRENT_DATE - INTERVAL 6 MONTH) AND statut != 'brouillon' $sf
+     WHERE date_point >= (CURRENT_DATE - INTERVAL 6 MONTH) AND statut = 'valide' $sf
      GROUP BY DATE_FORMAT(date_point,'%Y-%m') ORDER BY mois ASC"
 );
 
@@ -384,7 +384,7 @@ $site_monthly_raw = db_fetch_all(
      FROM sites s
      JOIN op_points_journaliers p ON p.site_id=s.id
           AND DATE_FORMAT(p.date_point,'%Y')=?
-          AND p.statut != 'brouillon'
+          AND p.statut = 'valide'
      WHERE s.actif=1 $sf_s
      GROUP BY s.id, s.nom, DATE_FORMAT(p.date_point,'%Y-%m')
      ORDER BY s.id, mois",
@@ -518,7 +518,7 @@ $biz = db_fetch_one(
             COALESCE(SUM(rivets_endommages),0)          AS riv_ko,
             COALESCE(SUM(nb_heures_travail),0)          AS heures
      FROM op_points_journaliers
-     WHERE $df AND statut <> 'brouillon' $sf",
+     WHERE $df AND statut = 'valide' $sf",
     [$periode_val]
 );
 } catch (Throwable $e) {}
@@ -539,7 +539,7 @@ $gache = db_fetch_one(
             COALESCE(SUM(fu.films_endommages),0) AS ko
      FROM op_films_utilises fu
      JOIN op_points_journaliers p ON p.id = fu.point_id
-     WHERE $df_p AND p.statut <> 'brouillon' $sf_p",
+     WHERE $df_p AND p.statut = 'valide' $sf_p",
     [$periode_val]
 );
 } catch (Throwable $e) {}

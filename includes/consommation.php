@@ -59,14 +59,19 @@ require_once __DIR__ . '/referentiels.php';   // libelles format / version
  * surestimait l'autonomie. Les deux chemins decrementant chacun le stock,
  * les additionner ne compte rien deux fois.
  *
- * Points en brouillon exclus, comme partout ailleurs dans les indicateurs.
+ * Points en brouillon exclus. Pour les prévisions de stock (jours restants,
+ * simulation), on garde tous les points soumis : les films sortent de la
+ * bobine dès l'enregistrement, valider ou non ne change pas le stock réel.
+ * $valides_seulement = true pour un indicateur de production (taux de
+ * film endommagé) : seuls les points validés par le superviseur comptent.
  */
-function conso_source_bobines(): string {
+function conso_source_bobines(bool $valides_seulement = false): string {
+    $filtre = $valides_seulement ? "p.statut = 'valide'" : "p.statut <> 'brouillon'";
     return "(SELECT fu.bobine_id, p.site_id, p.date_point AS date_conso,
                     (fu.films_utilises + fu.films_endommages) AS quantite
                FROM op_films_utilises fu
                JOIN op_points_journaliers p ON p.id = fu.point_id
-              WHERE p.statut <> 'brouillon'
+              WHERE $filtre
              UNION ALL
              SELECT cb.bobine_id, cb.site_id, cb.date_conso, cb.quantite
                FROM consommations_bobines cb)";

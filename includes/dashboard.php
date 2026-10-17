@@ -517,7 +517,7 @@ function dash_v2_kpis(array $portee): array {
     $jour = function (string $colonne) use ($ws, $as, $today, $hier): array {
         $sql = "SELECT date_point, COALESCE(SUM($colonne),0) AS v
                 FROM op_points_journaliers
-                WHERE date_point IN (?, ?) $ws
+                WHERE date_point IN (?, ?) AND statut = 'valide' $ws
                 GROUP BY date_point";
         $rows = db_fetch_all($sql, array_merge([$today, $hier], $as));
         $m = [];
@@ -1519,9 +1519,9 @@ function dash_registre(): array {
             [$ws, $as] = dash_filtre_site($p, 'site_id');
             $d = [];
             if (can('operations', 'can_read')) {
-                $d['plaques']     = (int)db_fetch_value("SELECT COALESCE(SUM(total_plaques),0)   FROM op_points_journaliers WHERE date_point=? $ws", array_merge([$today], $as));
-                $d['engins']      = (int)db_fetch_value("SELECT COALESCE(SUM(total_engins),0)    FROM op_points_journaliers WHERE date_point=? $ws", array_merge([$today], $as));
-                $d['rivets_j']    = (int)db_fetch_value("SELECT COALESCE(SUM(rivets_utilises),0) FROM op_points_journaliers WHERE date_point=? $ws", array_merge([$today], $as));
+                $d['plaques']     = (int)db_fetch_value("SELECT COALESCE(SUM(total_plaques),0)   FROM op_points_journaliers WHERE date_point=? AND statut='valide' $ws", array_merge([$today], $as));
+                $d['engins']      = (int)db_fetch_value("SELECT COALESCE(SUM(total_engins),0)    FROM op_points_journaliers WHERE date_point=? AND statut='valide' $ws", array_merge([$today], $as));
+                $d['rivets_j']    = (int)db_fetch_value("SELECT COALESCE(SUM(rivets_utilises),0) FROM op_points_journaliers WHERE date_point=? AND statut='valide' $ws", array_merge([$today], $as));
                 $d['pts_valides'] = (int)db_fetch_value("SELECT COUNT(*) FROM op_points_journaliers WHERE date_point=? AND statut='valide' $ws",                   array_merge([$today], $as));
                 $d['pts_total']   = (int)db_fetch_value("SELECT COUNT(*) FROM op_points_journaliers WHERE date_point=? AND statut IN ('valide','en_attente_validation') $ws", array_merge([$today], $as));
                 $d['pts_attente'] = (int)db_fetch_value("SELECT COUNT(*) FROM op_points_journaliers WHERE date_point=? AND statut='en_attente_validation' $ws",    array_merge([$today], $as));
@@ -1697,9 +1697,9 @@ function dash_registre(): array {
         'donnees'    => function (array $p) {
             $today = date('Y-m-d');
             [$w, $args] = dash_filtre_site($p, 'site_id');
-            $plaques    = (int)db_fetch_value("SELECT COALESCE(SUM(total_plaques),0)    FROM op_points_journaliers WHERE date_point=? $w", array_merge([$today], $args));
-            $engins     = (int)db_fetch_value("SELECT COALESCE(SUM(total_engins),0)     FROM op_points_journaliers WHERE date_point=? $w", array_merge([$today], $args));
-            $rivets_j   = (int)db_fetch_value("SELECT COALESCE(SUM(rivets_utilises),0)  FROM op_points_journaliers WHERE date_point=? $w", array_merge([$today], $args));
+            $plaques    = (int)db_fetch_value("SELECT COALESCE(SUM(total_plaques),0)    FROM op_points_journaliers WHERE date_point=? AND statut='valide' $w", array_merge([$today], $args));
+            $engins     = (int)db_fetch_value("SELECT COALESCE(SUM(total_engins),0)     FROM op_points_journaliers WHERE date_point=? AND statut='valide' $w", array_merge([$today], $args));
+            $rivets_j   = (int)db_fetch_value("SELECT COALESCE(SUM(rivets_utilises),0)  FROM op_points_journaliers WHERE date_point=? AND statut='valide' $w", array_merge([$today], $args));
             $en_attente = (int)db_fetch_value("SELECT COUNT(*) FROM op_points_journaliers WHERE date_point=? AND statut='en_attente_validation' $w", array_merge([$today], $args));
             $valides    = (int)db_fetch_value("SELECT COUNT(*) FROM op_points_journaliers WHERE date_point=? AND statut='valide' $w", array_merge([$today], $args));
             $in_use     = (int)db_fetch_value("SELECT COUNT(*) FROM import_optoplate WHERE date_import=? AND statut_plaque='in_use' $w", array_merge([$today], $args));
@@ -1753,7 +1753,7 @@ function dash_registre(): array {
                         AVG(p.moyenne_prod)    AS moy_vh
                  FROM op_points_journaliers p
                  JOIN sites s ON s.id = p.site_id
-                 WHERE DATE_FORMAT(p.date_point,'%Y-%m') = ? $w
+                 WHERE DATE_FORMAT(p.date_point,'%Y-%m') = ? AND p.statut = 'valide' $w
                  GROUP BY p.site_id, s.nom
                  ORDER BY total_plaques DESC
                  LIMIT 12",
@@ -1867,10 +1867,10 @@ function dash_registre(): array {
 
             $mois = (float)db_fetch_value(
                 "SELECT COALESCE(SUM(total_engins),0) FROM op_points_journaliers
-                 WHERE date_point >= ? $ws", array_merge([$debut], $as));
+                 WHERE date_point >= ? AND statut = 'valide' $ws", array_merge([$debut], $as));
             $moisPrec = (float)db_fetch_value(
                 "SELECT COALESCE(SUM(total_engins),0) FROM op_points_journaliers
-                 WHERE date_point >= ? AND date_point < ? $ws", array_merge([$prev, $debut], $as));
+                 WHERE date_point >= ? AND date_point < ? AND statut = 'valide' $ws", array_merge([$prev, $debut], $as));
 
             // 4 courbes par type de véhicule — trente derniers jours
             $rows = db_fetch_all(
@@ -1880,7 +1880,7 @@ function dash_registre(): array {
                         COALESCE(SUM(nb_semi),0)    AS semi,
                         COALESCE(SUM(nb_moto),0)    AS mo
                  FROM op_points_journaliers
-                 WHERE date_point > CURRENT_DATE - INTERVAL 30 DAY $ws
+                 WHERE date_point > CURRENT_DATE - INTERVAL 30 DAY AND statut = 'valide' $ws
                  GROUP BY date_point ORDER BY date_point", $as);
             $par = [];
             foreach ($rows as $r) $par[(string)$r['date_point']] = $r;
@@ -1904,7 +1904,7 @@ function dash_registre(): array {
             $mix = db_fetch_one(
                 "SELECT COALESCE(SUM(nb_vp),0) AS vp, COALESCE(SUM(nb_camion),0) AS cam,
                         COALESCE(SUM(nb_semi),0) AS semi, COALESCE(SUM(nb_moto),0) AS mo
-                 FROM op_points_journaliers WHERE date_point >= ? $ws", array_merge([$debut], $as));
+                 FROM op_points_journaliers WHERE date_point >= ? AND statut = 'valide' $ws", array_merge([$debut], $as));
 
             return ['mois'=>$mois,'prec'=>$moisPrec,'series'=>$series,'lbl'=>$lbl,'mix'=>$mix ?: []];
         },
