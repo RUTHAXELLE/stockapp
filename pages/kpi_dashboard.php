@@ -180,7 +180,7 @@ function kpi_somme_ab(string $col, string $depuis, array $C): array {
 }
 
 // ── PRODUCTION — periode analysee (A) contre periode de comparaison (B)
-$depuis_points = "FROM op_points_journaliers p WHERE p.statut = 'valide' $sf_p";
+$depuis_points = "FROM op_points_journaliers p WHERE p.statut = 'valide' AND p.type_point IN ('point_18h','historique') $sf_p";
 [$plaques, $plaques_p] = kpi_somme_ab('p.total_plaques', $depuis_points, $C);
 [$engins,  $engins_p]  = kpi_somme_ab('p.total_engins',  $depuis_points, $C);
 
@@ -241,7 +241,7 @@ function kpi_serie(string $sfmt, string $du, string $au, string $filtre, string 
         "SELECT $expr AS b, COALESCE(SUM($col),0) AS v
            FROM op_points_journaliers p
           WHERE p.date_point BETWEEN ? AND ?
-            AND p.statut = 'valide' $filtre
+            AND p.statut = 'valide' AND p.type_point IN ('point_18h','historique') $filtre
           GROUP BY 1", [$du, $au]) as $r) $out[(string)$r['b']] = (float)$r['v'];
     return $out;
 }
@@ -355,7 +355,7 @@ if ($has_reimmat_sites) {
                 COALESCE(SUM($fa_reimmat p.total_plaques_duplicata END),0) AS plaques_dup,
                 COALESCE(SUM($fa_reimmat p.total_plaques_postimmat END),0) AS plaques_pi
            FROM sites s
-           LEFT JOIN op_points_journaliers p ON p.site_id = s.id AND p.statut = 'valide'
+           LEFT JOIN op_points_journaliers p ON p.site_id = s.id AND p.statut = 'valide' AND p.type_point IN ('point_18h','historique')
           WHERE s.actif = 1 AND s.operation = 'reimmat_post' " . pref_clause_in('s.id', $sites_sel) . "
           GROUP BY s.id, s.nom
           HAVING COALESCE(SUM($fa_reimmat p.total_plaques_duplicata END),0) > 0
@@ -444,13 +444,13 @@ foreach ($pmma_stock as $x) { $pmma_bas += (int)$x['bas']; $pmma_total += (int)$
 // nulle part, et deux panneaux voisins doivent compter sur la meme base.
 [$pmma_conso, $pmma_conso_p] = kpi_somme_ab('pu.utilises',
     "FROM op_pmma_utilises pu JOIN op_points_journaliers p ON p.id = pu.point_id
-      WHERE p.statut = 'valide' $sf_p", $C);
+      WHERE p.statut = 'valide' AND p.type_point IN ('point_18h','historique') $sf_p", $C);
 
 // Consommation par type sur la periode — le graphe en barres de la maquette.
 $pmma_par_type = db_fetch_all(
     "SELECT pu.type_pmma AS t, COALESCE(SUM(pu.utilises),0) AS v
        FROM op_pmma_utilises pu JOIN op_points_journaliers p ON p.id = pu.point_id
-      WHERE p.date_point BETWEEN ? AND ? AND p.statut = 'valide' $sf_p
+      WHERE p.date_point BETWEEN ? AND ? AND p.statut = 'valide' AND p.type_point IN ('point_18h','historique') $sf_p
       GROUP BY pu.type_pmma HAVING COALESCE(SUM(pu.utilises),0) > 0
       ORDER BY 2 DESC", [$C['du_a'], $C['au_a']]);
 
@@ -558,7 +558,7 @@ $classement = db_fetch_all(
             COALESCE(SUM($fa p.total_engins END),0)      AS engins,
             COALESCE(SUM($fa p.nb_heures_travail END),0) AS heures
        FROM sites s
-       LEFT JOIN op_points_journaliers p ON p.site_id = s.id AND p.statut = 'valide'
+       LEFT JOIN op_points_journaliers p ON p.site_id = s.id AND p.statut = 'valide' AND p.type_point IN ('point_18h','historique')
       WHERE s.actif = 1 " . pref_clause_in('s.id', $sites_sel) . "
       GROUP BY s.id, s.nom
       HAVING COALESCE(SUM($fa p.total_plaques END),0) > 0
@@ -668,7 +668,7 @@ function kpi_endommagements(string $du, string $au, array $sites_sel): array {
            LEFT JOIN (SELECT p.site_id, SUM(fu.films_endommages) AS endo
                         FROM op_films_utilises fu
                         JOIN op_points_journaliers p ON p.id = fu.point_id
-                       WHERE p.statut = 'valide' AND p.date_point BETWEEN ? AND ?
+                       WHERE p.statut = 'valide' AND p.type_point IN ('point_18h','historique') AND p.date_point BETWEEN ? AND ?
                        GROUP BY p.site_id) y ON y.site_id = s.id
           WHERE s.actif = 1 " . pref_clause_in('s.id', $sites_sel) . "
             AND (x.sortis IS NOT NULL OR y.endo IS NOT NULL)",
@@ -706,7 +706,7 @@ foreach (db_fetch_all(
     "SELECT e.cause, e.etape, COUNT(*) AS n
        FROM op_endommagements e
        JOIN op_points_journaliers p ON p.id = e.point_id
-      WHERE p.statut = 'valide' AND p.date_point BETWEEN ? AND ?
+      WHERE p.statut = 'valide' AND p.type_point IN ('point_18h','historique') AND p.date_point BETWEEN ? AND ?
         " . (db_colonne_existe('op_endommagements', 'objet') ? "AND COALESCE(e.objet,'film') = 'film'" : '') . "
         " . pref_clause_in('e.site_id', $sites_sel) . "
       GROUP BY e.cause, e.etape", [$C['du_a'], $C['au_a']]) as $r) {

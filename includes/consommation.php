@@ -66,7 +66,7 @@ require_once __DIR__ . '/referentiels.php';   // libelles format / version
  * film endommagé) : seuls les points validés par le superviseur comptent.
  */
 function conso_source_bobines(bool $valides_seulement = false): string {
-    $filtre = $valides_seulement ? "p.statut = 'valide'" : "p.statut <> 'brouillon'";
+    $filtre = $valides_seulement ? "p.statut = 'valide' AND p.type_point IN ('point_18h','historique')" : "p.statut <> 'brouillon'";
     return "(SELECT fu.bobine_id, p.site_id, p.date_point AS date_conso,
                     (fu.films_utilises + fu.films_endommages) AS quantite
                FROM op_films_utilises fu
