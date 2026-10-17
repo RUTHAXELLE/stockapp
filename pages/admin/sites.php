@@ -73,9 +73,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $operation = in_array($type, ['saisie','pose','mixte']) && trim($_POST['operation'] ?? '') === 'reimmat_post'
             ? 'reimmat_post' : 'primo';
         if (!$nom || !$type) json_response(false, 'Nom et type obligatoires.');
+        // Point généré depuis OptoPlate à partir d'une date (vide = non)
+        $auto_ok = db_colonne_existe('sites', 'point_auto_depuis');
+        $auto_dep = trim($_POST['point_auto_depuis'] ?? '');
+        if ($auto_dep !== '' && (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $auto_dep) || strtotime($auto_dep) === false))
+            json_response(false, 'Date de début du point automatique invalide.');
         $old = db_fetch_one("SELECT * FROM sites WHERE id=?", [$id]);
         db_query("UPDATE sites SET nom=?,type=?,option_caisse=?" . ($operation_ok ? ',operation=?' : '') . ",adresse=?,ville=?,responsable_id=?,actif=? WHERE id=?",
             array_merge([$nom, $type, $opt_caisse], $operation_ok ? [$operation] : [], [$adresse, $ville, $resp_id, $actif, $id]));
+        if ($auto_ok) {
+            db_query("UPDATE sites SET point_auto_depuis=? WHERE id=?", [$auto_dep ?: null, $id]);
+            if (($old['point_auto_depuis'] ?? null) != ($auto_dep ?: null))
+                audit_log($user['id'], 'UPDATE', 'sites', $id, "Point généré depuis OptoPlate : " . ($auto_dep ? "à partir du $auto_dep" : 'désactivé'));
+        }
         audit_log($user['id'], 'UPDATE', 'sites', $id, "Modification site {$old['code']}");
         json_response(true, 'Site mis à jour.');
     }
@@ -698,6 +708,10 @@ $type_colors = [
         </select>
         <div style="font-size:12px;color:var(--muted);margin-top:4px">Re-Immatriculation ajoute les catégories Duplicatas et Post-Immat sur le point journalier et les tableaux de bord de ce site.</div>
       </div>
+      <div class="form-group" id="sAutoWrap" style="display:none;margin-bottom:14px"><label>Point généré depuis OptoPlate, à partir du</label>
+        <input type="date" class="form-control" id="sAuto">
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">Pour un site qui ne saisit pas son point : à chaque import OptoPlate, le point de chaque jour est créé depuis les plaques posées (engins et plaques seulement : ni heures, ni rivets, ni PMMA, aucun stock). Laisser vide pour désactiver. S'arrête tout seul dès que le site saisit un point.</div>
+      </div>
       <div class="form-group" style="margin-bottom:14px"><label>Nom du site *</label>
         <input type="text" class="form-control" id="sNom" placeholder="Agence Cocody">
       </div>
@@ -847,6 +861,8 @@ function openMS(){
   document.getElementById('sResp').value='';
   document.getElementById('sCaisse').checked=false;
   document.getElementById('sOperation').value='primo';
+  document.getElementById('sAuto').value='';
+  document.getElementById('sAutoWrap').style.display='none';
   document.getElementById('sActifWrap').style.display='none';
   document.getElementById('sCode').disabled=false;
   document.getElementById('mSAlert').innerHTML='';
@@ -872,6 +888,8 @@ function editS(id){
     document.getElementById('sActif').checked=r.actif==1;
     document.getElementById('sCaisse').checked=r.option_caisse==1;
     document.getElementById('sOperation').value=r.operation||'primo';
+    document.getElementById('sAuto').value=r.point_auto_depuis||'';
+    document.getElementById('sAutoWrap').style.display=('point_auto_depuis' in r)?'block':'none';
     toggleCaisse(r.type);
     toggleOperationField(r.type);
     document.getElementById('mS').classList.add('open');
@@ -889,6 +907,7 @@ function saveS(){
     responsable_id:document.getElementById('sResp').value,
     option_caisse:document.getElementById('sCaisse').checked?1:0,
     operation:document.getElementById('sOperation').value,
+    point_auto_depuis:document.getElementById('sAuto').value,
     actif:document.getElementById('sActif').checked?1:0,
   }).then(d=>{
     btn.disabled=false;btn.textContent='Enregistrer';

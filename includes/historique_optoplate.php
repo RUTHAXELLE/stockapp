@@ -243,3 +243,55 @@ function historique_optoplate(string $du, string $au, bool $appliquer = false, i
             'stats' => $stats, 'par_mois' => $par_mois, 'par_site' => $par_site, 'sans_site' => $sans_site,
             'bobines_inconnues' => array_slice($bobines_inconnues, 0, 5, true)];
 }
+
+/**
+ * Sites dont le point est généré depuis OptoPlate : [site_id => date de début].
+ * Réglage par site (écran Sites). Vide tant que la migration n'est pas passée.
+ */
+function historique_auto_sites(): array {
+    if (!db_colonne_existe('sites', 'point_auto_depuis')) return [];
+    $o = [];
+    foreach (db_fetch_all("SELECT id, point_auto_depuis FROM sites WHERE actif = 1 AND point_auto_depuis IS NOT NULL") as $r) {
+        $o[(int)$r['id']] = (string)$r['point_auto_depuis'];
+    }
+    return $o;
+}
+
+/**
+ * Après un import OptoPlate : met à jour, pour les sites réglés « point généré depuis
+ * OptoPlate », les points des jours couverts par le fichier ($premier_jour à $dernier_jour,
+ * poses). Même règles que la reconstitution : aucun stock, jamais un jour déjà saisi par un
+ * coordinateur, jour recalculé à chaque import (OptoPlate met les plaques à jour dans le temps).
+ * Un site qui commence à saisir (premier point non brouillon à partir de la date de début)
+ * sort de la génération automatique.
+ * Retourne ['sites' => noms, 'points' => n, 'arretes' => [...], 'erreurs' => [...]].
+ */
+function historique_auto_import(string $premier_jour, string $dernier_jour): array {
+    $res = ['sites' => [], 'points' => 0, 'arretes' => [], 'erreurs' => []];
+    $sites = historique_auto_sites();
+    if (!$sites || historique_optoplate_prerequis()) return $res;
+    $noms = array_column(db_fetch_all("SELECT id, nom FROM sites"), 'nom', 'id');
+    $dernier = min($dernier_jour, date('Y-m-d'));
+    foreach ($sites as $id => $depuis) {
+        $nom = $noms[$id] ?? "site n°$id";
+        $reel = db_fetch_value(
+            "SELECT MIN(date_point) FROM op_points_journaliers
+              WHERE site_id = ? AND type_point <> ? AND statut <> 'brouillon' AND date_point >= ?",
+            [$id, TYPE_HISTORIQUE, $depuis]);
+        if ($reel) {
+            db_query("UPDATE sites SET point_auto_depuis = NULL WHERE id = ?", [$id]);
+            audit_log(null, 'UPDATE', 'sites', $id, "Point automatique OptoPlate arrêté : premier point saisi le $reel");
+            $res['arretes'][] = "$nom (saisie depuis le " . date('d/m/Y', strtotime($reel)) . ')';
+            continue;
+        }
+        $du = max($premier_jour, $depuis);
+        if ($du > $dernier) continue;
+        try {
+            $r = historique_optoplate($du, $dernier, true, $id, true);
+            if ($r['stats']['points'] > 0) { $res['sites'][] = $nom; $res['points'] += $r['stats']['points']; }
+        } catch (Throwable $e) {
+            $res['erreurs'][] = "$nom : " . $e->getMessage();
+        }
+    }
+    return $res;
+}

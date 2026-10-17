@@ -139,8 +139,10 @@ function _verifier_coherence_optoplate(string $date_import, int $user_id): array
         "SELECT DISTINCT site_id FROM import_optoplate WHERE date_import=? AND site_id IS NOT NULL",
         [$date_import]
     );
+    $sites_auto = historique_auto_sites();
     foreach ($sites_avec_data as $s) {
         $site_id = (int)$s['site_id'];
+        if (isset($sites_auto[$site_id])) continue;   // point généré depuis OptoPlate : rien à comparer
 
         // EMUCI : total plaques posées sur ce site = COUNT(in_use), compté sur la
         // vraie date d'installation de chaque plaque (pas la date saisie à l'import,
@@ -363,6 +365,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                         [$nb_ok,$nb_err,$session_id]);
                     audit_log($user['id'],'CREATE','import_emuci',0,"Import OptoPlate $date_import — $nb_ok lignes");
 
+                    // Sites dont le point est généré depuis OptoPlate : mis à jour avant le contrôle
+                    // de cohérence (qui compare les plaques d'OptoPlate au point du jour).
+                    $point_auto = $jours_pose
+                        ? historique_auto_import(array_key_first($jours_pose), array_key_last($jours_pose))
+                        : ['sites' => [], 'points' => 0, 'arretes' => [], 'erreurs' => []];
+                    if ($point_auto['points'] > 0) {
+                        audit_log($user['id'], 'CREATE', 'operations', 0,
+                            "Points générés depuis OptoPlate : {$point_auto['points']} point(s), " . count($point_auto['sites']) . " site(s)");
+                    }
+
                     // Vérifier cohérence plaques EMUCI vs PJ coordinateur
                     $auto_resultats  = _verifier_coherence_optoplate($date_import, $user['id']);
                     $nb_valide_auto  = 0;
@@ -375,6 +387,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                         'nb_valide_auto'  => $nb_valide_auto,
                         'nb_incoherent'   => $nb_incoherent,
                         'jours_pose'      => $jours_pose,
+                        'point_auto'      => $point_auto,
                     ];
                     $incoh_msg = $nb_incoherent>0?" · ⚠️ $nb_incoherent site(s) avec incohérence plaques — coordinateur(s) notifié(s)":'';
                     $msg_optoplate = ['type'=>'success','text'=>"Import terminé : $nb_ok plaques importées.".($nb_err?" ($nb_err ignorées)":'').$incoh_msg];
@@ -924,6 +937,13 @@ include __DIR__ . '/../templates/header.php';
     <a href="?tab=optoplate&date=<?= h($j) ?>" style="display:inline-block;margin:3px 4px 0 0;padding:3px 10px;border-radius:999px;background:#fff;border:1px solid #34D399;color:#065F46;font-weight:600;text-decoration:none"><?= fmt_date($j,'d/m') ?> · <?= (int)$n ?></a>
     <?php endforeach; ?>
     <?php if(count($jp) > 10): ?><span style="color:#64748B">… autres jours : choisissez la date en haut de page.</span><?php endif; ?>
+  </div>
+  <?php endif; ?>
+  <?php $pa = $result_optoplate['point_auto'] ?? null; if ($pa && ($pa['points'] || $pa['arretes'] || $pa['erreurs'])): ?>
+  <div style="margin-top:12px;font-size:13px">
+    <?php if ($pa['points']): ?><div><i class="ph ph-magic-wand" aria-hidden="true"></i> <strong>Points générés depuis OptoPlate :</strong> <?= (int)$pa['points'] ?> jour(s) mis à jour pour <?= h(implode(', ', $pa['sites'])) ?>.</div><?php endif; ?>
+    <?php foreach ($pa['arretes'] as $x): ?><div style="color:#065F46"><i class="ph ph-check-circle" aria-hidden="true"></i> Génération automatique arrêtée : <?= h($x) ?>.</div><?php endforeach; ?>
+    <?php foreach ($pa['erreurs'] as $x): ?><div style="color:#991B1B"><i class="ph ph-warning" aria-hidden="true"></i> <?= h($x) ?></div><?php endforeach; ?>
   </div>
   <?php endif; ?>
   <?php if(!empty($result_optoplate['sites_inconnus'])): ?>
