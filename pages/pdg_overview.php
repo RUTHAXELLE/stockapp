@@ -426,19 +426,21 @@ foreach ($prod_par_site as $i => $s) {
 // sélectionnée par défaut — le bloc n'affichait sinon que le 1er site.
 if (!$site_id && count($pfw_sites_json) > 1) {
     $cumul = [];
-    foreach ($pfw_sites_json as $sj) {
-        foreach ((array)$sj['monthly'] as $mois => $m) {
-            $c = $cumul[$mois] ?? ['films' => 0, 'engins' => 0, 'vh' => []];
-            $c['films']  += $m['films'];
-            $c['engins'] += $m['engins'];
-            if ($m['moy_vh'] > 0) $c['vh'][] = $m['moy_vh'];
-            $cumul[$mois] = $c;
+    // Variables de boucle propres à ce bloc : `$mois` est le mois choisi dans le filtre de la page ;
+    // l'écraser ici faisait réafficher le mois en cours à la place du mois sélectionné.
+    foreach ($pfw_sites_json as $_sj) {
+        foreach ((array)$_sj['monthly'] as $_cle => $_mv) {
+            $_cu = $cumul[$_cle] ?? ['films' => 0, 'engins' => 0, 'vh' => []];
+            $_cu['films']  += $_mv['films'];
+            $_cu['engins'] += $_mv['engins'];
+            if ($_mv['moy_vh'] > 0) $_cu['vh'][] = $_mv['moy_vh'];
+            $cumul[$_cle] = $_cu;
         }
     }
     $monthly_tous = [];
-    foreach ($cumul as $mois => $c)
-        $monthly_tous[$mois] = ['films' => $c['films'], 'engins' => $c['engins'],
-                                'moy_vh' => $c['vh'] ? round(array_sum($c['vh']) / count($c['vh']), 1) : 0];
+    foreach ($cumul as $_cle => $_cu)
+        $monthly_tous[$_cle] = ['films' => $_cu['films'], 'engins' => $_cu['engins'],
+                                'moy_vh' => $_cu['vh'] ? round(array_sum($_cu['vh']) / count($_cu['vh']), 1) : 0];
     $vh_sites = array_filter(array_column($pfw_sites_json, 'moy_vh'), fn($v) => $v > 0);
     array_unshift($pfw_sites_json, [
         'name'       => 'Tous les sites',
