@@ -1487,6 +1487,17 @@ include __DIR__ . '/../../templates/header.php';
 .mclose{width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:none;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center}
 .mbody{padding:20px 24px}
 .mfoot{padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;position:sticky;bottom:0;background:white}
+/* Téléphone : quatre cartes de front étaient écrasées (textes tronqués) et trois boutons alignés
+   à droite débordaient de l'écran par la gauche (« Annuler » coupé). */
+.g4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:640px){
+  .g4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .mbody{padding:16px}
+  .mfoot{padding:12px 16px;flex-wrap:wrap}
+  .mfoot .btn{flex:1 1 auto;justify-content:center;white-space:normal}
+  #comp-footer{flex-direction:column-reverse}
+  #comp-footer .btn{width:100%}
+}
 
 /* ── APERÇU ── */
 .point-preview{font-family:'Montserrat',sans-serif;background:linear-gradient(135deg,#0a1628,#163566);color:white;border-radius:12px;padding:20px;margin-bottom:20px}
@@ -2171,7 +2182,7 @@ foreach($points as $p):
       <div class="point-preview" id="point-preview" style="display:none">
         <h4 id="prev-titre">Point Final</h4>
         <div class="pp-date" id="prev-date"></div>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px" id="prev-stats"></div>
+        <div class="g4" style="gap:10px;margin-bottom:16px" id="prev-stats"></div>
         <div class="pp-section">
           <div class="pp-title">Total Immatriculation</div>
           <div id="prev-detail"></div>
@@ -3334,7 +3345,7 @@ async function viewPoint(id){
   const reimmatSection = reimmatCat.length ? reimmatCat.map(([lbl,color,bg,vp,cam,semi,moto,engins,plaques])=>`
     <div style="margin-bottom:20px">
       <div style="font-size:12px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">${lbl}</div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+      <div class="g4" style="gap:8px">
         ${[['<i class="ph ph-car" aria-hidden="true"></i>','VP',vp],['<i class="ph ph-truck" aria-hidden="true"></i>','Camion',cam],['<i class="ph-semi" aria-hidden="true"></i>','Semi',semi],['<i class="ph ph-motorcycle" aria-hidden="true"></i>','Moto',moto]].map(([ic,lb,nb])=>`
         <div style="background:${bg};border-radius:10px;padding:12px;text-align:center;border:1px solid ${color}33">
           <div style="font-size:20px">${ic}</div>
@@ -3464,7 +3475,7 @@ async function viewPoint(id){
         <span style="padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;background:${sc.bg};color:${sc.col}">${sc.icon} ${sc.lbl}</span>
       </div>
       <div style="font-size:12px;opacity:.6;margin-bottom:16px">${typeLbl[p.type_point]||p.type_point} · ${dateStr}</div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+      <div class="g4" style="gap:10px">
         <div style="text-align:center">
           <div style="font-family:'Montserrat',sans-serif;font-size:28px;font-weight:900">${estReimmat ? engTotal : p.total_engins}</div>
           <div style="font-size:12px;opacity:.5;text-transform:uppercase">${estReimmat ? 'Engins posés' : 'Engins'}</div>
@@ -3487,7 +3498,7 @@ async function viewPoint(id){
     <!-- Véhicules -->
     <div style="margin-bottom:20px">
       <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px"><i class="ph ph-car" aria-hidden="true"></i> ${p.site_operation==='reimmat_post' ? 'Re-Immatriculation' : 'Répartition véhicules'}</div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">${vehCards}</div>
+      <div class="g4" style="gap:8px">${vehCards}</div>
       <div style="display:flex;justify-content:space-between;margin-top:10px;padding:10px 14px;background:#f8fafc;border-radius:8px;font-size:13px">
         <span style="color:var(--muted)">Total engins</span>
         <span style="font-family:'Montserrat',sans-serif;font-weight:800;color:var(--navy)">${p.total_engins}</span>
@@ -3713,7 +3724,7 @@ async function ouvrirComparaisonOptoplate(id, date){
     document.getElementById('comp-body').innerHTML = `
       ${compBandeau(c.has_ecart, nbEcarts)}
       ${compSectionTitreComp('Véhicules Primo')}
-      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">${primoCards}</div>
+      <div class="g4" style="gap:10px">${primoCards}</div>
       ${compSectionTitreComp('Réimpressions')}
       ${reimprCards}
       ${compSectionTitreComp('Endommagés par étape')}

@@ -290,6 +290,12 @@ $unread = count($notifs);
     }
     .notif-dropdown.open { display: block; animation: dropDown .2s ease; }
     @keyframes dropDown { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
+    /* Téléphone : le panneau (340 px, ancré à droite d'un conteneur étroit) sortait de
+       l'écran par la gauche. Il se cale sur la fenêtre, avec une marge de chaque côté. */
+    @media (max-width: 768px) {
+      .notif-dropdown { position: fixed; top: calc(var(--topbar-h) + 6px); left: 10px; right: 10px; width: auto; }
+      .notif-list { max-height: 60vh; }
+    }
     .notif-header {
       padding: 16px 18px;
       border-bottom: 1px solid var(--border);
