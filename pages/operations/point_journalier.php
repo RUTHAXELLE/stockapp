@@ -138,11 +138,14 @@ function _pj_restaurer_stock(int $point_id, int $site_id, int $riv_gonfl, int $r
 // ── RÈGLE DE STOCK (21/10/2026) : seul le point 18h VALIDÉ par le
 // superviseur retire du stock (films des bobines, rivets, PMMA). Brouillon,
 // point soumis, modification demandée, points 9h / 13h : aucun mouvement.
-// op_points_journaliers.stock_deduit dit si le stock d'un point est
-// actuellement retiré — indispensable pour la transition : les points
-// enregistrés avant cette règle l'ont retiré dès leur enregistrement
-// (stock_deduit = 1 posé par sql/migration_point_stock_validation.sql) et ne
-// doivent être ni retirés une 2e fois, ni restaurés deux fois.
+// op_points_journaliers.stock_deduit :
+//   0 = rien n'est retiré ;
+//   1 = stock retiré par la validation 18h (règle actuelle) ;
+//   2 = retiré sous l'ancienne règle (dès l'enregistrement), posé par
+//       sql/migration_point_stock_validation.sql : ACQUIS DÉFINITIVEMENT.
+//       Le stock a depuis été recalé (validations GSB, imports EMUCI,
+//       inventaires) : le remettre gonflerait un stock juste. Ces points ne
+//       sont donc jamais remis en stock ni retirés une 2e fois.
 // Tant que la migration n'est pas passée, l'ancien fonctionnement reste actif.
 function _pj_regle_18h(): bool {
     return db_colonne_existe('op_points_journaliers', 'stock_deduit');
@@ -223,7 +226,7 @@ function _pj_deduire_stock(array $point): void {
 // Remet le stock d'un point dont le stock est retiré (stock_deduit = 1), puis
 // le marque non retiré. Sans effet sinon.
 function _pj_restaurer_si_deduit(array $point, bool $films_recomptes = false): bool {
-    if (empty($point['stock_deduit'])) return false;
+    if ((int)($point['stock_deduit'] ?? 0) !== 1) return false;   // 0 : rien à remettre ; 2 : acquis
     _pj_restaurer_stock((int)$point['id'], (int)$point['site_id'],
         (int)($point['rivets_gonflables'] ?? 0), (int)($point['rivets_eclates'] ?? 0), false, $films_recomptes);
     db_query("UPDATE op_points_journaliers SET stock_deduit=0 WHERE id=?", [(int)$point['id']]);
@@ -373,7 +376,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // Règle 18h : le stock n'est remis que si ce point l'avait retiré
         // (point enregistré avant la règle) — stock_deduit le dit exactement.
         $deja_remis     = $regle_18h
-            ? !($existing_pre && !empty($existing_pre['stock_deduit']))
+            ? !($existing_pre && (int)$existing_pre['stock_deduit'] === 1)
             : ($existing_pre && $existing_pre['statut'] === 'rejete');
         $old_riv_gonfl  = ($existing_pre && !$deja_remis) ? (int)($existing_pre['rivets_gonflables'] ?? 0) : 0;
         $old_riv_eclate = ($existing_pre && !$deja_remis) ? (int)($existing_pre['rivets_eclates']    ?? 0) : 0;
@@ -930,7 +933,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             // autres types ne retirent rien ; s'ils avaient retiré, on remet.
             if (_pj_regle_18h()) {
                 if (($point['type_point'] ?? '') === 'point_18h') {
-                    if (empty($point['stock_deduit'])) _pj_deduire_stock($point);
+                    if ((int)($point['stock_deduit'] ?? 0) === 0) _pj_deduire_stock($point);   // 1 ou 2 : déjà retiré
                 } else {
                     _pj_restaurer_si_deduit($point);
                 }
@@ -1058,7 +1061,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
           $regle_18h_dm = _pj_regle_18h();
           // Règle 18h : seul un point dont le stock est retiré (enregistré
           // avant la règle) a quelque chose à remettre.
-          $stock_remis = $regle_18h_dm ? !empty($point['stock_deduit']) : true;
+          $stock_remis = $regle_18h_dm ? (int)($point['stock_deduit'] ?? 0) === 1 : true;   // 2 : acquis, jamais remis
           if ($stock_remis) {
             // Restaurer les films dans chaque bobine
             $films = $inv_recompte === null
@@ -1181,7 +1184,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     // Règle 18h : la bobine n'est ajustée que si le stock de ce
                     // point est effectivement retiré (point 18h validé).
                     $pt_deduit = !_pj_regle_18h()
-                        || (int)db_fetch_value("SELECT stock_deduit FROM op_points_journaliers WHERE id=?", [$corr['point_id']]) === 1;
+                        || (int)db_fetch_value("SELECT stock_deduit FROM op_points_journaliers WHERE id=?", [$corr['point_id']]) >= 1;
                     if ($delta !== 0 && $pt_deduit && $inv_recompte !== null) {
                         db_query(
                             "UPDATE op_bobines SET films_utilises = GREATEST(0, films_utilises + ?) WHERE id=?",
