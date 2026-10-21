@@ -277,6 +277,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                     // N°Consommable au lieu de purger/réinsérer le jour (sinon une
                     // plaque posée hier puis désactivée aujourd'hui perdrait sa pose).
                     $peut_upsert = db_colonne_existe('import_optoplate', 'type_desactivation');
+                    // Jour d'impression du film (migration_optoplate_date_impression) : une plaque
+                    // « reserved » est imprimée mais pas posée — son film compte le jour de
+                    // l'impression, l'engin le jour où elle passe in_use.
+                    $avec_impression = $peut_upsert && db_colonne_existe('import_optoplate', 'date_impression');
 
                     // Créer session
                     db_query("INSERT INTO import_sessions_emuci (id,date_import,type_import,statut,importe_par) VALUES (?,?,'optoplate','en_cours',?)",
@@ -329,14 +333,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                                 ($dd = emuci_parse_date_fr($get('Date de désactivation'))) ? substr($dd, 0, 10) : null,
                             ]);
                         }
+                        if ($avec_impression) {
+                            $derniere_action = emuci_parse_date_fr($get('Date dernière action'));
+                            $jour_impr = ($statut === 'reserved' || !$date_install)
+                                ? substr((string)($derniere_action ?: $date_import), 0, 10)
+                                : substr($date_install, 0, 10);
+                            $cols_opto = array_merge($cols_opto, ['date_derniere_action','date_impression']);
+                            $vals_opto = array_merge($vals_opto, [$derniere_action, $jour_impr]);
+                        }
 
                         if ($peut_upsert) {
                             // MySQL : ON DUPLICATE KEY sur l'index unique de
                             // num_consommable (migration_optoplate_desactivations_mysql.sql) —
                             // les NULL ne s'y heurtent jamais, comme l'index partiel de main.
+                            // date_impression : figée au premier import qui voit la plaque.
+                            $set_cols = array_diff($cols_opto, ['import_session_id','num_consommable']);
+                            if ($avec_impression) {
+                                // Un export plus ancien (historique réimporté après les imports
+                                // quotidiens) ne remet pas une plaque dans un état dépassé — une
+                                // plaque posée ne redevient pas « reserved ». MySQL applique les
+                                // affectations dans l'ordre : date_derniere_action en dernier.
+                                $plus_recent = "(date_derniere_action IS NULL OR VALUES(date_derniere_action) IS NULL
+                                                 OR VALUES(date_derniere_action) >= date_derniere_action)";
+                                $set_cols = array_merge(array_diff($set_cols, ['date_derniere_action']), ['date_derniere_action']);
+                            }
                             $set_sql = implode(',', array_map(
-                                fn($c) => "$c=VALUES($c)",
-                                array_diff($cols_opto, ['import_session_id','num_consommable'])
+                                fn($c) => $c === 'date_impression'
+                                    ? "date_impression=COALESCE(date_impression, VALUES(date_impression))"
+                                    : ($avec_impression ? "$c=IF($plus_recent, VALUES($c), $c)" : "$c=VALUES($c)"),
+                                $set_cols
                             ));
                             db_query(
                                 "INSERT INTO import_optoplate (" . implode(',', $cols_opto) . ")
@@ -850,7 +875,7 @@ include __DIR__ . '/../templates/header.php';
 .s-reserved{background:#dbeafe;color:#1d4ed8}
 .s-declared_broken{background:#fee2e2;color:#991b1b}
 .s-ad-print{background:#fef3c7;color:#92400e}
-.s-inused_need_reprint{background:#f3e8ff;color:#6b21a8}
+.s-in_use_need_reprint,.s-inused_need_reprint{background:#f3e8ff;color:#6b21a8}
 .s-lost{background:#f1f5f9;color:#475569}
 
 .fsel{padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-size:13px;background:white;outline:none;cursor:pointer}
@@ -1224,7 +1249,7 @@ include __DIR__ . '/../templates/header.php';
   <!-- Résultats du jour -->
   <?php if(!empty($stats_optoplate)): ?>
   <?php
-  $totaux = ['in_use'=>0,'reserved'=>0,'declared_broken'=>0,'ad-print'=>0,'inused_need_reprint'=>0,'lost'=>0];
+  $totaux = ['in_use'=>0,'reserved'=>0,'declared_broken'=>0,'ad-print'=>0,'in_use_need_reprint'=>0,'lost'=>0];
   $total_vehicules = 0; $total_bobines = 0;
   foreach($stats_optoplate as $st) {
     $totaux[$st['statut_plaque']] = ($totaux[$st['statut_plaque']]??0) + $st['nb_plaques'];
@@ -1238,10 +1263,10 @@ include __DIR__ . '/../templates/header.php';
     </div>
     <div class="stat-grid">
       <div class="stat-card green"><div class="stat-val"><?= fmt_number($totaux['in_use']??0) ?></div><div class="stat-lbl"><i class="ph ph-check-circle" aria-hidden="true"></i> In Use (posées)</div></div>
-      <div class="stat-card"><div class="stat-val"><?= fmt_number($totaux['reserved']??0) ?></div><div class="stat-lbl"><i class="ph ph-push-pin" aria-hidden="true"></i> Reserved</div></div>
+      <div class="stat-card"><div class="stat-val"><?= fmt_number($totaux['reserved']??0) ?></div><div class="stat-lbl"><i class="ph ph-push-pin" aria-hidden="true"></i> Reserved <span style="font-weight:400">· imprimées, en attente de pose</span></div></div>
       <div class="stat-card red"><div class="stat-val"><?= fmt_number($totaux['declared_broken']??0) ?></div><div class="stat-lbl"><i class="ph ph-x-circle" aria-hidden="true"></i> Declared Broken</div></div>
       <div class="stat-card orange"><div class="stat-val"><?= fmt_number($totaux['ad-print']??0) ?></div><div class="stat-lbl"><i class="ph ph-printer" aria-hidden="true"></i> Ad-Print</div></div>
-      <div class="stat-card orange"><div class="stat-val"><?= fmt_number($totaux['inused_need_reprint']??0) ?></div><div class="stat-lbl"><i class="ph ph-warning" aria-hidden="true"></i> Need Reprint</div></div>
+      <div class="stat-card orange"><div class="stat-val"><?= fmt_number($totaux['in_use_need_reprint']??0) ?></div><div class="stat-lbl"><i class="ph ph-warning" aria-hidden="true"></i> Need Reprint</div></div>
       <div class="stat-card"><div class="stat-val"><?= fmt_number($totaux['lost']??0) ?></div><div class="stat-lbl"><i class="ph ph-magnifying-glass" aria-hidden="true"></i> Lost</div></div>
     </div>
   </div>

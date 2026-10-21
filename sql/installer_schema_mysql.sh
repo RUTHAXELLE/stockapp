@@ -91,7 +91,8 @@ FICHIERS="stockapp.sql demandes_internes_mysql.sql agents_mysql.sql achats_mysql
  migration_permission_vue_pdg_mysql.sql
  migration_optoplate_desactivations_mysql.sql
  migration_optoplate_justification_superviseur_mysql.sql
- migration_equipements_agent_mysql.sql migration_site_point_auto_mysql.sql"
+ migration_equipements_agent_mysql.sql migration_site_point_auto_mysql.sql
+ migration_optoplate_date_impression_mysql.sql"
 
 echo "==> Installation du schéma dans $DB_NAME@$DB_HOST"
 for f in $FICHIERS; do

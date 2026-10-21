@@ -116,6 +116,11 @@ function historique_optoplate(string $du, string $au, bool $appliquer = false, i
              ORDER BY date_installation, id", [$site_id, $du, $au]) as $p) {
             $poses_jour[$p['jour']][] = $p;
         }
+        // Films par jour d'impression (plaques posées ou encore « reserved ») ; null sans la
+        // migration date_impression -> films = plaques posées du jour, comme avant.
+        $imprimes = op_films_imprimes($site_id, $du, $au);
+        // Un jour sans pose mais avec des plaques imprimées (reserved) a consommé des films.
+        foreach (array_keys($imprimes ?? []) as $j) $poses_jour[$j] = $poses_jour[$j] ?? [];
         if (!$poses_jour) continue;
         ksort($poses_jour);
 
@@ -165,9 +170,10 @@ function historique_optoplate(string $du, string $au, bool $appliquer = false, i
             $base = $fusion($c['primo']); $dup = $fusion($c['duplicata_par_type']); $pi = $fusion($c['post_immat_par_type']);
             $eng = fn(array $r) => $r['VP'] + $r['CAM'] + $r['SEMI'] + $r['MOTO'];
 
-            // Films par bobine connue de l'ERP : plaques posées, plus plaques cassées du jour.
+            // Films par bobine connue de l'ERP : plaques imprimées du jour (posées ou
+            // reserved), plus plaques cassées du jour.
             $films = [];
-            foreach ($c['par_bobine'] as $num => $n) {
+            foreach (($imprimes !== null ? ($imprimes[$jour] ?? []) : $c['par_bobine']) as $num => $n) {
                 $stats['plaques_total'] += $n;
                 if (isset($bobines[$num])) $films[$num] = ['u' => $n, 'e' => 0];
                 else { $stats['plaques_sans_bobine'] += $n; $bobines_inconnues[$num] = ($bobines_inconnues[$num] ?? 0) + $n; }

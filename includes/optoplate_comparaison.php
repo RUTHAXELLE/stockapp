@@ -81,6 +81,33 @@ function op_classer_poses(array $poses, array $type_vehicule): array {
 }
 
 /**
+ * Films imprimés par jour et par bobine sur un site : [jour => [num_bobine => n]].
+ * Un film est consommé le jour où sa plaque est imprimée, posée ou non :
+ * une plaque « reserved » (imprimée, en attente de pose) compte ici le jour
+ * de l'impression, puis ne compte plus quand elle passe « in_use » — elle
+ * ne compte alors que comme engin posé. Les incidents de production restent
+ * à part (endommagés). Retourne null tant que la migration
+ * migration_optoplate_date_impression n'est pas passée : l'appelant garde
+ * alors l'ancien calcul (films = plaques posées du jour).
+ */
+function op_films_imprimes(int $site_id, string $du, string $au): ?array {
+    static $colonne = null;
+    if ($colonne === null) $colonne = db_colonne_existe('import_optoplate', 'date_impression');
+    if (!$colonne) return null;
+    $r = [];
+    foreach (db_fetch_all(
+        "SELECT date_impression AS jour, num_bobine, COUNT(*) AS n
+         FROM import_optoplate
+         WHERE site_id=? AND date_impression BETWEEN ? AND ?
+           AND (statut_plaque IN ('in_use','reserved','in_use_need_reprint')
+                OR type_desactivation IN ('Duplicata','Modification POST'))
+         GROUP BY date_impression, num_bobine", [$site_id, $du, $au]) as $f) {
+        $r[substr((string)$f['jour'], 0, 10)][(string)($f['num_bobine'] ?: '—')] = (int)$f['n'];
+    }
+    return $r;
+}
+
+/**
  * Calcule, pour un site et une date (jour calendaire, 0h-23h59), ce
  * qu'OptoPlate a enregistré :
  *  - primo       : ['VP'=>['vehicules'=>n,'plaques'=>n], 'CAM'=>...] — poses
@@ -91,7 +118,8 @@ function op_classer_poses(array $poses, array $type_vehicule): array {
  *                   en Duplicata, à n'importe quelle date antérieure.
  *  - post_immat  : idem, désactivation 'Modification POST'.
  *  - endommages  : [motif => n] — désactivations DU JOUR en 'Incident'.
- *  - par_bobine  : [num_bobine => n] — plaques posées du jour.
+ *  - par_bobine  : [num_bobine => n] — films imprimés du jour (plaques
+ *                   posées ou encore « reserved », cf. op_films_imprimes).
  *  - total_jour  : nombre de poses du jour (avant classement).
  */
 function op_calc_jour_site(int $site_id, string $date): array {
@@ -146,6 +174,10 @@ function op_calc_jour_site(int $site_id, string $date): array {
         $dup_par_type = $classe['duplicata_par_type'];
         $pi_par_type  = $classe['post_immat_par_type'];
     }
+    // Films : jour d'impression (une plaque reserved compte aujourd'hui en film,
+    // demain en engin posé seulement). Sans la migration : plaques posées du jour.
+    $imprimes = op_films_imprimes($site_id, $date, $date);
+    if ($imprimes !== null) $par_bobine = $imprimes[$date] ?? [];
 
     // Endommagés : désactivations DU JOUR en Incident, par motif.
     $endo_rows = db_fetch_all(
@@ -249,8 +281,8 @@ function op_comparer_point(array $point): array {
     }
 
     // Films par bobine : films UTILISÉS déclarés par le coordinateur vs
-    // plaques posées du jour comptées par OptoPlate sur le même n° de
-    // bobine. Les films endommagés correspondent aux incidents OptoPlate
+    // films imprimés du jour comptés par OptoPlate (posés ou « reserved »)
+    // sur le même n° de bobine. Les films endommagés correspondent aux incidents OptoPlate
     // (plaques jamais posées), comparés à part étape par étape : les
     // ajouter ici créait un écart à chaque film endommagé.
     $coord_bobine_rows = db_fetch_all(
