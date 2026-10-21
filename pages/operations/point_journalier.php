@@ -135,6 +135,101 @@ function _pj_restaurer_stock(int $point_id, int $site_id, int $riv_gonfl, int $r
     }
 }
 
+// ── RÈGLE DE STOCK (21/10/2026) : seul le point 18h VALIDÉ par le
+// superviseur retire du stock (films des bobines, rivets, PMMA). Brouillon,
+// point soumis, modification demandée, points 9h / 13h : aucun mouvement.
+// op_points_journaliers.stock_deduit dit si le stock d'un point est
+// actuellement retiré — indispensable pour la transition : les points
+// enregistrés avant cette règle l'ont retiré dès leur enregistrement
+// (stock_deduit = 1 posé par sql/migration_point_stock_validation.sql) et ne
+// doivent être ni retirés une 2e fois, ni restaurés deux fois.
+// Tant que la migration n'est pas passée, l'ancien fonctionnement reste actif.
+function _pj_regle_18h(): bool {
+    return db_colonne_existe('op_points_journaliers', 'stock_deduit');
+}
+
+// Retire du stock ce que contient un point (au moment de la validation
+// superviseur du point 18h). Vérifie d'abord que tout est disponible : rien
+// n'est retiré si un seul élément manque (Exception, à appeler dans une
+// transaction).
+function _pj_deduire_stock(array $point): void {
+    $point_id = (int)$point['id'];
+    $site_id  = (int)$point['site_id'];
+    $manques  = [];
+    // Garde-fou inventaire (vps) : un inventaire validé après la date du point
+    // a déjà recompté les bobines — seuls leurs compteurs de consommation
+    // bougent, films_restants n'est ni contrôlé ni retiré.
+    $films_recomptes = inv_bobines_recompte_apres($site_id, (string)$point['date_point']) !== null;
+
+    $films = db_fetch_all(
+        "SELECT fu.*, b.numero, b.films_restants FROM op_films_utilises fu
+         JOIN op_bobines b ON b.id = fu.bobine_id WHERE fu.point_id=? FOR UPDATE", [$point_id]);
+    $besoin_bob = [];
+    foreach ($films as $f) {
+        $t = (int)$f['films_utilises'] + (int)$f['films_endommages'] + (int)($f['non_conformes'] ?? 0);
+        $besoin_bob[(int)$f['bobine_id']] = ($besoin_bob[(int)$f['bobine_id']] ?? 0) + $t;
+    }
+    foreach ($films as $f) {
+        $b = (int)$f['bobine_id'];
+        if (!$films_recomptes && isset($besoin_bob[$b]) && $besoin_bob[$b] > (int)$f['films_restants'])
+            $manques[$b] = "bobine {$f['numero']} : {$f['films_restants']} films restants, {$besoin_bob[$b]} demandés";
+    }
+    $g = (int)($point['rivets_gonflables'] ?? 0);
+    $e = (int)($point['rivets_eclates'] ?? 0);
+    $stock_g = (int)(db_fetch_value("SELECT COALESCE(quantite,0) FROM op_stock_rivets WHERE site_id=? AND type_rivet='gonflable'", [$site_id]) ?? 0);
+    $stock_e = (int)(db_fetch_value("SELECT COALESCE(quantite,0) FROM op_stock_rivets WHERE site_id=? AND type_rivet='eclate'", [$site_id]) ?? 0);
+    if ($g > $stock_g) $manques[] = "rivets gonflables : $stock_g disponibles, $g demandés";
+    if ($e > $stock_e) $manques[] = "rivets éclatés : $stock_e disponibles, $e demandés";
+    $pmma = db_fetch_all("SELECT * FROM op_pmma_utilises WHERE point_id=?", [$point_id]);
+    foreach ($pmma as $pm) {
+        $t = (int)$pm['utilises'] + (int)$pm['endommages'] + (int)($pm['non_conformes'] ?? 0);
+        $dispo = (int)(db_fetch_value("SELECT COALESCE(quantite,0) FROM stock_pmma_site WHERE site_id=? AND type_pmma=?",
+                       [$site_id, $pm['type_pmma']]) ?? 0);
+        if ($t > $dispo) $manques[] = "PMMA {$pm['type_pmma']} : $dispo disponibles, $t demandés";
+    }
+    if ($manques)
+        throw new Exception("Stock insuffisant pour valider ce point : " . implode(' ; ', $manques)
+            . ". Le stock n'a pas été modifié — demandez une modification au coordinateur ou réapprovisionnez le site.");
+
+    foreach ($films as $f) {
+        $t = (int)$f['films_utilises'] + (int)$f['films_endommages'] + (int)($f['non_conformes'] ?? 0);
+        if ($t <= 0) continue;
+        if ($films_recomptes) {
+            db_query("UPDATE op_bobines SET films_utilises = films_utilises + ?, films_endommages = films_endommages + ?,
+                      date_ouverture = COALESCE(date_ouverture, ?) WHERE id=?",
+                [(int)$f['films_utilises'], (int)$f['films_endommages'], $point['date_point'], (int)$f['bobine_id']]);
+            continue;
+        }
+        db_query("UPDATE op_bobines SET
+                  films_utilises   = films_utilises + ?,
+                  films_endommages = films_endommages + ?,
+                  films_restants   = films_restants - ?,
+                  statut = CASE WHEN films_restants - ? <= 0 THEN 'epuisee'
+                                WHEN statut = 'epuisee' THEN statut ELSE 'en_cours' END,
+                  date_ouverture = COALESCE(date_ouverture, ?)
+                  WHERE id=?",
+            [(int)$f['films_utilises'], (int)$f['films_endommages'], $t, $t, $point['date_point'], (int)$f['bobine_id']]);
+    }
+    if ($g > 0) db_query("UPDATE op_stock_rivets SET quantite = quantite - ? WHERE site_id=? AND type_rivet='gonflable'", [$g, $site_id]);
+    if ($e > 0) db_query("UPDATE op_stock_rivets SET quantite = quantite - ? WHERE site_id=? AND type_rivet='eclate'", [$e, $site_id]);
+    foreach ($pmma as $pm) {
+        $t = (int)$pm['utilises'] + (int)$pm['endommages'] + (int)($pm['non_conformes'] ?? 0);
+        if ($t > 0) db_query("UPDATE stock_pmma_site SET quantite = quantite - ? WHERE site_id=? AND type_pmma=?",
+                             [$t, $site_id, $pm['type_pmma']]);
+    }
+    db_query("UPDATE op_points_journaliers SET stock_deduit=1 WHERE id=?", [$point_id]);
+}
+
+// Remet le stock d'un point dont le stock est retiré (stock_deduit = 1), puis
+// le marque non retiré. Sans effet sinon.
+function _pj_restaurer_si_deduit(array $point, bool $films_recomptes = false): bool {
+    if (empty($point['stock_deduit'])) return false;
+    _pj_restaurer_stock((int)$point['id'], (int)$point['site_id'],
+        (int)($point['rivets_gonflables'] ?? 0), (int)($point['rivets_eclates'] ?? 0), false, $films_recomptes);
+    db_query("UPDATE op_points_journaliers SET stock_deduit=0 WHERE id=?", [(int)$point['id']]);
+    return true;
+}
+
 // Le coordinateur ne saisit pas de nouveau point tant que la journée
 // précédente n'est pas close : son point 18h soumis, validé par le
 // superviseur, puis son stock validé. On regarde le dernier point 18h d'un
@@ -263,8 +358,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $moy_prod      = $heures > 0 ? round(($total_engins + $total_engins_dup + $total_engins_pi) / $heures, 1) : 0;
 
         // Pré-vérifier si c'est une mise à jour (pour ajuster le check stock en conséquence)
+        $regle_18h = _pj_regle_18h();
         $existing_pre = db_fetch_one(
-            "SELECT id, statut, rivets_gonflables, rivets_eclates FROM op_points_journaliers WHERE site_id=? AND date_point=? AND type_point=?",
+            "SELECT id, statut, rivets_gonflables, rivets_eclates" . ($regle_18h ? ", stock_deduit" : "") . "
+             FROM op_points_journaliers WHERE site_id=? AND date_point=? AND type_point=?",
             [$site_id, $date_point, $type_point]
         );
         // Un point soumis ou validé ne se réécrit pas en ressaisissant la
@@ -273,7 +370,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             json_response(false, "Un point existe déjà pour ce site, cette date et ce type (statut : {$existing_pre['statut']}). Il ne peut plus être modifié.");
         // Point rejeté : le rejet a déjà remis son stock en place. Il ne
         // faut pas le remettre une 2e fois en le corrigeant.
-        $deja_remis     = $existing_pre && $existing_pre['statut'] === 'rejete';
+        // Règle 18h : le stock n'est remis que si ce point l'avait retiré
+        // (point enregistré avant la règle) — stock_deduit le dit exactement.
+        $deja_remis     = $regle_18h
+            ? !($existing_pre && !empty($existing_pre['stock_deduit']))
+            : ($existing_pre && $existing_pre['statut'] === 'rejete');
         $old_riv_gonfl  = ($existing_pre && !$deja_remis) ? (int)($existing_pre['rivets_gonflables'] ?? 0) : 0;
         $old_riv_eclate = ($existing_pre && !$deja_remis) ? (int)($existing_pre['rivets_eclates']    ?? 0) : 0;
 
@@ -334,7 +435,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                      $np_conc,$np_usag,$heures,$obs],
                      $reimmat_params, [$point_id]));
                 // Remettre en stock ce que l'ancienne version du point avait retiré
-                _pj_restaurer_stock((int)$point_id, $site_id, $old_riv_gonfl, $old_riv_eclate, $deja_remis, $inv_recompte !== null);
+                if ($regle_18h) {
+                    if (!$deja_remis) {
+                        _pj_restaurer_stock((int)$point_id, $site_id, $old_riv_gonfl, $old_riv_eclate, false, $inv_recompte !== null);
+                        db_query("UPDATE op_points_journaliers SET stock_deduit=0 WHERE id=?", [$point_id]);
+                    }
+                } else {
+                    _pj_restaurer_stock((int)$point_id, $site_id, $old_riv_gonfl, $old_riv_eclate, $deja_remis, $inv_recompte !== null);
+                }
                 // Supprimer anciens films et PMMA
                 db_query("DELETE FROM op_films_utilises WHERE point_id=?", [$point_id]);
                 db_query("DELETE FROM op_pmma_utilises  WHERE point_id=?", [$point_id]);
@@ -374,11 +482,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     [$riv_gonfl_end, $riv_eclate_end, $point_id]);
             }
 
-            // Déduire rivets du stock site par type
-            if ($total_gonfl > 0)
+            // Déduire rivets du stock site par type (ancienne règle seulement :
+            // avec la règle 18h, le retrait se fait à la validation superviseur)
+            if (!$regle_18h && $total_gonfl > 0)
                 db_query("UPDATE op_stock_rivets SET quantite = GREATEST(0, quantite - ?) WHERE site_id=? AND type_rivet='gonflable'",
                     [$total_gonfl, $site_id]);
-            if ($total_eclate > 0)
+            if (!$regle_18h && $total_eclate > 0)
                 db_query("UPDATE op_stock_rivets SET quantite = GREATEST(0, quantite - ?) WHERE site_id=? AND type_rivet='eclate'",
                     [$total_eclate, $site_id]);
 
@@ -407,8 +516,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 else
                     db_query("INSERT INTO op_pmma_utilises (point_id, type_pmma, utilises, endommages) VALUES (?,?,?,?)",
                         [$point_id, $type_pmma, $pm_util, $pm_endomm]);
-                db_query("UPDATE stock_pmma_site SET quantite = GREATEST(0, quantite - ?) WHERE site_id=? AND type_pmma=?",
-                    [$total_pm, $site_id, $type_pmma]);
+                if (!$regle_18h)
+                    db_query("UPDATE stock_pmma_site SET quantite = GREATEST(0, quantite - ?) WHERE site_id=? AND type_pmma=?",
+                        [$total_pm, $site_id, $type_pmma]);
                 $pmma_total_util   += $pm_util;
                 $pmma_total_endomm += $pm_endomm;
             }
@@ -440,9 +550,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     db_query("INSERT INTO op_films_utilises (point_id,bobine_id,type_vehicule_id,films_utilises,films_endommages)
                               VALUES (?,?,?,?,?)", [$point_id, $bobine_id, $tv_id, $f_util, $f_endomm]);
 
-                // Mettre à jour la bobine (après un inventaire validé : seuls
+                // Mettre à jour la bobine — ancienne règle seulement (après un inventaire validé : seuls
                 // les compteurs de consommation bougent, cf. $inv_recompte)
-                if ($inv_recompte !== null) {
+                if (!$regle_18h && $inv_recompte !== null) {
                     db_query("UPDATE op_bobines SET
                               films_utilises=films_utilises+?,
                               films_endommages=films_endommages+?,
@@ -454,7 +564,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 }
                 $new_restants = $bobine['films_restants'] - $total_sortis;
                 $new_statut   = $new_restants <= 0 ? 'epuisee' : 'en_cours';
-                db_query("UPDATE op_bobines SET
+                if (!$regle_18h) db_query("UPDATE op_bobines SET
                           films_utilises=films_utilises+?,
                           films_endommages=films_endommages+?,
                           films_restants=?,
@@ -600,8 +710,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             audit_log($user['id'], 'CREATE', 'operations', $point_id,
                 "Point journalier $type_point — Site:$site_id — $date_point — $total_engins engins");
             db_commit();
-            $msg_save = "Point enregistré. $total_engins engins, $total_plaques plaques, $rivets_util rivets déduits.";
-            if ($inv_recompte !== null)
+            $msg_save = $regle_18h
+                ? "Point enregistré. $total_engins engins, $total_plaques plaques. "
+                  . ($type_point === 'point_18h'
+                      ? "Le stock (films, rivets, PMMA) sera retiré à la validation du superviseur."
+                      : "Point de suivi : il ne retire pas de stock (seul le point 18h validé le fait).")
+                : "Point enregistré. $total_engins engins, $total_plaques plaques, $rivets_util rivets déduits.";
+            if (!$regle_18h && $inv_recompte !== null)
                 $msg_save .= " Films des bobines non déduits : " . inv_bobines_msg_recompte($inv_recompte) . ", qui en tient déjà compte.";
             $films_total_util = array_sum(array_map(fn($fd) => (int)($fd['films_utilises'] ?? 0), $films_data ?: []));
             $manque_save = array_keys(array_filter([
@@ -729,8 +844,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (($point['type_point'] ?? '') === 'point_18h')
             json_response(false, 'Le point 18h se soumet au superviseur pour validation.');
         if ($manque = _pj_elements_manquants($point)) json_response(false, _pj_msg_manquants($manque));
-        db_query("UPDATE op_points_journaliers SET statut='valide', validated_by=?, validated_at=NOW() WHERE id=?",
-            [$user['id'], $point_id]);
+        db_begin();
+        try {
+            // Règle 18h : un point 9h/13h ne retire pas de stock. S'il en avait
+            // retiré (enregistré avant la règle), on le remet.
+            if (_pj_regle_18h()) _pj_restaurer_si_deduit($point);
+            db_query("UPDATE op_points_journaliers SET statut='valide', validated_by=?, validated_at=NOW() WHERE id=?",
+                [$user['id'], $point_id]);
+            db_commit();
+        } catch (Throwable $e) { db_rollback(); json_response(false, 'Erreur : ' . $e->getMessage()); }
         json_response(true, 'Point validé avec succès.');
     }
 
@@ -801,14 +923,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             $ecart_json = json_encode($comparaison);
         }
 
-        db_query(
-            "UPDATE op_points_journaliers SET statut='valide',validated_by=?,validated_at=NOW()"
-            . (_pj_optoplate_comparaison_ok() ? ",justification_superviseur=?,ecart_optoplate=?" : "")
-            . " WHERE id=?",
-            _pj_optoplate_comparaison_ok()
-                ? [$user['id'], $justification ?: null, $ecart_json, $point_id]
-                : [$user['id'], $point_id]
-        );
+        db_begin();
+        try {
+            // Règle 18h : la validation du point 18h retire le stock (une seule
+            // fois — un point enregistré avant la règle l'a déjà retiré). Les
+            // autres types ne retirent rien ; s'ils avaient retiré, on remet.
+            if (_pj_regle_18h()) {
+                if (($point['type_point'] ?? '') === 'point_18h') {
+                    if (empty($point['stock_deduit'])) _pj_deduire_stock($point);
+                } else {
+                    _pj_restaurer_si_deduit($point);
+                }
+            }
+            db_query(
+                "UPDATE op_points_journaliers SET statut='valide',validated_by=?,validated_at=NOW()"
+                . (_pj_optoplate_comparaison_ok() ? ",justification_superviseur=?,ecart_optoplate=?" : "")
+                . " WHERE id=?",
+                _pj_optoplate_comparaison_ok()
+                    ? [$user['id'], $justification ?: null, $ecart_json, $point_id]
+                    : [$user['id'], $point_id]
+            );
+            db_commit();
+        } catch (Throwable $e) {
+            db_rollback();
+            json_response(false, $e->getMessage());
+        }
         // Notifier le coordinateur
         if (!empty($point['created_by'])) {
             db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
@@ -863,9 +1002,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         db_begin();
         try {
-            _pj_restaurer_stock($point_id, (int)$point['site_id'],
-                (int)($point['rivets_gonflables'] ?? 0), (int)($point['rivets_eclates'] ?? 0),
-                false, $inv_recompte !== null);
+            if (_pj_regle_18h()) {
+                $remis = _pj_restaurer_si_deduit($point, $inv_recompte !== null);
+            } else {
+                _pj_restaurer_stock($point_id, (int)$point['site_id'],
+                    (int)($point['rivets_gonflables'] ?? 0), (int)($point['rivets_eclates'] ?? 0),
+                    false, $inv_recompte !== null);
+                $remis = true;
+            }
             // Lignes liées (films, PMMA, endommagements, observations…) :
             // ON DELETE CASCADE ; supprimées explicitement pour ne pas
             // dépendre des contraintes de chaque base.
@@ -877,10 +1021,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             audit_log($user['id'], 'DELETE', 'operations', $point_id,
                 "Suppression brouillon point journalier #$point_id du {$point['date_point']} — stock films, rivets et PMMA restauré");
             db_commit();
-            json_response(true, $inv_recompte !== null
-                ? 'Brouillon supprimé. Rivets et PMMA remis en stock ; films des bobines inchangés : '
-                  . inv_bobines_msg_recompte($inv_recompte) . '.'
-                : 'Brouillon supprimé. Films, rivets et PMMA remis en stock.');
+            json_response(true, !$remis ? 'Brouillon supprimé.'
+                : ($inv_recompte !== null
+                    ? 'Brouillon supprimé. Rivets et PMMA remis en stock ; films des bobines inchangés : '
+                      . inv_bobines_msg_recompte($inv_recompte) . '.'
+                    : 'Brouillon supprimé. Films, rivets et PMMA remis en stock.'));
         } catch (Exception $e) {
             db_rollback();
             json_response(false, 'Erreur : ' . $e->getMessage());
@@ -910,6 +1055,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         db_begin();
         try {
+          $regle_18h_dm = _pj_regle_18h();
+          // Règle 18h : seul un point dont le stock est retiré (enregistré
+          // avant la règle) a quelque chose à remettre.
+          $stock_remis = $regle_18h_dm ? !empty($point['stock_deduit']) : true;
+          if ($stock_remis) {
             // Restaurer les films dans chaque bobine
             $films = $inv_recompte === null
                 ? db_fetch_all("SELECT * FROM op_films_utilises WHERE point_id=?", [$point_id])
@@ -947,6 +1097,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                         [$total_pm, $point['site_id'], $pm['type_pmma']]);
                 }
             }
+            if ($regle_18h_dm) db_query("UPDATE op_points_journaliers SET stock_deduit=0 WHERE id=?", [$point_id]);
+          }
 
             // Marquer en modification demandée (statut DB inchangé : 'rejete')
             db_query("UPDATE op_points_journaliers SET statut='rejete', motif_rejet=?, validated_by=?, validated_at=NOW() WHERE id=?",
@@ -963,10 +1115,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
             audit_log($user['id'], 'UPDATE', 'operations', $point_id, "Demande de modification sur le point journalier #$point_id — stock restauré");
             db_commit();
-            json_response(true, $inv_recompte !== null
-                ? 'Demande de modification envoyée. Rivets et PMMA restaurés ; films des bobines inchangés : '
-                  . inv_bobines_msg_recompte($inv_recompte) . '.'
-                : 'Demande de modification envoyée. Stock films, rivets et PMMA restaurés.');
+            json_response(true, !$stock_remis ? 'Demande de modification envoyée.'
+                : ($inv_recompte !== null
+                    ? 'Demande de modification envoyée. Rivets et PMMA restaurés ; films des bobines inchangés : '
+                      . inv_bobines_msg_recompte($inv_recompte) . '.'
+                    : 'Demande de modification envoyée. Stock films, rivets et PMMA restaurés.'));
         } catch (Exception $e) {
             db_rollback();
             json_response(false, 'Erreur : '.$e->getMessage());
@@ -1025,12 +1178,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                         "UPDATE op_films_utilises SET films_utilises=? WHERE point_id=? AND bobine_id=?",
                         [$films_final, $corr['point_id'], $corr['bobine_id']]
                     );
-                    if ($delta !== 0 && $inv_recompte !== null) {
+                    // Règle 18h : la bobine n'est ajustée que si le stock de ce
+                    // point est effectivement retiré (point 18h validé).
+                    $pt_deduit = !_pj_regle_18h()
+                        || (int)db_fetch_value("SELECT stock_deduit FROM op_points_journaliers WHERE id=?", [$corr['point_id']]) === 1;
+                    if ($delta !== 0 && $pt_deduit && $inv_recompte !== null) {
                         db_query(
                             "UPDATE op_bobines SET films_utilises = GREATEST(0, films_utilises + ?) WHERE id=?",
                             [$delta, $corr['bobine_id']]
                         );
-                    } elseif ($delta !== 0) {
+                    } elseif ($delta !== 0 && $pt_deduit) {
                         db_query(
                             "UPDATE op_bobines SET
                              films_utilises = GREATEST(0, films_utilises + ?),
@@ -3421,7 +3578,7 @@ async function editPoint(id){
 }
 
 function supprimerBrouillon(id){
-  if(!confirm("Supprimer ce brouillon ?\n\nLes films, rivets et PMMA qu'il avait retirés seront remis dans le stock du site. Cette action est définitive."))return;
+  if(!confirm("Supprimer ce brouillon ?\n\nCette action est définitive."))return;
   ap({action:'supprimer_brouillon',point_id:id}).then(d=>{
     toast(d.message,d.success?'success':'danger');
     if(d.success)setTimeout(()=>location.reload(),800);
