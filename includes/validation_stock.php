@@ -56,6 +56,87 @@ function vsm_import_du(int $site_id, string $date): ?string {
  * Retour : nb_ecarts, ecarts, bobines_detail (mêmes clés qu'avant),
  * dernier_import, point (ou null), chaine_complete.
  */
+// ── Causes possibles d'un écart bobine (ERP − EMUCI), pour aider le GSB à
+//    trancher. Chaque cause porte, quand on sait la chiffrer, sa part signée
+//    de l'écart : + quand EMUCI a retiré des films que le point ne déclare
+//    pas (ou pas ce jour-là), − quand l'ERP en a retiré qu'EMUCI n'a pas
+//    retirés. Indicatif : rien n'est corrigé automatiquement.
+function vs_causes_ecart(int $site_id, string $date, array $l): array {
+    $bobine_id = (int)$l['bobine_id'];
+    $numero    = (string)$l['numero'];
+    $lendemain = date('Y-m-d', strtotime($date . ' +1 day'));
+    $jj        = date('d/m', strtotime($date));
+    $causes    = [];
+
+    // 1. Plaques OptoPlate imprimées ce jour sur la bobine mais posées plus
+    //    tard (« reserved ») — et l'inverse : posées ce jour, imprimées avant.
+    if (db_colonne_existe('import_optoplate', 'date_impression')) {
+        $imp_non_posees = (int)db_fetch_value(
+            "SELECT COUNT(*) FROM import_optoplate
+             WHERE num_bobine=? AND date_impression=?
+               AND (date_installation IS NULL OR date_installation >= ?)
+               AND COALESCE(type_desactivation,'') <> 'Incident'", [$numero, $date, $lendemain]);
+        if ($imp_non_posees > 0)
+            $causes[] = ['films' => $imp_non_posees, 'texte' =>
+                "$imp_non_posees plaque(s) imprimée(s) le $jj sur cette bobine mais posée(s) plus tard : EMUCI a déjà retiré le film. "
+                . "Le coordinateur les a-t-il déclarées en films utilisés ?"];
+        $posees_avant = (int)db_fetch_value(
+            "SELECT COUNT(*) FROM import_optoplate
+             WHERE num_bobine=? AND date_installation >= ? AND date_installation < ?
+               AND date_impression < ?", [$numero, $date, $lendemain, $date]);
+        if ($posees_avant > 0)
+            $causes[] = ['films' => -$posees_avant, 'texte' =>
+                "$posees_avant plaque(s) posée(s) le $jj mais imprimée(s) un jour précédent : EMUCI a retiré leur film ce jour-là. "
+                . "Si le coordinateur les déclare aujourd'hui, l'ERP retire le film une 2e fois."];
+    }
+
+    // 2. Export OptoTrace pris après la journée : sa quantité inclut déjà la
+    //    consommation des jours suivants.
+    $last_use = db_fetch_value(
+        "SELECT MAX(last_use) FROM import_optotrace WHERE keyname=? AND date_import=?", [$numero, $date]);
+    if ($last_use && substr((string)$last_use, 0, 10) >= $lendemain)
+        $causes[] = ['films' => null, 'texte' =>
+            "L'export OptoTrace du $jj a été pris après la journée (dernière utilisation de la bobine le "
+            . date('d/m à H:i', strtotime((string)$last_use)) . ") : la consommation de ces jours-là est déjà retirée côté EMUCI."];
+
+    // 3. Films retirés par des points postérieurs : le restant ERP comparé est
+    //    celui d'aujourd'hui, pas celui du soir de la date contrôlée.
+    $regle_18h = db_colonne_existe('op_points_journaliers', 'stock_deduit');
+    $apres = (int)db_fetch_value(
+        "SELECT COALESCE(SUM(fu.films_utilises + fu.films_endommages),0)
+         FROM op_films_utilises fu JOIN op_points_journaliers p ON p.id = fu.point_id
+         WHERE fu.bobine_id=? AND p.date_point > ? AND "
+        . ($regle_18h ? "p.stock_deduit >= 1" : "p.statut <> 'rejete'"), [$bobine_id, $date]);
+    if ($apres > 0)
+        $causes[] = ['films' => -$apres, 'texte' =>
+            "$apres film(s) déjà retiré(s) de cette bobine par des points postérieurs au $jj : le stock ERP comparé est celui d'aujourd'hui."];
+
+    // 4. Films non conformes retirés du stock par l'ancienne règle (avant le
+    //    22/10/2026) alors qu'EMUCI ne les compte pas.
+    if ($date < '2026-10-22' && db_colonne_existe('op_films_utilises', 'non_conformes')) {
+        $nc = (int)db_fetch_value(
+            "SELECT COALESCE(SUM(fu.non_conformes),0) FROM op_films_utilises fu
+             JOIN op_points_journaliers p ON p.id = fu.point_id
+             WHERE fu.bobine_id=? AND p.date_point=? AND p.type_point='point_18h'", [$bobine_id, $date]);
+        if ($nc > 0)
+            $causes[] = ['films' => -$nc, 'texte' =>
+                "$nc film(s) non conforme(s) déclaré(s) le $jj, retiré(s) du stock par l'ancienne règle alors qu'EMUCI ne les compte pas."];
+    }
+
+    // 5. Même écart déjà constaté avant et non réajusté : décalage ancien
+    //    reporté de jour en jour. Il explique à lui seul tout l'écart.
+    $prec = db_fetch_one(
+        "SELECT date_constat, ecart, statut FROM ecarts_bobines
+         WHERE bobine_id=? AND source='validation_stock' AND date_constat < ?
+         ORDER BY date_constat DESC, id DESC LIMIT 1", [$bobine_id, $date]);
+    if ($prec && (int)$prec['ecart'] === (int)$l['ecart'] && $prec['statut'] !== 'resolu')
+        $causes = [['films' => (int)$l['ecart'], 'texte' =>
+            "Le même écart (" . ((int)$prec['ecart'] > 0 ? '+' : '') . (int)$prec['ecart'] . ") a déjà été constaté le "
+            . date('d/m', strtotime((string)$prec['date_constat'])) . " sans réajustement : décalage ancien reporté. Un réajustement le soldera."]];
+
+    return $causes;
+}
+
 function vsm_calculer(int $site_id, string $date): array {
     $point  = vsm_point_18h($site_id, $date);
     $import = vsm_import_du($site_id, $date);
@@ -105,6 +186,7 @@ function vsm_calculer(int $site_id, string $date): array {
             'ecart'            => $ecart,
             'has_ecart'        => $import !== null && $ecart !== 0,
         ];
+        if ($ligne['has_ecart']) $ligne['causes'] = vs_causes_ecart($site_id, $date, $ligne);
         $res['bobines_detail'][] = $ligne;
         if ($ligne['has_ecart']) { $res['nb_ecarts']++; $res['ecarts'][] = $ligne; }
     }

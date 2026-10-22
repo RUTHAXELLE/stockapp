@@ -2078,7 +2078,7 @@ async function verifierSite(siteId, siteNom) {
     bobines.forEach((b, i) => {
       const bg = b.has_ecart ? '#FFF7ED' : (i%2===0 ? 'white' : '#F8FAFC');
       html += `<tr style="background:${bg}">
-        <td style="padding:9px 10px;font-family:monospace;font-weight:800;color:#06033A;font-size:12px">${b.numero}</td>
+        <td style="padding:9px 10px;font-family:monospace;font-weight:800;color:#06033A;font-size:12px">${b.numero}${causesEcartHtml(b)}</td>
         <td style="padding:9px 10px;font-size:12px;color:var(--muted)">${b.type_code||b.format||'—'}</td>
         ${d.dernier_import ? `
         <td style="padding:9px 10px;text-align:center;font-weight:600;color:#1B75BC">${b.stock_systeme??'—'}</td>` : ''}
@@ -2309,6 +2309,22 @@ async function validerSansImport(siteId, date, siteNom){
 }
 
 // ── Cellule « Décision » d'une ligne bobine
+// Causes possibles d'un écart (calculées côté serveur, vs_causes_ecart).
+function causesEcartHtml(b) {
+  const c = b.causes || [];
+  if (!b.has_ecart || !c.length) return '';
+  const chiffre = c.every(x => x.films !== null && x.films !== undefined);
+  const somme = c.reduce((t, x) => t + (x.films ?? 0), 0);
+  const bilan = chiffre && somme === Number(b.ecart)
+    ? '<div style="color:#065F46;font-weight:700;margin-top:3px">Écart entièrement expliqué par ces causes.</div>'
+    : '';
+  const esc = t => String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  return `<div style="margin-top:6px;padding:6px 8px;background:#F1F5F9;border-radius:8px;font-family:inherit;font-weight:400;font-size:11.5px;line-height:1.45;color:#334155;white-space:normal;text-align:left;max-width:420px">
+    <div style="font-weight:700;color:#06033A;margin-bottom:2px">Causes possibles</div>
+    ${c.map(x => `<div>• ${x.films !== null && x.films !== undefined ? `<strong>${x.films>0?'+':''}${x.films}</strong> ` : ''}${esc(x.texte)}</div>`).join('')}${bilan}
+  </div>`;
+}
+
 function celluleDecision(b) {
   if (b.decision) {
     const m = DEC_META[b.decision.decision] || {icon:'•', court:b.decision.decision, bg:'#F1F5F9', color:'#475569'};
@@ -2352,7 +2368,7 @@ function ouvrirDecisionBobine(bobineId, decision) {
         <div style="font-size:12px;font-weight:700;color:#991B1B;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Écart</div>
         <div style="font-size:20px;font-weight:800;color:${b.ecart>0?'#DC2626':'#D97706'}">${b.ecart>0?'+':''}${b.ecart ?? 0}</div>
       </div>
-    </div>`;
+    </div>${causesEcartHtml(b)}`;
   const hint = document.getElementById('decBobHint');
   hint.style.background   = m.bg;
   hint.style.borderColor  = m.border;
@@ -2597,7 +2613,7 @@ async function voirDetails(siteId, siteNom, nbEcarts, detailsJson, statut, comme
       const ecartColor = b.ecart > 0 ? '#DC2626' : '#D97706';
 
       html += `<tr style="background:${rowBg}">
-        <td style="padding:9px 12px;font-family:monospace;font-weight:800;color:#06033A">${b.numero}</td>
+        <td style="padding:9px 12px;font-family:monospace;font-weight:800;color:#06033A">${b.numero}${causesEcartHtml(b)}</td>
         <td style="padding:9px 12px;font-size:11.5px;color:var(--muted)">${b.type_code||b.format||'—'}</td>
         ${hasImport ? `
         <td style="padding:9px 12px;text-align:center;font-weight:600;color:#1B75BC">${b.stock_systeme}</td>` : ''}
