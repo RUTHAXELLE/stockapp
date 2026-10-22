@@ -1072,7 +1072,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 if ($total > 0) {
                     db_query(
                         "UPDATE op_bobines SET films_restants = films_restants + ?,
-                         statut = CASE WHEN films_restants + ? >= qte_initiale THEN 'en_stock'
+                         statut = CASE WHEN statut = 'en_cours' THEN statut   -- reste en utilisation
+                                       WHEN films_restants + ? >= qte_initiale THEN 'en_stock'
                                        WHEN films_restants + ? > 0 THEN 'en_cours'
                                        ELSE statut END
                          WHERE id=?",

@@ -581,7 +581,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
 
                         // ── Synchronisation bobine depuis OptoTrace (source de vérité)
                         $bobine = db_fetch_one(
-                            "SELECT id, films_restants, stock_systeme, site_id, qte_initiale FROM op_bobines WHERE numero=?",
+                            "SELECT id, films_restants, stock_systeme, site_id, qte_initiale, statut FROM op_bobines WHERE numero=?",
                             [$keyname]
                         );
 
@@ -640,12 +640,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                             $site_upd    = $site_id_ds ?? $bobine['site_id'];
                             $diff_sys    = $quantity - $old_systeme;
 
-                            // Statut basé sur la quantité PHYSIQUE (pas EMUCI)
+                            // Statut basé sur la quantité PHYSIQUE (pas EMUCI), sans jamais
+                            // défaire une décision prise dans l'ERP : une bobine mise « en
+                            // utilisation » (demande approuvée) reste en cours même si aucun
+                            // film n'est encore retiré — depuis la règle du point 18h, ses
+                            // films ne sortent qu'à la validation du superviseur. Une bobine
+                            // déclarée perdue le reste.
+                            $statut_actuel = (string)($bobine['statut'] ?? '');
                             $new_statut = match(true) {
-                                $state == 7        => 'retiree',
-                                $old_phys == 0     => 'epuisee',
-                                $old_phys < $qte_init => 'en_cours',
-                                default            => 'en_stock',
+                                $state == 7                  => 'retiree',
+                                $statut_actuel === 'perdue'  => 'perdue',
+                                $old_phys == 0               => 'epuisee',
+                                $statut_actuel === 'en_cours' => 'en_cours',
+                                $old_phys < $qte_init        => 'en_cours',
+                                default                      => 'en_stock',
                             };
 
                             db_query(
