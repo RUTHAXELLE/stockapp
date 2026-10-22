@@ -581,7 +581,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
 
                         // ── Synchronisation bobine depuis OptoTrace (source de vérité)
                         $bobine = db_fetch_one(
-                            "SELECT id, films_restants, stock_systeme, site_id, qte_initiale, statut FROM op_bobines WHERE numero=?",
+                            "SELECT id, films_restants, stock_systeme, site_id, qte_initiale FROM op_bobines WHERE numero=?",
                             [$keyname]
                         );
 
@@ -635,33 +635,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                             // films_restants = quantité PHYSIQUE (gérée par PJ) — ne pas écraser
                             // stock_systeme  = quantité EMUCI (comparaison uniquement)
                             $old_systeme = (int)$bobine['stock_systeme'];
-                            $old_phys    = (int)$bobine['films_restants'];
-                            $qte_init    = (int)$bobine['qte_initiale'] ?: 500;
                             $site_upd    = $site_id_ds ?? $bobine['site_id'];
                             $diff_sys    = $quantity - $old_systeme;
 
-                            // Statut basé sur la quantité PHYSIQUE (pas EMUCI), sans jamais
-                            // défaire une décision prise dans l'ERP : une bobine mise « en
-                            // utilisation » (demande approuvée) reste en cours même si aucun
-                            // film n'est encore retiré — depuis la règle du point 18h, ses
-                            // films ne sortent qu'à la validation du superviseur. Une bobine
-                            // déclarée perdue le reste.
-                            $statut_actuel = (string)($bobine['statut'] ?? '');
-                            $new_statut = match(true) {
-                                $state == 7                  => 'retiree',
-                                $statut_actuel === 'perdue'  => 'perdue',
-                                $old_phys == 0               => 'epuisee',
-                                $statut_actuel === 'en_cours' => 'en_cours',
-                                $old_phys < $qte_init        => 'en_cours',
-                                default                      => 'en_stock',
-                            };
-
+                            // Le statut d'une bobine déjà connue de l'ERP n'est JAMAIS modifié
+                            // par l'import : il relève des décisions prises dans l'ERP (demande
+                            // d'utilisation, épuisement au point journalier, perte, retrait).
+                            // L'import ne met à jour que la quantité EMUCI, le site et le format.
                             db_query(
                                 "UPDATE op_bobines
-                                 SET stock_systeme=?, statut=?,
+                                 SET stock_systeme=?,
                                      site_id=?, format=CASE WHEN ?<>'' THEN ? ELSE format END
                                  WHERE id=?",
-                                [$quantity, $new_statut,
+                                [$quantity,
                                  $site_upd, $format, $format, $bobine['id']]
                             );
 
