@@ -97,7 +97,7 @@ function vsm_calculer(int $site_id, string $date): array {
             'numero'           => $b['numero'],
             'type_code'        => $b['type_code'] ?? '',
             'format'           => $b['format'] ?? '',
-            'stock_debut'      => $erp + $util + $endo + (int)$b['films_nc'],
+            'stock_debut'      => $erp + $util + $endo,   // non conformes : pas retirés du stock (22/10)
             'films_utilises'   => $util,
             'films_endommages' => $endo,
             'films_restants'   => $erp,

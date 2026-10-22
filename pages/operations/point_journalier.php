@@ -98,7 +98,7 @@ function _pj_msg_manquants(array $manque): string {
 function _pj_restaurer_stock(int $point_id, int $site_id, int $riv_gonfl, int $riv_eclate, bool $deja_remis = false, bool $films_recomptes = false): void {
     $old_films = db_fetch_all("SELECT * FROM op_films_utilises WHERE point_id=?", [$point_id]);
     foreach ($old_films as $of) {
-        $total_restore = (int)$of['films_utilises'] + (int)$of['films_endommages'] + (int)($of['non_conformes'] ?? 0);
+        $total_restore = (int)$of['films_utilises'] + (int)$of['films_endommages'];   // non conformes : jamais retirés
         if ($total_restore > 0 && ($deja_remis || $films_recomptes)) {
             db_query(
                 "UPDATE op_bobines SET
@@ -169,7 +169,7 @@ function _pj_deduire_stock(array $point): void {
          JOIN op_bobines b ON b.id = fu.bobine_id WHERE fu.point_id=? FOR UPDATE", [$point_id]);
     $besoin_bob = [];
     foreach ($films as $f) {
-        $t = (int)$f['films_utilises'] + (int)$f['films_endommages'] + (int)($f['non_conformes'] ?? 0);
+        $t = (int)$f['films_utilises'] + (int)$f['films_endommages'];   // non conformes : jamais retirés
         $besoin_bob[(int)$f['bobine_id']] = ($besoin_bob[(int)$f['bobine_id']] ?? 0) + $t;
     }
     foreach ($films as $f) {
@@ -195,7 +195,7 @@ function _pj_deduire_stock(array $point): void {
             . ". Le stock n'a pas été modifié — demandez une modification au coordinateur ou réapprovisionnez le site.");
 
     foreach ($films as $f) {
-        $t = (int)$f['films_utilises'] + (int)$f['films_endommages'] + (int)($f['non_conformes'] ?? 0);
+        $t = (int)$f['films_utilises'] + (int)$f['films_endommages'];   // non conformes : jamais retirés
         if ($t <= 0) continue;
         if ($films_recomptes) {
             db_query("UPDATE op_bobines SET films_utilises = films_utilises + ?, films_endommages = films_endommages + ?,
@@ -533,16 +533,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 $tv_id = max(1, (int)($fd['type_vehicule_id'] ?? 1));
                 $f_util       = (int)($fd['films_utilises'] ?? 0);
                 $f_endomm     = (int)($fd['films_endommages'] ?? 0);
-                // Films non conformes (reçus hors règles) : sortis des films
-                // restants comme les endommagés, sans entrer dans les
-                // compteurs utilisés/endommagés de la bobine.
+                // Films non conformes (reçus hors règles) : déclarés et tracés,
+                // mais ne sortent PAS du stock de la bobine (décision du
+                // 22/10/2026) — seuls utilisés + endommagés sont retirés.
                 $f_nc         = _pj_films_nc() ? max(0, (int)($fd['films_non_conformes'] ?? 0)) : 0;
                 if (!$bobine_id || ($f_util + $f_endomm + $f_nc) === 0) continue;
 
                 $bobine = db_fetch_one("SELECT * FROM op_bobines WHERE id=?", [$bobine_id]);
                 if (!$bobine) continue;
 
-                $total_sortis = $f_util + $f_endomm + $f_nc;
+                $total_sortis = $f_util + $f_endomm;
                 if ($inv_recompte === null && $bobine['films_restants'] < $total_sortis)
                     throw new Exception("Bobine {$bobine['numero']} : stock insuffisant ({$bobine['films_restants']} restants, {$total_sortis} demandés).");
 
@@ -1068,7 +1068,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 ? db_fetch_all("SELECT * FROM op_films_utilises WHERE point_id=?", [$point_id])
                 : [];
             foreach ($films as $f) {
-                $total = (int)$f['films_utilises'] + (int)$f['films_endommages'] + (int)($f['non_conformes'] ?? 0);
+                $total = (int)$f['films_utilises'] + (int)$f['films_endommages'];   // non conformes : jamais retirés
                 if ($total > 0) {
                     db_query(
                         "UPDATE op_bobines SET films_restants = films_restants + ?,
@@ -2780,7 +2780,7 @@ function buildBobineRow(selectedBobineId, idx){
                style="margin-top:4px;text-align:center;border-color:var(--danger)">
       </div>
       <div>
-        <label style="font-size:12px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:.5px" title="Films reçus qui ne respectent pas les règles">Non conformes</label>
+        <label style="font-size:12px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:.5px" title="Films reçus qui ne respectent pas les règles : déclarés, mais pas retirés du stock de la bobine">Non conformes</label>
         <input type="number" class="form-control" id="bnc-${idx}" min="0" value="0"
                oninput="updateBobineRestants(${idx})"
                style="margin-top:4px;text-align:center;border-color:#c4b5fd">
@@ -2824,8 +2824,7 @@ function updateBobineRestants(idx){
   const b=bobinesCache[bid]||{films_restants:0};
   const util=parseInt(document.getElementById('butil-'+idx)?.value||0);
   const endomm=parseInt(document.getElementById('bendomm-'+idx)?.value||0);
-  const nc=parseInt(document.getElementById('bnc-'+idx)?.value||0);
-  const restants=b.films_restants-(util+endomm+nc);
+  const restants=b.films_restants-(util+endomm);   // non conformes : pas retirés du stock
   const info=document.getElementById('binfo-'+idx);
   if(info){
     info.textContent=`${Math.max(0,restants)} films restants · ${b.type_code||''}`;
