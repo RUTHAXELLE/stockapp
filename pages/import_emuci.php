@@ -635,20 +635,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                             // films_restants = quantité PHYSIQUE (gérée par PJ) — ne pas écraser
                             // stock_systeme  = quantité EMUCI (comparaison uniquement)
                             $old_systeme = (int)$bobine['stock_systeme'];
-                            $site_upd    = $site_id_ds ?? $bobine['site_id'];
                             $diff_sys    = $quantity - $old_systeme;
 
-                            // Le statut d'une bobine déjà connue de l'ERP n'est JAMAIS modifié
-                            // par l'import : il relève des décisions prises dans l'ERP (demande
-                            // d'utilisation, épuisement au point journalier, perte, retrait).
-                            // L'import ne met à jour que la quantité EMUCI, le site et le format.
+                            // Le statut et le site d'une bobine déjà connue de l'ERP ne sont
+                            // JAMAIS modifiés par l'import : ils relèvent des décisions prises
+                            // dans l'ERP (affectation, demande d'utilisation, point journalier,
+                            // perte, retrait). L'import ne met à jour que la quantité EMUCI et
+                            // le format.
                             db_query(
                                 "UPDATE op_bobines
                                  SET stock_systeme=?,
-                                     site_id=?, format=CASE WHEN ?<>'' THEN ? ELSE format END
+                                     format=CASE WHEN ?<>'' THEN ? ELSE format END
                                  WHERE id=?",
-                                [$quantity,
-                                 $site_upd, $format, $format, $bobine['id']]
+                                [$quantity, $format, $format, $bobine['id']]
                             );
 
                             if ($diff_sys !== 0) {
