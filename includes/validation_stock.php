@@ -111,16 +111,19 @@ function vs_causes_ecart(int $site_id, string $date, array $l): array {
         $causes[] = ['films' => -$apres, 'texte' =>
             "$apres film(s) déjà retiré(s) de cette bobine par des points postérieurs au $jj : le stock ERP comparé est celui d'aujourd'hui."];
 
-    // 4. Films non conformes retirés du stock par l'ancienne règle (avant le
-    //    22/10/2026) alors qu'EMUCI ne les compte pas.
-    if ($date < '2026-10-22' && db_colonne_existe('op_films_utilises', 'non_conformes')) {
+    // 4. Films non conformes du jour : déclarés par le coordinateur, ils ne
+    //    sortent pas du stock ERP de la bobine (seuls utilisés + endommagés),
+    //    alors qu'OptoTrace a pu les retirer. Non chiffré : selon la date, l'ERP
+    //    les retirait encore (ancienne règle) ou non.
+    if (db_colonne_existe('op_films_utilises', 'non_conformes')) {
         $nc = (int)db_fetch_value(
             "SELECT COALESCE(SUM(fu.non_conformes),0) FROM op_films_utilises fu
              JOIN op_points_journaliers p ON p.id = fu.point_id
              WHERE fu.bobine_id=? AND p.date_point=? AND p.type_point='point_18h'", [$bobine_id, $date]);
         if ($nc > 0)
-            $causes[] = ['films' => -$nc, 'texte' =>
-                "$nc film(s) non conforme(s) déclaré(s) le $jj, retiré(s) du stock par l'ancienne règle alors qu'EMUCI ne les compte pas."];
+            $causes[] = ['films' => null, 'texte' =>
+                "$nc film(s) non conforme(s) déclaré(s) le $jj sur cette bobine : ils ne sortent pas du stock ERP. "
+                . "Si OptoTrace les a retirés, ils expliquent +$nc de l'écart."];
     }
 
     // 5. Même écart déjà constaté avant et non réajusté : décalage ancien
