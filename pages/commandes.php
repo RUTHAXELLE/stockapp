@@ -306,16 +306,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!$l) json_response(false, 'Ligne bobine introuvable.');
         $code = cmdbob_type_code((int)$l['article_id']);
         $dispo = db_fetch_all(
-            "SELECT b.id, b.numero, b.films_restants FROM op_bobines b
+            "SELECT b.id, b.numero, b.stock_systeme, b.qte_initiale FROM op_bobines b
              WHERE b.type_code=? AND b.statut='en_stock' AND (b.site_id IS NULL OR b.site_id=?)
                AND " . cmdbob_sql_libre('b') . "
-             ORDER BY b.films_restants DESC, b.numero", [$code, cmdbob_entrepot_id()]);
+             ORDER BY b.stock_systeme DESC, b.numero", [$code, cmdbob_entrepot_id()]);
         $choisies = db_fetch_all(
-            "SELECT b.id, b.numero, b.films_restants FROM commande_ligne_bobines clb
+            "SELECT b.id, b.numero, b.stock_systeme, b.qte_initiale FROM commande_ligne_bobines clb
              JOIN op_bobines b ON b.id = clb.bobine_id
              WHERE clb.commande_ligne_id=? AND clb.statut='assigne' ORDER BY b.numero", [$ligne_id]);
         json_response(true, '', ['ligne' => ['id' => (int)$l['id'], 'libelle' => $l['libelle'],
-                                             'quantite' => (int)$l['quantite'], 'type' => $code],
+                                             'quantite' => (int)$l['quantite'], 'type' => $code,
+                                             'en_bobines' => cmdbob_en_bobines($l),
+                                             'films' => cmdbob_films_demandes($l),
+                                             'films_bobine' => CMDBOB_FILMS_BOBINE,
+                                             'manque_max' => CMDBOB_MANQUE_INITIAL_MAX],
                                  'dispo' => $dispo, 'choisies' => $choisies]);
     }
 
@@ -331,8 +335,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!$l || $l['cmd_statut'] !== 'en_attente_livraison')
             json_response(false, 'Ligne introuvable, non validée, ou commande qui n\'est plus à préparer.');
         if (!$ids) json_response(false, 'Choisissez au moins une bobine.');
-        if (count($ids) > (int)$l['quantite'])
-            json_response(false, "Au plus {$l['quantite']} bobine(s) pour cette ligne.");
         $cmd_id = (int)$l['commande_id'];
         $code = cmdbob_type_code((int)$l['article_id']);
         db_begin();
@@ -340,16 +342,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             // Un nouveau choix remplace le précédent pour cette ligne.
             db_query("DELETE FROM commande_ligne_bobines WHERE commande_ligne_id=? AND statut='assigne'", [$ligne_id]);
             $numeros = [];
+            $choix = [];
             foreach ($ids as $bid) {
                 $b = db_fetch_one(
                     "SELECT b.* FROM op_bobines b
                      WHERE b.id=? AND b.type_code=? AND b.statut='en_stock' AND (b.site_id IS NULL OR b.site_id=?)
                        AND " . cmdbob_sql_libre('b'), [$bid, $code, cmdbob_entrepot_id()]);
                 if (!$b) throw new Exception("Bobine #$bid indisponible : déjà réservée, pas en stock à l'entrepôt, ou d'un autre type que $code.");
+                $choix[] = $b;
                 db_query("INSERT INTO commande_ligne_bobines (commande_id,commande_ligne_id,bobine_id,numero_bobine,statut,assigne_par)
                           VALUES (?,?,?,?,'assigne',?)", [$cmd_id, $ligne_id, $bid, $b['numero'], $user['id']]);
                 $numeros[] = $b['numero'];
             }
+            // Somme des quantités système = quantité demandée.
+            if (($err = cmdbob_controle($l, $choix)) !== null) throw new Exception($err);
             $reste = cmdbob_lignes_a_choisir($cmd_id);
             if ($reste === 0) {
                 foreach (db_fetch_all(
@@ -364,7 +370,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 "Bobines réservées pour « {$l['libelle']} » : " . implode(', ', $numeros));
             db_commit();
         } catch (Exception $e) { db_rollback(); json_response(false, $e->getMessage()); }
-        json_response(true, count($ids) . " bobine(s) réservée(s) pour cette ligne."
+        $somme = array_sum(array_map(fn($b) => (int)$b['stock_systeme'], $choix));
+        json_response(true, count($ids) . " bobine(s) réservée(s) pour cette ligne ($somme films)."
             . ($reste > 0 ? " Reste $reste ligne(s) bobine à traiter." : " La commande peut maintenant être expédiée."));
     }
 
@@ -381,16 +388,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!$cmd) json_response(false,'Commande introuvable ou statut incorrect.');
 
         // Lignes « bobine » : le GSB doit d'abord avoir choisi les bobines ; la
-        // quantité livrée est celle des bobines choisies, quoi qu'envoie l'écran.
+        // quantité livrée vient des bobines choisies (cmdbob_qte_livree), quoi
+        // qu'envoie l'écran.
         $bob_par_ligne = cmdbob_par_ligne($cmd_id);
         if (($n_a_choisir = cmdbob_lignes_a_choisir($cmd_id)) > 0)
             json_response(false, "Le GSB doit d'abord choisir les bobines de $n_a_choisir ligne(s) bobine avant l'expédition.");
         if (cmdbob_actif()) {
             $lignes_bobine = array_column(db_fetch_all(
-                "SELECT id FROM commande_lignes WHERE commande_id=? AND type_article='bobine'", [$cmd_id]), 'id', 'id');
+                "SELECT id, quantite, unite FROM commande_lignes WHERE commande_id=? AND type_article='bobine'", [$cmd_id]), null, 'id');
             foreach ($lignes_liv as &$_l) {
-                if (isset($lignes_bobine[(int)($_l['ligne_id'] ?? 0)]))
-                    $_l['quantite_livree'] = count($bob_par_ligne[(int)$_l['ligne_id']] ?? []);
+                $_lb = $lignes_bobine[(int)($_l['ligne_id'] ?? 0)] ?? null;
+                if ($_lb) $_l['quantite_livree'] = cmdbob_qte_livree($_lb, $bob_par_ligne[(int)$_l['ligne_id']] ?? []);
             }
             unset($_l);
         }
@@ -724,7 +732,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $lignes = db_fetch_all("SELECT cl.*, a.stock_global AS stock_central FROM commande_lignes cl
             LEFT JOIN articles a ON a.id=cl.article_id WHERE cl.commande_id=? ORDER BY cl.id", [$cmd_id]);
         $bob = cmdbob_par_ligne($cmd_id);
-        foreach ($lignes as &$_l) $_l['bobines'] = $_l['type_article'] === 'bobine' ? ($bob[(int)$_l['id']] ?? []) : [];
+        foreach ($lignes as &$_l) {
+            $_l['bobines'] = $_l['type_article'] === 'bobine' ? ($bob[(int)$_l['id']] ?? []) : [];
+            if ($_l['bobines']) $_l['qte_bobines'] = cmdbob_qte_livree($_l, $_l['bobines']);
+        }
         unset($_l);
         json_response(true,'', $lignes);
     }
@@ -1754,7 +1765,7 @@ include __DIR__ . '/../templates/header.php';
       <button onclick="fermer('Bobines')" style="background:none;border:none;font-size:22px;cursor:pointer" aria-label="Fermer"><i class="ph ph-x" aria-hidden="true"></i></button>
     </div>
     <div style="background:#EFF6FF;border:1px solid #BFDBFE;padding:10px 12px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#1E3A8A">
-      Choisissez les bobines à expédier parmi celles en stock à l'entrepôt. Elles restent à l'entrepôt, réservées pour cette commande, et passent au site, en stock, à sa réception.
+      Choisissez les bobines à expédier parmi celles en stock à l'entrepôt : la somme de leurs quantités système doit égaler la quantité demandée. Une bobine qui démarre à 497, 498 ou 499 films compte pour une bobine de 500. Elles restent à l'entrepôt, réservées pour cette commande, et passent au site, en stock, à sa réception.
     </div>
     <div id="lignesBobines"></div>
     <div style="display:flex;justify-content:flex-end;margin-top:12px">
@@ -2333,29 +2344,44 @@ async function ouvrirBobines(cmdId, numCmd){
     if (!r.success) { html += `<div class="alert alert-danger">${escB(r.message)}</div>`; continue; }
     const choisies = r.data.choisies||[], dispo = r.data.dispo||[];
     const items = [...choisies.map(b => ({...b, ch:true})), ...dispo.map(b => ({...b, ch:false}))];
-    html += `<div style="background:#f8f9fa;border-radius:10px;padding:13px;margin-bottom:10px" data-ligne="${l.id}" data-max="${r.data.ligne.quantite}">
+    const lg = r.data.ligne;
+    const demande = lg.en_bobines ? `${lg.quantite} bobine(s), soit ${lg.films} films` : `${lg.films} films`;
+    html += `<div style="background:#f8f9fa;border-radius:10px;padding:13px;margin-bottom:10px" data-ligne="${l.id}" data-cible="${lg.films}" data-fb="${lg.films_bobine}" data-mm="${lg.manque_max}">
       <div style="font-size:13.5px;font-weight:700;color:var(--navy)">${escB(l.libelle)}</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Commandé : <strong>${r.data.ligne.quantite}</strong> bobine(s) · type ${escB(r.data.ligne.type||'?')} · <span class="nb-choix">${choisies.length}</span> choisie(s)</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Demandé : <strong>${demande}</strong> · type ${escB(lg.type||'?')}</div>
       ${items.length ? `<div style="max-height:220px;overflow-y:auto;display:grid;gap:4px">${items.map(b => `
         <label style="display:flex;gap:8px;align-items:center;font-size:13px;padding:5px 8px;background:white;border-radius:6px;cursor:pointer">
-          <input type="checkbox" value="${b.id}" ${b.ch?'checked':''} onchange="compterBobines(this)">
+          <input type="checkbox" value="${b.id}" data-qs="${b.stock_systeme}" data-qi="${b.qte_initiale}" ${b.ch?'checked':''} onchange="compterBobines(this)">
           <span style="font-family:monospace;font-weight:700">${escB(b.numero)}</span>
-          <span style="color:var(--muted)">${b.films_restants} films</span>
+          <span style="color:#334155">${b.stock_systeme} films</span>
+          ${b.qte_initiale < lg.films_bobine ? `<span style="color:var(--muted);font-size:12px">(initiale ${b.qte_initiale})</span>` : ''}
         </label>`).join('')}</div>`
         : '<div style="font-size:13px;color:var(--danger-d)">Aucune bobine de ce type en stock à l\'entrepôt.</div>'}
-      <div style="display:flex;justify-content:flex-end;margin-top:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px">
+        <div class="somme-bob" style="font-size:12.5px"></div>
         <button class="btn btn-primary btn-sm" onclick="enregistrerBobines(this)" ${items.length?'':'disabled'}>Réserver ces bobines</button>
       </div>
       <div class="msg-bob" style="font-size:12.5px;margin-top:6px"></div>
     </div>`;
   }
   box.innerHTML = html || '<div style="color:var(--muted);font-size:13px">Aucune ligne bobine validée dans cette commande.</div>';
+  box.querySelectorAll('[data-ligne]').forEach(bloc => compterBobines(bloc.querySelector('input[type=checkbox]') || bloc));
 }
-function compterBobines(cb){
-  const bloc = cb.closest('[data-ligne]');
-  const n = bloc.querySelectorAll('input[type=checkbox]:checked').length, max = parseInt(bloc.dataset.max)||0;
-  bloc.querySelector('.nb-choix').textContent = n;
-  if (n > max) { cb.checked = false; bloc.querySelector('.nb-choix').textContent = n-1; toast(`Au plus ${max} bobine(s) pour cette ligne.`, 'error'); }
+// Somme des quantités système cochées, comparée aux films demandés (même règle
+// que cmdbob_controle côté serveur : manque d'origine 497-499 toléré).
+function compterBobines(el){
+  const bloc = el.closest('[data-ligne]');
+  const cible = parseInt(bloc.dataset.cible)||0, fb = parseInt(bloc.dataset.fb)||500, mm = parseInt(bloc.dataset.mm)||0;
+  let somme = 0, tolere = 0, n = 0;
+  bloc.querySelectorAll('input[type=checkbox]:checked').forEach(c => {
+    n++; somme += parseInt(c.dataset.qs)||0;
+    tolere += Math.min(mm, Math.max(0, fb - (parseInt(c.dataset.qi)||fb)));
+  });
+  const ok = n > 0 && somme <= cible && somme >= cible - tolere;
+  const ecart = somme > cible ? ` · ${somme-cible} de trop` : (!ok && n ? ` · il manque ${cible-somme}` : '');
+  const box = bloc.querySelector('.somme-bob');
+  box.style.color = ok ? 'var(--success-d)' : (n ? 'var(--danger-d)' : 'var(--muted)');
+  box.innerHTML = `${n} bobine(s) · <strong>${somme}</strong> / ${cible} films${ecart}${ok?' ✓':''}`;
 }
 async function enregistrerBobines(btn){
   const bloc = btn.closest('[data-ligne]');
@@ -2390,9 +2416,9 @@ async function ouvrirLivraison(cmdId,numCmd){
           <label style="font-size:12px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Qté livrée *</label>
           <input type="number" class="form-control qte-liv"
             data-idx="${i}" data-qte="${l.quantite}" data-libelle="${l.libelle}"
-            value="${l.type_article==='bobine'&&l.bobines?l.bobines.length:l.quantite}" min="0" step="1" onchange="checkEcart(${i})"
+            value="${l.qte_bobines ?? l.quantite}" min="0" step="1" onchange="checkEcart(${i})"
             style="border-radius:8px;text-align:center;font-weight:800"
-            ${l.statut_ligne==='rejete'?'disabled value="0"':''} ${l.type_article==='bobine'&&(l.bobines||[]).length?'readonly title="Nombre de bobines choisies par le GSB"':''}>
+            ${l.statut_ligne==='rejete'?'disabled value="0"':''} ${l.qte_bobines!==undefined?'readonly title="Quantité issue des bobines choisies par le GSB"':''}>
         </div>
         <div id="motifGrp${i}" style="display:none">
           <label style="font-size:12px;font-weight:700;color:var(--warning-d);display:block;margin-bottom:4px">Motif écart *</label>
