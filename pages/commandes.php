@@ -222,8 +222,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         $cmd = db_fetch_one("SELECT * FROM commandes WHERE id=? AND statut='modification_demandee'", [$cmd_id]);
         if (!$cmd) json_response(false,'Commande introuvable ou déjà traitée.');
-        if ($is_coord && $cmd['site_id'] != $site_force) json_response(false,'Accès refusé.');
-        if (!$is_coord && !$is_superviseur && !$is_gestionnaire) json_response(false,'Accès refusé.');
+        // Seul le coordinateur du site corrige : le superviseur demande la
+        // modification, il ne la fait pas lui-même.
+        if (!$is_coord) json_response(false,'Seul le coordinateur du site peut corriger la commande.');
+        if ($cmd['site_id'] != $site_force) json_response(false,'Accès refusé.');
 
         db_begin();
         try {
@@ -1571,7 +1573,7 @@ include __DIR__ . '/../templates/header.php';
             <?php if($cmd['statut']==='en_cours_livraison' && ($is_coord || $is_gestionnaire)): ?>
               <button class="btn btn-success btn-sm" onclick="receptionner(<?= $cmd['id'] ?>)"><i class="ph ph-check-circle" aria-hidden="true"></i> Réceptionner</button>
             <?php endif; ?>
-            <?php if($cmd['statut']==='modification_demandee' && ($is_coord || $is_superviseur || $is_gestionnaire)): ?>
+            <?php if($cmd['statut']==='modification_demandee' && $is_coord): ?>
               <button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6;border:1.5px solid #ddd6fe" onclick="ouvrirCorrection(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')"><i class="ph ph-pencil-simple" aria-hidden="true"></i> Corriger</button>
             <?php endif; ?>
             <?php if($cmd['statut']==='en_attente' && ($is_coord || $is_superviseur || $is_gestionnaire)): ?>
@@ -1973,7 +1975,7 @@ async function voirDetail(id, numero) {
     document.getElementById('detail-btn-valider').style.display = '';
     document.getElementById('detail-btn-rejeter').style.display = '';
   }
-  if ((isCoord || isSuperviseur) && cmd.statut === 'modification_demandee') {
+  if (isCoord && cmd.statut === 'modification_demandee') {
     document.getElementById('detail-btn-corriger').style.display = '';
   }
 
