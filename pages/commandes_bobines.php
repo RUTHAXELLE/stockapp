@@ -8,6 +8,8 @@ require_once __DIR__ . '/../includes/session.php';
 require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
+// Bobines réservées par une ligne « bobine » des Commandes (cmdbob_sql_libre).
+require_once __DIR__ . '/../includes/commande_bobines.php';
 
 require_auth();
 
@@ -37,6 +39,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     // ── 1. Coordinateur crée une demande
     if ($action === 'creer_commande_bobine') {
         if (!$is_coord) json_response(false,'Accès refusé.');
+        // Fusion dans les Commandes : les bobines se commandent désormais avec
+        // une ligne « Bobine » de pages/commandes.php. Cet écran garde les
+        // commandes déjà en cours (jusqu'à leur réception) et l'historique.
+        if (cmdbob_actif())
+            json_response(false, "Les bobines se commandent désormais depuis Stock → Commandes (ligne « Bobine »).");
         $type_code = trim($_POST['type_bobine'] ?? '');
         $notes     = trim($_POST['notes']       ?? '');
         if (!$type_code) json_response(false,'Type de bobine obligatoire.');
@@ -139,9 +146,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
              WHERE b.type_code=? AND b.statut='en_stock'
                AND (b.site_id IS NULL OR b.site_id=?)
                -- déjà expédiée vers un site, pas encore réceptionnée
-               AND NOT EXISTS (SELECT 1 FROM commandes_bobines_lignes cbl
-                                 JOIN commandes_bobines cb ON cb.id = cbl.commande_id
-                                 WHERE cbl.bobine_id = b.id AND cbl.statut = 'assigne' AND cb.statut = 'expedie')
+               AND " . cmdbob_sql_libre('b') . "
              ORDER BY b.films_restants DESC, b.numero",
             [$type_code, $entrepot_id]
         );
@@ -162,9 +167,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         try {
             foreach ($bobine_ids as $bid) {
                 $bid = (int)$bid;
-                $bob = db_fetch_one("SELECT * FROM op_bobines b WHERE b.id=? AND b.statut='en_stock' AND NOT EXISTS (SELECT 1 FROM commandes_bobines_lignes cbl
-                                 JOIN commandes_bobines cb ON cb.id = cbl.commande_id
-                                 WHERE cbl.bobine_id = b.id AND cbl.statut = 'assigne' AND cb.statut = 'expedie')", [$bid]);
+                $bob = db_fetch_one("SELECT * FROM op_bobines b WHERE b.id=? AND b.statut='en_stock' AND " . cmdbob_sql_libre('b') . "", [$bid]);
                 if (!$bob) continue;
 
                 // Vérifier que la bobine est bien du bon type
@@ -423,7 +426,11 @@ include __DIR__ . '/../templates/header.php';
       <option value="rejete"      <?= $f_statut==='rejete'?'selected':'' ?>>❌ Rejetée</option>
     </select>
   </form>
-  <?php if($is_coord): ?>
+  <?php if($is_coord && cmdbob_actif()): ?>
+  <a class="btn btn-primary" href="<?= APP_URL ?>/pages/commandes.php">
+    <i class="ph-duotone ph-shopping-cart"></i> Commander des bobines (Commandes)
+  </a>
+  <?php elseif($is_coord): ?>
   <button class="btn btn-primary" onclick="ouvrirNouvelle()">
     <i class="ph-duotone ph-film-strip"></i> Demander une bobine
   </button>

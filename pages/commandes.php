@@ -16,6 +16,8 @@ require_once __DIR__ . '/../includes/notifications.php';
 // ach_debiter_stock_magasin() : contrepartie du décrément global à l'expédition.
 require_once __DIR__ . '/../includes/achats.php';
 require_once __DIR__ . '/../includes/referentiels.php';
+// Lignes « bobine » : choix des bobines par le GSB, affectation à la réception.
+require_once __DIR__ . '/../includes/commande_bobines.php';
 
 require_auth();
 
@@ -27,6 +29,8 @@ $active_page = 'commandes';
 $is_coord      = $role_slug === 'coordinateur_site';
 $is_superviseur = in_array($role_slug, ['superviseur_operation','admin','superadmin']);
 $is_gestionnaire = in_array($role_slug, ['admin','superadmin','gestionnaire_stock','superviseur_achat']);
+// GSB : choisit les bobines des lignes « bobine » avant l'expédition.
+$is_gsb        = in_array($role_slug, ['gestionnaire_stock_bobines','admin','superadmin']);
 $voir_prix     = !$is_coord; // coordinateur ne voit pas les prix
 
 $site_force    = ($is_coord && $user['site_id']) ? (int)$user['site_id'] : 0;
@@ -194,6 +198,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                      "Commande validée — prête pour préparation et expédition.",
                      '/pages/commandes.php']);
             }
+            if (cmdbob_lignes_a_choisir($cmd_id) > 0) {
+                foreach (db_fetch_all(
+                    "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id
+                     WHERE r.slug='gestionnaire_stock_bobines' AND u.actif=1") as $g) {
+                    db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
+                        [$g['id'],'info',"🎞️ Commande {$cmd['numero_commande']} : bobines à choisir",
+                         "Commande validée avec des bobines : choisissez les bobines à expédier.",
+                         '/pages/commandes.php']);
+                }
+            }
             audit_log($user['id'],'UPDATE','commandes',$cmd_id,"Commande validée par superviseur — $nb_valides ligne(s)");
             db_commit();
             json_response(true,'Commande validée. Gestionnaire stock notifié.');
@@ -281,6 +295,79 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         } catch(Exception $e){ db_rollback(); json_response(false,$e->getMessage()); }
     }
 
+    // ── 2d. GSB : choisir les bobines précises d'une ligne « bobine »
+    //      (includes/commande_bobines.php). Elles restent à l'entrepôt,
+    //      réservées, jusqu'à la réception par le site.
+    if ($action === 'get_bobines_ligne') {
+        if (!$is_gsb) json_response(false, 'Accès refusé — GSB requis.');
+        if (!cmdbob_actif()) json_response(false, "Migration commande_ligne_bobines non jouée sur cette base.");
+        $ligne_id = (int)($_POST['ligne_id'] ?? 0);
+        $l = db_fetch_one("SELECT * FROM commande_lignes WHERE id=? AND type_article='bobine'", [$ligne_id]);
+        if (!$l) json_response(false, 'Ligne bobine introuvable.');
+        $code = cmdbob_type_code((int)$l['article_id']);
+        $dispo = db_fetch_all(
+            "SELECT b.id, b.numero, b.films_restants FROM op_bobines b
+             WHERE b.type_code=? AND b.statut='en_stock' AND (b.site_id IS NULL OR b.site_id=?)
+               AND " . cmdbob_sql_libre('b') . "
+             ORDER BY b.films_restants DESC, b.numero", [$code, cmdbob_entrepot_id()]);
+        $choisies = db_fetch_all(
+            "SELECT b.id, b.numero, b.films_restants FROM commande_ligne_bobines clb
+             JOIN op_bobines b ON b.id = clb.bobine_id
+             WHERE clb.commande_ligne_id=? AND clb.statut='assigne' ORDER BY b.numero", [$ligne_id]);
+        json_response(true, '', ['ligne' => ['id' => (int)$l['id'], 'libelle' => $l['libelle'],
+                                             'quantite' => (int)$l['quantite'], 'type' => $code],
+                                 'dispo' => $dispo, 'choisies' => $choisies]);
+    }
+
+    if ($action === 'assigner_bobines') {
+        if (!$is_gsb) json_response(false, 'Accès refusé — GSB requis.');
+        if (!cmdbob_actif()) json_response(false, "Migration commande_ligne_bobines non jouée sur cette base.");
+        $ligne_id = (int)($_POST['ligne_id'] ?? 0);
+        $ids = array_values(array_unique(array_filter(array_map('intval', json_decode($_POST['bobine_ids'] ?? '[]', true) ?: []))));
+        $l = db_fetch_one(
+            "SELECT cl.*, c.statut AS cmd_statut, c.numero_commande FROM commande_lignes cl
+             JOIN commandes c ON c.id = cl.commande_id
+             WHERE cl.id=? AND cl.type_article='bobine' AND cl.statut_ligne='valide'", [$ligne_id]);
+        if (!$l || $l['cmd_statut'] !== 'en_attente_livraison')
+            json_response(false, 'Ligne introuvable, non validée, ou commande qui n\'est plus à préparer.');
+        if (!$ids) json_response(false, 'Choisissez au moins une bobine.');
+        if (count($ids) > (int)$l['quantite'])
+            json_response(false, "Au plus {$l['quantite']} bobine(s) pour cette ligne.");
+        $cmd_id = (int)$l['commande_id'];
+        $code = cmdbob_type_code((int)$l['article_id']);
+        db_begin();
+        try {
+            // Un nouveau choix remplace le précédent pour cette ligne.
+            db_query("DELETE FROM commande_ligne_bobines WHERE commande_ligne_id=? AND statut='assigne'", [$ligne_id]);
+            $numeros = [];
+            foreach ($ids as $bid) {
+                $b = db_fetch_one(
+                    "SELECT b.* FROM op_bobines b
+                     WHERE b.id=? AND b.type_code=? AND b.statut='en_stock' AND (b.site_id IS NULL OR b.site_id=?)
+                       AND " . cmdbob_sql_libre('b'), [$bid, $code, cmdbob_entrepot_id()]);
+                if (!$b) throw new Exception("Bobine #$bid indisponible : déjà réservée, pas en stock à l'entrepôt, ou d'un autre type que $code.");
+                db_query("INSERT INTO commande_ligne_bobines (commande_id,commande_ligne_id,bobine_id,numero_bobine,statut,assigne_par)
+                          VALUES (?,?,?,?,'assigne',?)", [$cmd_id, $ligne_id, $bid, $b['numero'], $user['id']]);
+                $numeros[] = $b['numero'];
+            }
+            $reste = cmdbob_lignes_a_choisir($cmd_id);
+            if ($reste === 0) {
+                foreach (db_fetch_all(
+                    "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id
+                     WHERE r.slug IN ('gestionnaire_stock','superviseur_achat') AND u.actif=1") as $g) {
+                    db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
+                        [$g['id'], 'info', "🎞️ Commande {$l['numero_commande']} : bobines choisies",
+                         "Le GSB a choisi les bobines — la commande peut être expédiée.", '/pages/commandes.php']);
+                }
+            }
+            audit_log($user['id'], 'UPDATE', 'commandes', $cmd_id,
+                "Bobines réservées pour « {$l['libelle']} » : " . implode(', ', $numeros));
+            db_commit();
+        } catch (Exception $e) { db_rollback(); json_response(false, $e->getMessage()); }
+        json_response(true, count($ids) . " bobine(s) réservée(s) pour cette ligne."
+            . ($reste > 0 ? " Reste $reste ligne(s) bobine à traiter." : " La commande peut maintenant être expédiée."));
+    }
+
     // ── 3. Émettre livraison (gestionnaire stock prépare + expédie)
     if ($action === 'emettre_livraison') {
         if (!$is_gestionnaire) json_response(false,'Accès refusé — Gestionnaire Stock requis.');
@@ -292,6 +379,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         $cmd = db_fetch_one("SELECT * FROM commandes WHERE id=? AND statut='en_attente_livraison'",[$cmd_id]);
         if (!$cmd) json_response(false,'Commande introuvable ou statut incorrect.');
+
+        // Lignes « bobine » : le GSB doit d'abord avoir choisi les bobines ; la
+        // quantité livrée est celle des bobines choisies, quoi qu'envoie l'écran.
+        $bob_par_ligne = cmdbob_par_ligne($cmd_id);
+        if (($n_a_choisir = cmdbob_lignes_a_choisir($cmd_id)) > 0)
+            json_response(false, "Le GSB doit d'abord choisir les bobines de $n_a_choisir ligne(s) bobine avant l'expédition.");
+        if (cmdbob_actif()) {
+            $lignes_bobine = array_column(db_fetch_all(
+                "SELECT id FROM commande_lignes WHERE commande_id=? AND type_article='bobine'", [$cmd_id]), 'id', 'id');
+            foreach ($lignes_liv as &$_l) {
+                if (isset($lignes_bobine[(int)($_l['ligne_id'] ?? 0)]))
+                    $_l['quantite_livree'] = count($bob_par_ligne[(int)$_l['ligne_id']] ?? []);
+            }
+            unset($_l);
+        }
 
         foreach ($lignes_liv as $l) {
             $q_cmd = (int)($l['quantite']      ?? 0);
@@ -424,6 +526,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 }
             }
 
+            // Bobines choisies par le GSB : elles quittent l'entrepôt (mouvement
+            // tracé) mais ne passent au site qu'à la réception.
+            foreach ($bob_par_ligne as $_bobs) {
+                foreach ($_bobs as $_b) {
+                    $_st = (int)db_fetch_value("SELECT stock_systeme FROM op_bobines WHERE id=?", [$_b['id']]);
+                    db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
+                              VALUES (?,?,?,?,?,?,?)",
+                        [$_b['id'], 'transfert', 0, $_st, $_st,
+                         "Expédiée via commande {$cmd['numero_commande']} (en attente de réception)", $user['id']]);
+                }
+            }
             db_query(
                 "UPDATE commandes SET statut='en_cours_livraison',livraison_par=?,livraison_at=NOW(),notes_livraison=?,depot_source_id=? WHERE id=?",
                 [$user['id'],$notes_liv,$depot_source_id ?: null,$cmd_id]
@@ -457,6 +570,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         db_begin();
         try {
             db_query("UPDATE commandes SET statut='recu',recu_par=?,recu_at=NOW() WHERE id=?",[$user['id'],$cmd_id]);
+            // Bobines des lignes « bobine » : elles passent au site maintenant,
+            // EN STOCK (passage en utilisation par une demande d'utilisation).
+            $site_nom_rec = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$cmd['site_id']]) ?? "site #{$cmd['site_id']}";
+            $nb_bob_rec = 0;
+            foreach (cmdbob_par_ligne($cmd_id) as $_bobs) {
+                foreach ($_bobs as $_b) {
+                    $nb_bob_rec++;
+                    $_st = (int)db_fetch_value("SELECT stock_systeme FROM op_bobines WHERE id=?", [$_b['id']]);
+                    db_query("UPDATE op_bobines SET site_id=?, statut='en_stock' WHERE id=?", [$cmd['site_id'], $_b['id']]);
+                    db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
+                              VALUES (?,?,?,?,?,?,?)",
+                        [$_b['id'], 'transfert', 0, $_st, $_st,
+                         "Réception $site_nom_rec — commande {$cmd['numero_commande']}", $user['id']]);
+                }
+            }
+            if (cmdbob_actif())
+                db_query("UPDATE commande_ligne_bobines SET statut='recu' WHERE commande_id=? AND statut='assigne'", [$cmd_id]);
             db_query("UPDATE distribution_lignes dl
                       JOIN distributions_site ds ON ds.id=dl.distribution_id
                       SET dl.statut='livre'
@@ -546,6 +676,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 'Réception confirmée ✅ | Articles: %d | Rivets: %d | PMMA: %d',
                 count($lignes_rec), count($lignes_rivets), count($lignes_pmma)
             );
+            if ($nb_bob_rec > 0)
+                $msg .= " | Bobines : $nb_bob_rec, en stock sur le site (demande d'utilisation pour les utiliser)";
             json_response(true, $msg);
         } catch(Exception $e){ db_rollback(); json_response(false,$e->getMessage()); }
     }
@@ -578,6 +710,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         );
         if (!$det) json_response(false,'Commande introuvable.');
         $lgns = db_fetch_all("SELECT * FROM commande_lignes WHERE commande_id=? ORDER BY id", [$cmd_id]);
+        $bob = cmdbob_par_ligne($cmd_id);
+        $bob_recu = cmdbob_par_ligne($cmd_id, 'recu');
+        foreach ($lgns as &$_l) $_l['bobines'] = $_l['type_article'] === 'bobine'
+            ? ($bob[(int)$_l['id']] ?? $bob_recu[(int)$_l['id']] ?? []) : [];
+        unset($_l);
         json_response(true, '', ['cmd' => $det, 'lignes' => $lgns]);
     }
 
@@ -586,6 +723,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $cmd_id = (int)($_POST['cmd_id'] ?? 0);
         $lignes = db_fetch_all("SELECT cl.*, a.stock_global AS stock_central FROM commande_lignes cl
             LEFT JOIN articles a ON a.id=cl.article_id WHERE cl.commande_id=? ORDER BY cl.id", [$cmd_id]);
+        $bob = cmdbob_par_ligne($cmd_id);
+        foreach ($lignes as &$_l) $_l['bobines'] = $_l['type_article'] === 'bobine' ? ($bob[(int)$_l['id']] ?? []) : [];
+        unset($_l);
         json_response(true,'', $lignes);
     }
 
@@ -796,6 +936,7 @@ $commandes = db_fetch_all(
             COUNT(l.id) AS nb_lignes,
             COALESCE(SUM(l.quantite*l.prix_unitaire),0) AS total_ht,
             SUM(CASE WHEN l.statut_ligne='rejete' THEN 1 ELSE 0 END) AS nb_rejets,
+            SUM(CASE WHEN l.type_article='bobine' AND l.statut_ligne='valide' THEN 1 ELSE 0 END) AS nb_lignes_bobine,
             SUM(CASE WHEN l.quantite_livree IS NOT NULL AND l.quantite_livree != l.quantite THEN 1 ELSE 0 END) AS nb_ecarts
      FROM commandes c
      LEFT JOIN sites s ON s.id=c.site_id
@@ -1398,8 +1539,16 @@ include __DIR__ . '/../templates/header.php';
               <i class="ph-duotone ph-eye"></i>
             </button>
             <a href="?id=<?= $cmd['id'] ?>&export=1&format=pdf" target="_blank" class="btn btn-secondary btn-sm" title="Imprimer PDF"><i class="ph ph-printer" aria-hidden="true"></i></a>
+            <?php $bob_a_choisir = ($cmd['statut']==='en_attente_livraison' && (int)$cmd['nb_lignes_bobine'] > 0) ? cmdbob_lignes_a_choisir((int)$cmd['id']) : 0; ?>
+            <?php if($is_gsb && $cmd['statut']==='en_attente_livraison' && (int)$cmd['nb_lignes_bobine'] > 0 && cmdbob_actif()): ?>
+              <button class="btn btn-sm" style="background:#E0F2FE;color:#075985;border:1.5px solid #7DD3FC" onclick="ouvrirBobines(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')"><i class="ph ph-film-strip" aria-hidden="true"></i> <?= $bob_a_choisir ? 'Choisir les bobines' : 'Bobines choisies' ?></button>
+            <?php endif; ?>
             <?php if($is_gestionnaire && $cmd['statut']==='en_attente_livraison'): ?>
+              <?php if($bob_a_choisir): ?>
+              <span class="btn btn-sm" style="background:#F1F5F9;color:#475569;border:1.5px dashed #CBD5E1;cursor:default" title="Le GSB doit d'abord choisir les bobines de cette commande"><i class="ph ph-hourglass" aria-hidden="true"></i> Bobines à choisir (GSB)</span>
+              <?php else: ?>
               <button class="btn btn-primary btn-sm" onclick="ouvrirLivraison(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')"><i class="ph ph-truck" aria-hidden="true"></i> Expédier</button>
+              <?php endif; ?>
             <?php endif; ?>
             <?php if($cmd['statut']==='en_cours_livraison' && ($is_coord || $is_gestionnaire)): ?>
               <button class="btn btn-success btn-sm" onclick="receptionner(<?= $cmd['id'] ?>)"><i class="ph ph-check-circle" aria-hidden="true"></i> Réceptionner</button>
@@ -1591,6 +1740,25 @@ include __DIR__ . '/../templates/header.php';
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:14px">
       <button class="btn btn-secondary" onclick="fermer('Correction')">Annuler</button>
       <button class="btn btn-primary" style="background:#5b21b6" onclick="confirmerCorrection()"><i class="ph ph-paper-plane-tilt" aria-hidden="true"></i> Renvoyer pour validation</button>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
+
+<!-- ═══ MODAL BOBINES (GSB) — choix des bobines d'une ligne « bobine » ═══ -->
+<?php if($is_gsb): ?>
+<div id="modalBobines" style="display:none;position:fixed;inset:0;background:rgba(6,3,58,.55);z-index:1000;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto">
+  <div style="background:white;border-radius:18px;padding:26px;width:680px;max-width:96vw;box-shadow:0 20px 60px rgba(0,0,0,.25);margin:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 style="font-family:'Plus Jakarta Sans',sans-serif;font-size:17px;font-weight:800;color:var(--navy)" id="titleBobines">Choisir les bobines</h3>
+      <button onclick="fermer('Bobines')" style="background:none;border:none;font-size:22px;cursor:pointer" aria-label="Fermer"><i class="ph ph-x" aria-hidden="true"></i></button>
+    </div>
+    <div style="background:#EFF6FF;border:1px solid #BFDBFE;padding:10px 12px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#1E3A8A">
+      Choisissez les bobines à expédier parmi celles en stock à l'entrepôt. Elles restent à l'entrepôt, réservées pour cette commande, et passent au site, en stock, à sa réception.
+    </div>
+    <div id="lignesBobines"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px">
+      <button class="btn btn-secondary" onclick="fermer('Bobines');location.reload()">Fermer</button>
     </div>
   </div>
 </div>
@@ -1846,6 +2014,7 @@ async function voirDetail(id, numero) {
       <td style="background:${bg};padding:8px 10px;border-bottom:1px solid var(--border);font-weight:700">
         ${esc(l.libelle)}
         <div style="font-size:12px;color:var(--muted);font-weight:400">${esc(l.type_article||'article')} · ${esc(l.unite)}</div>
+        ${(l.bobines||[]).length?`<div style="font-size:12px;color:#075985;font-weight:600;margin-top:2px">Bobines : <span style="font-family:monospace">${l.bobines.map(b=>esc(b.numero)).join(', ')}</span></div>`:''}
       </td>
       <td style="background:${bg};padding:8px 10px;border-bottom:1px solid var(--border);text-align:center;font-weight:800;font-size:14px;color:var(--navy)">${qte}</td>`;
 
@@ -2149,6 +2318,53 @@ async function confirmerRejet(){
 }
 
 // ── Livraison gestionnaire
+// ── GSB : choix des bobines des lignes « bobine » (includes/commande_bobines.php)
+function escB(t){return String(t??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+async function ouvrirBobines(cmdId, numCmd){
+  document.getElementById('titleBobines').textContent = `🎞️ Bobines — ${numCmd}`;
+  const box = document.getElementById('lignesBobines');
+  box.innerHTML = '<div style="color:var(--muted);font-size:13px">Chargement…</div>';
+  document.getElementById('modalBobines').style.display = 'flex';
+  const d = await ap({action:'get_lignes', cmd_id:cmdId});
+  const lignes = (d.data||[]).filter(l => l.type_article==='bobine' && l.statut_ligne==='valide');
+  let html = '';
+  for (const l of lignes) {
+    const r = await ap({action:'get_bobines_ligne', ligne_id:l.id});
+    if (!r.success) { html += `<div class="alert alert-danger">${escB(r.message)}</div>`; continue; }
+    const choisies = r.data.choisies||[], dispo = r.data.dispo||[];
+    const items = [...choisies.map(b => ({...b, ch:true})), ...dispo.map(b => ({...b, ch:false}))];
+    html += `<div style="background:#f8f9fa;border-radius:10px;padding:13px;margin-bottom:10px" data-ligne="${l.id}" data-max="${r.data.ligne.quantite}">
+      <div style="font-size:13.5px;font-weight:700;color:var(--navy)">${escB(l.libelle)}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Commandé : <strong>${r.data.ligne.quantite}</strong> bobine(s) · type ${escB(r.data.ligne.type||'?')} · <span class="nb-choix">${choisies.length}</span> choisie(s)</div>
+      ${items.length ? `<div style="max-height:220px;overflow-y:auto;display:grid;gap:4px">${items.map(b => `
+        <label style="display:flex;gap:8px;align-items:center;font-size:13px;padding:5px 8px;background:white;border-radius:6px;cursor:pointer">
+          <input type="checkbox" value="${b.id}" ${b.ch?'checked':''} onchange="compterBobines(this)">
+          <span style="font-family:monospace;font-weight:700">${escB(b.numero)}</span>
+          <span style="color:var(--muted)">${b.films_restants} films</span>
+        </label>`).join('')}</div>`
+        : '<div style="font-size:13px;color:var(--danger-d)">Aucune bobine de ce type en stock à l\'entrepôt.</div>'}
+      <div style="display:flex;justify-content:flex-end;margin-top:8px">
+        <button class="btn btn-primary btn-sm" onclick="enregistrerBobines(this)" ${items.length?'':'disabled'}>Réserver ces bobines</button>
+      </div>
+      <div class="msg-bob" style="font-size:12.5px;margin-top:6px"></div>
+    </div>`;
+  }
+  box.innerHTML = html || '<div style="color:var(--muted);font-size:13px">Aucune ligne bobine validée dans cette commande.</div>';
+}
+function compterBobines(cb){
+  const bloc = cb.closest('[data-ligne]');
+  const n = bloc.querySelectorAll('input[type=checkbox]:checked').length, max = parseInt(bloc.dataset.max)||0;
+  bloc.querySelector('.nb-choix').textContent = n;
+  if (n > max) { cb.checked = false; bloc.querySelector('.nb-choix').textContent = n-1; toast(`Au plus ${max} bobine(s) pour cette ligne.`, 'error'); }
+}
+async function enregistrerBobines(btn){
+  const bloc = btn.closest('[data-ligne]');
+  const ids = [...bloc.querySelectorAll('input[type=checkbox]:checked')].map(c => parseInt(c.value));
+  const msg = bloc.querySelector('.msg-bob');
+  const d = await ap({action:'assigner_bobines', ligne_id:bloc.dataset.ligne, bobine_ids:JSON.stringify(ids)});
+  msg.style.color = d.success ? 'var(--success-d)' : 'var(--danger-d)';
+  msg.textContent = (d.success ? '✅ ' : '❌ ') + d.message;
+}
 async function ouvrirLivraison(cmdId,numCmd){
   currentCmdId=cmdId;
   document.getElementById('titleLivraison').textContent=`🚚 Expédier — ${numCmd}`;
@@ -2167,15 +2383,16 @@ async function ouvrirLivraison(cmdId,numCmd){
           <div style="font-size:13.5px;font-weight:700;color:var(--navy)">${l.libelle}</div>
           <div style="font-size:12px;color:var(--muted)">Commandé : <strong>${l.quantite}</strong> ${l.unite||''} · ${l.type_article||'article'}</div>
           ${(l.type_article==='pmma'||l.type_article==='rivet')?`<div id="stockDepot${i}" style="font-size:12px;font-weight:700;margin-top:2px"></div>`:''}
+          ${(l.type_article==='bobine'&&(l.bobines||[]).length)?`<div style="font-size:12px;margin-top:3px;color:#075985">Bobines choisies par le GSB : <strong style="font-family:monospace">${l.bobines.map(b=>escB(b.numero)).join(', ')}</strong></div>`:''}
           ${l.statut_ligne==='rejete'?'<span style="background:#FEE2E2;color:#991B1B;padding:2px 7px;border-radius:8px;font-size:10.5px;font-weight:700">❌ Ligne rejetée — '+l.motif_rejet+'</span>':''}
         </div>
         <div>
           <label style="font-size:12px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Qté livrée *</label>
           <input type="number" class="form-control qte-liv"
             data-idx="${i}" data-qte="${l.quantite}" data-libelle="${l.libelle}"
-            value="${l.quantite}" min="0" step="1" onchange="checkEcart(${i})"
+            value="${l.type_article==='bobine'&&l.bobines?l.bobines.length:l.quantite}" min="0" step="1" onchange="checkEcart(${i})"
             style="border-radius:8px;text-align:center;font-weight:800"
-            ${l.statut_ligne==='rejete'?'disabled value="0"':''}>
+            ${l.statut_ligne==='rejete'?'disabled value="0"':''} ${l.type_article==='bobine'&&(l.bobines||[]).length?'readonly title="Nombre de bobines choisies par le GSB"':''}>
         </div>
         <div id="motifGrp${i}" style="display:none">
           <label style="font-size:12px;font-weight:700;color:var(--warning-d);display:block;margin-bottom:4px">Motif écart *</label>
