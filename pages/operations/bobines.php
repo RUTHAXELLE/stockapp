@@ -122,7 +122,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $site_id = (int)($_POST['site_id'] ?? 0);
         $bob = db_fetch_one("SELECT * FROM op_bobines WHERE id=?",[$id]);
         if (!$bob) json_response(false,'Bobine introuvable.');
-        db_query("UPDATE op_bobines SET site_id=?,statut='en_cours' WHERE id=?",[$site_id,$id]);
+        // Arrive EN STOCK sur le site : elle passe en utilisation par une demande d'utilisation.
+        db_query("UPDATE op_bobines SET site_id=?,statut='en_stock' WHERE id=?",[$site_id,$id]);
         db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by) VALUES (?,?,?,?,?,?,?)",
             [$id,'transfert',0,$bob['stock_systeme'],$bob['stock_systeme'],"Affectation site_id:$site_id",$user['id']]);
         audit_log($user['id'],'UPDATE','operations',$id,"Affectation bobine {$bob['numero']} -> site:$site_id");

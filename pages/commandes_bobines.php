@@ -138,6 +138,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
              LEFT JOIN sites s ON s.id=b.site_id
              WHERE b.type_code=? AND b.statut='en_stock'
                AND (b.site_id IS NULL OR b.site_id=?)
+               -- déjà expédiée vers un site, pas encore réceptionnée
+               AND NOT EXISTS (SELECT 1 FROM commandes_bobines_lignes cbl
+                                 JOIN commandes_bobines cb ON cb.id = cbl.commande_id
+                                 WHERE cbl.bobine_id = b.id AND cbl.statut = 'assigne' AND cb.statut = 'expedie')
              ORDER BY b.films_restants DESC, b.numero",
             [$type_code, $entrepot_id]
         );
@@ -158,20 +162,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         try {
             foreach ($bobine_ids as $bid) {
                 $bid = (int)$bid;
-                $bob = db_fetch_one("SELECT * FROM op_bobines WHERE id=? AND statut='en_stock'", [$bid]);
+                $bob = db_fetch_one("SELECT * FROM op_bobines b WHERE b.id=? AND b.statut='en_stock' AND NOT EXISTS (SELECT 1 FROM commandes_bobines_lignes cbl
+                                 JOIN commandes_bobines cb ON cb.id = cbl.commande_id
+                                 WHERE cbl.bobine_id = b.id AND cbl.statut = 'assigne' AND cb.statut = 'expedie')", [$bid]);
                 if (!$bob) continue;
 
                 // Vérifier que la bobine est bien du bon type
                 if ($bob['type_code'] !== $cmd['type_bobine'])
                     json_response(false,"La bobine {$bob['numero']} n'est pas du type {$cmd['type_bobine']}.");
 
-                // Affecter la bobine au site demandeur
-                db_query("UPDATE op_bobines SET site_id=?,statut='en_cours' WHERE id=?",
-                    [$cmd['site_id'], $bid]);
+                // La bobine reste à l'entrepôt (site et statut inchangés) tant que
+                // le site ne l'a pas réceptionnée : si elle n'arrive jamais, l'ERP
+                // ne la compte pas au site. La ligne 'assigne' d'une commande
+                // expédiée la réserve (elle n'est plus proposée ailleurs).
                 db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
                           VALUES (?,?,?,?,?,?,?)",
                     [$bid,'transfert',0,$bob['stock_systeme'],$bob['stock_systeme'],
-                     "Affectation site via commande {$cmd['numero']}",$user['id']]);
+                     "Expédiée vers le site via commande {$cmd['numero']} (en attente de réception)",$user['id']]);
 
                 // Enregistrer la ligne
                 db_query("INSERT INTO commandes_bobines_lignes (commande_id,bobine_id,numero_bobine,statut)
@@ -191,12 +198,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             foreach ($coords as $c) {
                 db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
                     [$c['id'],'info',"🎞️ Bobine(s) expédiée(s)",
-                     "$nb bobine(s) de type {$cmd['type_bobine']} affectée(s) à votre site. Confirmez la réception.",
+                     "$nb bobine(s) de type {$cmd['type_bobine']} expédiée(s) vers votre site. Confirmez la réception : elles y seront alors en stock.",
                      '/pages/commandes_bobines.php']);
             }
-            audit_log($user['id'],'UPDATE','commandes_bobines',$cmd_id,"$nb bobine(s) affectée(s)");
+            audit_log($user['id'],'UPDATE','commandes_bobines',$cmd_id,"$nb bobine(s) expédiée(s)");
             db_commit();
-            json_response(true,"$nb bobine(s) affectée(s) et expédiée(s).");
+            json_response(true,"$nb bobine(s) expédiée(s). Elles seront affectées au site à sa réception.");
         } catch(Exception $e) { db_rollback(); json_response(false,$e->getMessage()); }
     }
 
@@ -207,11 +214,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!$cmd) json_response(false,'Commande introuvable ou statut incorrect.');
         if ($is_coord && $cmd['site_id'] != $site_force) json_response(false,'Accès refusé.');
 
-        db_query("UPDATE commandes_bobines SET statut='recu',recu_par=?,recu_at=NOW() WHERE id=?",
-            [$user['id'], $cmd_id]);
-        db_query("UPDATE commandes_bobines_lignes SET statut='recu' WHERE commande_id=?", [$cmd_id]);
-        audit_log($user['id'],'UPDATE','commandes_bobines',$cmd_id,'Réception confirmée');
-        json_response(true,'Réception confirmée. Bobines actives sur votre site.');
+        // À la réception seulement, les bobines passent au site — EN STOCK :
+        // comme toute bobine du site, elles passent ensuite en utilisation par
+        // une demande d'utilisation.
+        db_begin();
+        try {
+            $site_nom = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$cmd['site_id']]) ?? "site #{$cmd['site_id']}";
+            foreach (db_fetch_all("SELECT cbl.bobine_id, b.stock_systeme FROM commandes_bobines_lignes cbl
+                                   JOIN op_bobines b ON b.id = cbl.bobine_id
+                                   WHERE cbl.commande_id=? AND cbl.statut='assigne'", [$cmd_id]) as $l) {
+                db_query("UPDATE op_bobines SET site_id=?, statut='en_stock' WHERE id=?", [$cmd['site_id'], $l['bobine_id']]);
+                db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
+                          VALUES (?,?,?,?,?,?,?)",
+                    [$l['bobine_id'],'transfert',0,$l['stock_systeme'],$l['stock_systeme'],
+                     "Réception $site_nom — commande {$cmd['numero']}",$user['id']]);
+            }
+            db_query("UPDATE commandes_bobines SET statut='recu',recu_par=?,recu_at=NOW() WHERE id=?",
+                [$user['id'], $cmd_id]);
+            db_query("UPDATE commandes_bobines_lignes SET statut='recu' WHERE commande_id=?", [$cmd_id]);
+            audit_log($user['id'],'UPDATE','commandes_bobines',$cmd_id,'Réception confirmée — bobines affectées au site, en stock');
+            db_commit();
+        } catch (Exception $e) { db_rollback(); json_response(false, 'Erreur : '.$e->getMessage()); }
+        json_response(true,"Réception confirmée. Les bobines sont en stock sur votre site : faites une demande d'utilisation pour les utiliser.");
     }
 
     // ── Transfert bobine (GSB)
@@ -226,7 +250,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $bob = db_fetch_one("SELECT b.*,s.nom AS site_actuel FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id WHERE b.id=?", [$bobine_id]);
         if (!$bob) json_response(false,'Bobine introuvable.');
 
-        $new_statut = ($new_site_id === $entrepot_id) ? 'en_stock' : 'en_cours';
+        // Une bobine qui arrive sur un site y est EN STOCK, comme à l'entrepôt :
+        // elle passe en utilisation par une demande d'utilisation.
+        $new_statut = 'en_stock';
         $new_site_nom = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$new_site_id]);
 
         db_query("UPDATE op_bobines SET site_id=?,statut=? WHERE id=?",
