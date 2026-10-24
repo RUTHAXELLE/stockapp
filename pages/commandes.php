@@ -237,9 +237,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 if (!$ligne) continue;
                 $nouvelle_qte = (int)($l['quantite'] ?? 0);
                 if ($nouvelle_qte < 1) json_response(false,"Quantité invalide pour \"{$ligne['libelle']}\".");
+                // Unité : celles du formulaire de commande ; une ligne bobine se
+                // commande en BOBINE ou en UNITE (films).
+                $unites_ok    = $ligne['type_article'] === 'bobine' ? ['BOBINE','UNITE'] : ['UNITE','CARTON','BOBINE','BOITE'];
+                $nouvelle_un  = strtoupper(trim((string)($l['unite'] ?? '')));
+                if ($nouvelle_un === '') $nouvelle_un = $ligne['unite'];
+                elseif (!in_array($nouvelle_un, $unites_ok, true))
+                    json_response(false,"Unité invalide pour \"{$ligne['libelle']}\" : " . implode(', ', $unites_ok) . ".");
                 db_query(
-                    "UPDATE commande_lignes SET quantite=?, statut_ligne='en_attente' WHERE id=?",
-                    [$nouvelle_qte, $ligne_id]
+                    "UPDATE commande_lignes SET quantite=?, unite=?, statut_ligne='en_attente' WHERE id=?",
+                    [$nouvelle_qte, $nouvelle_un, $ligne_id]
                 );
                 $nb_corrigees++;
             }
@@ -1703,7 +1710,7 @@ include __DIR__ . '/../templates/header.php';
 <div id="modalValidation" style="display:none;position:fixed;inset:0;background:rgba(6,3,58,.55);z-index:1000;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto">
   <div style="background:white;border-radius:18px;padding:26px;width:740px;max-width:96vw;box-shadow:0 20px 60px rgba(0,0,0,.25);margin:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <h3 style="font-family:'Plus Jakarta Sans',sans-serif;font-size:17px;font-weight:800;color:var(--navy)" id="titleValidation">Valider commande</h3>
+      <h3 style="font-family:'Plus Jakarta Sans',sans-serif;font-size:17px;font-weight:800;color:var(--navy)" id="titleValidation">Traiter les lignes</h3>
       <button onclick="fermer('Validation')" style="background:none;border:none;font-size:22px;cursor:pointer"><i class="ph ph-x" aria-hidden="true"></i></button>
     </div>
     <div id="alertValidation"></div>
@@ -1713,7 +1720,7 @@ include __DIR__ . '/../templates/header.php';
     <div id="lignesValidation"></div>
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:14px">
       <button class="btn btn-secondary" onclick="fermer('Validation')">Annuler</button>
-      <button class="btn btn-primary" onclick="confirmerValidation()"><i class="ph ph-check-circle" aria-hidden="true"></i> Valider la commande</button>
+      <button class="btn btn-primary" onclick="confirmerValidation()"><i class="ph ph-check-circle" aria-hidden="true"></i> Enregistrer les décisions</button>
     </div>
   </div>
 </div>
@@ -1745,7 +1752,7 @@ include __DIR__ . '/../templates/header.php';
     </div>
     <div id="alertCorrection"></div>
     <div style="background:#EFF6FF;color:#1D4ED8;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12.5px">
-      Corrigez la quantité des lignes signalées par le superviseur, puis renvoyez la commande pour une nouvelle validation.
+      Corrigez la quantité ou l’unité des lignes signalées par le superviseur (les autres lignes ne sont pas modifiables), puis renvoyez la commande pour une nouvelle validation.
     </div>
     <div id="lignesCorrection"></div>
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:14px">
@@ -1888,7 +1895,7 @@ include __DIR__ . '/../templates/header.php';
       </a>
       <div style="display:flex;gap:10px">
         <button id="detail-btn-valider" style="display:none" class="btn btn-primary" onclick="validerDepuisDetail()">
-          <i class="ph-duotone ph-check-circle"></i> Valider
+          <i class="ph-duotone ph-check-circle"></i> Traiter les lignes
         </button>
         <button id="detail-btn-rejeter" style="display:none" class="btn btn-danger" onclick="rejeterDepuisDetail()">
           <i class="ph-duotone ph-x-circle"></i> Rejeter
@@ -2123,9 +2130,21 @@ async function ouvrirCorrection(cmdId, numCmd) {
       <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:13px;margin-bottom:8px">
         <div style="font-size:13.5px;font-weight:700;color:var(--navy)">${l.libelle}</div>
         <div style="font-size:12px;color:#5b21b6;margin:4px 0">✏️ ${l.motif_modification || 'Correction demandée'}</div>
-        <label style="font-size:12px;font-weight:700;color:var(--navy);display:block;margin:8px 0 4px">Nouvelle quantité (actuellement ${l.quantite} ${l.unite||''}) *</label>
-        <input type="number" class="form-control qte-correction" data-idx="${i}" value="${l.quantite}" min="1" step="1"
-          style="padding:7px;border-radius:8px;font-size:13px;max-width:160px">
+        <div style="font-size:12px;color:var(--muted);margin:8px 0 4px">Actuellement : <strong>${l.quantite} ${l.unite||''}</strong></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div>
+            <label style="font-size:12px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Nouvelle quantité *</label>
+            <input type="number" class="form-control qte-correction" data-idx="${i}" value="${l.quantite}" min="1" step="1"
+              style="padding:7px;border-radius:8px;font-size:13px;width:140px">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Unité</label>
+            <select class="form-control unite-correction" data-idx="${i}" style="padding:7px;border-radius:8px;font-size:13px;width:150px">
+              ${(l.type_article==='bobine' ? ['BOBINE','UNITE'] : ['UNITE','CARTON','BOBINE','BOITE']).map(u =>
+                `<option value="${u}" ${normaliserUnite(l.unite)===u?'selected':''}>${u}${l.type_article==='bobine'&&u==='UNITE'?' (films)':''}</option>`).join('')}
+            </select>
+          </div>
+        </div>
       </div>`).join('');
   }
   document.getElementById('modalCorrection').style.display = 'flex';
@@ -2134,7 +2153,8 @@ async function confirmerCorrection() {
   if (!lignesCorrection.length) { fermer('Correction'); return; }
   const lignesData = lignesCorrection.map((l, i) => ({
     ligne_id: l.id,
-    quantite: parseInt(document.querySelector(`.qte-correction[data-idx="${i}"]`)?.value) || 0
+    quantite: parseInt(document.querySelector(`.qte-correction[data-idx="${i}"]`)?.value) || 0,
+    unite: document.querySelector(`.unite-correction[data-idx="${i}"]`)?.value || ''
   }));
   const d = await ap({action:'resoumettre_commande', cmd_id: currentCorrectionId, lignes: JSON.stringify(lignesData)});
   if (d.success) { toast(d.message,'success'); fermer('Correction'); setTimeout(()=>location.reload(),800); }
@@ -2256,7 +2276,7 @@ async function envoyerCommande(){
 // ── Validation superviseur
 async function ouvrirValidation(cmdId,numCmd){
   currentCmdId=cmdId;
-  document.getElementById('titleValidation').textContent=`✅ Valider — ${numCmd}`;
+  document.getElementById('titleValidation').textContent=`✅ Traiter les lignes — ${numCmd}`;
   document.getElementById('alertValidation').innerHTML='';
   const d=await ap({action:'get_lignes',cmd_id:cmdId});
   lignesCmd=d.data||[];
