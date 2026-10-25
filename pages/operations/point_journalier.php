@@ -1517,6 +1517,7 @@ include __DIR__ . '/../../templates/header.php';
 .calc-item{text-align:center}
 .calc-item .cv{font-family:'Montserrat',sans-serif;font-size:22px;font-weight:900;color:white;line-height:1}
 .calc-item .cl{font-size:12px;color:rgba(255,255,255,.5);margin-top:3px;text-transform:uppercase;letter-spacing:.5px}
+.calc-item .cx{font-size:11.5px;color:#c4b5fd;font-weight:700;margin-top:3px}
 .calc-item.warn .cv{color:#fbbf24}
 .calc-item.danger .cv{color:#f87171}
 .calc-item.success .cv{color:#34d399}
@@ -2032,10 +2033,12 @@ foreach($points as $p):
           <div class="calc-item">
             <div class="cv" id="c-engins">0</div>
             <div class="cl">Engins</div>
+            <div class="cx" id="c-engins-x"></div>
           </div>
           <div class="calc-item">
             <div class="cv" id="c-plaques">0</div>
             <div class="cl">Plaques</div>
+            <div class="cx" id="c-plaques-x"></div>
           </div>
           <div class="calc-item" id="c-rivets-wrap">
             <div class="cv" id="c-rivets">0</div>
@@ -2628,16 +2631,26 @@ function recalcule(){
   const heures = parseFloat(document.getElementById('p-heures')?.value||8);
   // V/H sur tous les engins posés (Duplicatas et Post-Immat compris) —
   // même calcul que l'enregistrement du point.
-  let enginsExtra = 0;
+  const extra = {DUP:{engins:0,plaques:0}, PI:{engins:0,plaques:0}};
   ['DUP','PI'].forEach(s => TYPES_V.forEach(tv => {
-    enginsExtra += parseInt(document.getElementById('nb-'+tv.code+'-'+s)?.value||0);
+    const n = parseInt(document.getElementById('nb-'+tv.code+'-'+s)?.value||0) || 0;
+    const plq = s==='DUP' ? document.getElementById('plq-'+tv.code+'-DUP') : null;
+    extra[s].engins  += n;
+    extra[s].plaques += plq ? (parseInt(plq.value||0)||0) : n * tv.nb_plaques;
   }));
+  const enginsExtra = extra.DUP.engins + extra.PI.engins;
   const moy    = heures>0 ? ((engins+enginsExtra)/heures).toFixed(1) : 0;
 
   document.getElementById('c-engins').textContent=engins;
   document.getElementById('c-plaques').textContent=plaques;
   document.getElementById('c-rivets').textContent=totalRivets;
   document.getElementById('c-moy').textContent=moy+' V/H';
+  // Duplicatas et Post-Immat restent à part des totaux Primo : sous-ligne.
+  const lib = {DUP:'dup.', PI:'post-immat'};
+  const sousLigne = k => ['DUP','PI'].filter(s=>extra[s][k]>0)
+    .map(s=>'+ '+extra[s][k]+' '+lib[s]).join(' · ');
+  document.getElementById('c-engins-x').textContent  = sousLigne('engins');
+  document.getElementById('c-plaques-x').textContent = sousLigne('plaques');
 
   // Info par type
   const ig=document.getElementById('info-gonfl');
@@ -2674,20 +2687,7 @@ function plaquesDupSync(code){
   el.value = Math.min(2*nb, Math.max(nb, v));
 }
 function recalculeExtra(){
-  ['DUP','PI'].forEach(suffix=>{
-    let engins=0, plaques=0;
-    TYPES_V.forEach(tv=>{
-      const n=parseInt(document.getElementById('nb-'+tv.code+'-'+suffix)?.value||0);
-      engins  += n;
-      const plq = suffix==='DUP' ? document.getElementById('plq-'+tv.code+'-DUP') : null;
-      plaques += plq ? (parseInt(plq.value||0)||0) : n * tv.nb_plaques;
-    });
-    const eEl=document.getElementById('c-engins-'+suffix);
-    const pEl=document.getElementById('c-plaques-'+suffix);
-    if(eEl) eEl.textContent=engins;
-    if(pEl) pEl.textContent=plaques;
-  });
-  recalcule();   // le V/H compte aussi les duplicatas et post-immat
+  recalcule();   // totaux Duplicatas / Post-Immat et V/H calculés dans recalcule()
 }
 
 // ── CHARGER STOCK RIVETS
