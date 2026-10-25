@@ -1865,6 +1865,11 @@ foreach($points as $p):
   <!-- Statut + Actions -->
   <div class="pj-actions" style="flex-direction:column">
     <div class="pj-status" style="background:<?= $sc['bg'] ?>;color:<?= $sc['col'] ?>"><?= $sc['icon'] ?> <?= $sc['lbl'] ?></div>
+    <?php if($p['statut']==='rejete' && trim((string)($p['motif_rejet'] ?? '')) !== ''): ?>
+    <div style="max-width:320px;font-size:12px;color:#7f1d1d;background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:6px 9px;text-align:left">
+      <strong>Motif du superviseur :</strong> <?= h($p['motif_rejet']) ?>
+    </div>
+    <?php endif; ?>
     <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
       <button class="btn btn-secondary btn-sm" onclick="viewPoint(<?= $p['id'] ?>)" title="Aperçu"><i class="ph ph-eye" aria-hidden="true"></i></button>
       <button class="btn btn-secondary btn-sm" onclick="printPoint(<?= $p['id'] ?>)" title="Imprimer"><i class="ph ph-printer" aria-hidden="true"></i></button>
@@ -1885,6 +1890,11 @@ foreach($points as $p):
         <?php endif; ?>
         <button class="btn btn-secondary btn-sm" onclick="editPoint(<?= $p['id'] ?>)" title="Modifier" style="background:#e8f4f9;color:var(--blue)"><i class="ph ph-pencil-simple" aria-hidden="true"></i></button>
         <button class="btn btn-sm" onclick="supprimerBrouillon(<?= $p['id'] ?>)" title="Supprimer le brouillon" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5"><i class="ph ph-trash" aria-hidden="true"></i></button>
+      <?php endif; ?>
+      <?php if($p['statut']==='rejete' && ($p['agent_id']??0)==$user['id']): ?>
+        <!-- Modification demandée par le superviseur : le coordinateur corrige
+             (l'enregistrement repasse le point en brouillon), puis le renvoie. -->
+        <button class="btn btn-sm" onclick="editPoint(<?= $p['id'] ?>)" title="Corriger le point" style="background:#e8f4f9;color:var(--blue);border:1px solid #bfdbfe"><i class="ph ph-pencil-simple" aria-hidden="true"></i> Corriger</button>
       <?php endif; ?>
       <?php if(in_array($p['statut'],['brouillon','en_attente_validation']) && ($p['type_point']??'')==='point_18h' && in_array($role_slug_pj,['admin','superadmin','superviseur_operation'])): ?>
         <button class="btn btn-success btn-sm" onclick="validerPoint(<?= $p['id'] ?>,<?= htmlspecialchars(json_encode($p['date_point'])) ?>)" title="Valider"><i class="ph ph-check-circle" aria-hidden="true"></i></button>
@@ -1928,7 +1938,7 @@ foreach($points as $p):
 <div class="modal-overlay" id="mPoint">
   <div class="modal" style="width:900px">
     <div class="mhdr">
-      <h3><i class="ph ph-note-pencil" aria-hidden="true"></i> Nouveau point journalier</h3>
+      <h3><i class="ph ph-note-pencil" aria-hidden="true"></i> <span id="mPointTitre">Nouveau point journalier</span></h3>
       <button class="mclose" onclick="document.getElementById('mPoint').classList.remove('open')"><i class="ph ph-x" aria-hidden="true"></i></button>
     </div>
     <div class="mbody">
@@ -2406,6 +2416,7 @@ function onTypePointChange(type){
 }
 function openPointForm(){
   resetPointForm();
+  document.getElementById('mPointTitre').textContent = 'Nouveau point journalier';
   document.getElementById('mPoint').classList.add('open');
   <?php if($role_slug_pj === 'coordinateur_site' && $user['site_id']): ?>
   // Coordinateur : site déjà fixé, charger automatiquement
@@ -3531,6 +3542,8 @@ async function editPoint(id){
   if(!d.success){ alert('Erreur de chargement'); return; }
   const p = d.data.point;
   currentPointId = id;
+  document.getElementById('mPointTitre').textContent = p.statut === 'rejete'
+    ? 'Corriger le point (modification demandée)' : 'Modifier le point journalier';
   // Champs généraux
   if(document.getElementById('p-site').tagName==='SELECT')
     document.getElementById('p-site').value = p.site_id;
