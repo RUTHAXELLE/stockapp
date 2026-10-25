@@ -1,0 +1,12 @@
+-- ============================================================
+--  Bon de livraison joint à la réception d'une commande
+--
+--  Le coordinateur du site destinataire doit joindre le bon de
+--  livraison signé (PDF) pour réceptionner une commande
+--  (pages/commandes.php, action 'receptionner'). Le nom du fichier,
+--  rangé dans uploads/bl/, est tracé sur la commande. Nullable : les
+--  commandes reçues avant cette migration n'en ont pas.
+--
+--  Idempotente : ADD COLUMN IF NOT EXISTS.
+-- ============================================================
+ALTER TABLE commandes ADD COLUMN IF NOT EXISTS bl_reception varchar(255) DEFAULT NULL;
