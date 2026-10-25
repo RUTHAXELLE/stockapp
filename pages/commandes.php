@@ -2131,7 +2131,10 @@ async function ouvrirCorrection(cmdId, numCmd) {
     container.innerHTML = lignesCorrection.map((l, i) => `
       <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:13px;margin-bottom:8px">
         <div style="font-size:13.5px;font-weight:700;color:var(--navy)">${l.libelle}</div>
-        <div style="font-size:12px;color:#5b21b6;margin:4px 0">✏️ ${l.motif_modification || 'Correction demandée'}</div>
+        <div style="background:#fff;border:1px solid #c4b5fd;border-radius:8px;padding:8px 10px;margin:8px 0">
+          <div style="font-size:11px;font-weight:700;color:#5b21b6;text-transform:uppercase;letter-spacing:.03em">Motif du superviseur</div>
+          <div style="font-size:13px;color:#3b0764;margin-top:2px;white-space:pre-wrap">${escB(l.motif_modification || 'Aucun motif saisi')}</div>
+        </div>
         <div style="font-size:12px;color:var(--muted);margin:8px 0 4px">Actuellement : <strong>${l.quantite} ${l.unite||''}</strong></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <div>
