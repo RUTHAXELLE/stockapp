@@ -469,6 +469,18 @@ ob_start();
   </div>
   <?php endif; ?>
 
+  <!-- Journée sans production (mêmes motifs que PJ_MOTIFS_SANS_PROD de point_journalier.php) -->
+  <?php if(!empty($point['sans_production'])):
+      $sp_lib = ['jour_ferie'=>'Jour férié','panne_systeme'=>'Panne du système','coupure_electricite'=>"Coupure d'électricité",
+                 'absence_personnel'=>'Absence de personnel','rupture_stock'=>'Rupture de stock','site_ferme'=>'Site fermé','autre'=>'Autre']
+                [$point['motif_sans_production'] ?? ''] ?? 'Motif non précisé';
+      $sp_com = trim((string)($point['commentaire_sans_production'] ?? '')); ?>
+  <div class="section">
+    <div class="section-title">Journée sans production</div>
+    <div class="obs-box" style="background:#f1f5f9;border-left-color:#64748b"><strong><?= h($sp_lib) ?></strong><?= $sp_com !== '' ? ' — ' . h($sp_com) : '' ?></div>
+  </div>
+  <?php endif; ?>
+
   <!-- Observations -->
   <?php if(!empty($observations_list)): ?>
   <div class="section">

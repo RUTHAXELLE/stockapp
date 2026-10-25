@@ -71,6 +71,10 @@ function _pj_endo_numero(): bool {
 // coordinateur garde son point en brouillon (visible de lui seul) jusqu'au
 // réapprovisionnement, puis le complète.
 function _pj_elements_manquants(array $point): array {
+    // Journée sans production confirmée par le coordinateur (motif
+    // obligatoire) : point à zéro, dispensé de la règle — c'est le
+    // superviseur qui la confirme.
+    if (!empty($point['sans_production'])) return [];
     $manque = [];
     if ((int)db_fetch_value("SELECT COALESCE(SUM(films_utilises),0) FROM op_films_utilises WHERE point_id=?", [(int)$point['id']]) === 0)
         $manque[] = 'films utilisés';
@@ -79,6 +83,24 @@ function _pj_elements_manquants(array $point): array {
     if ((int)db_fetch_value("SELECT COALESCE(SUM(utilises),0) FROM op_pmma_utilises WHERE point_id=?", [(int)$point['id']]) === 0)
         $manque[] = 'PMMA utilisés';
     return $manque;
+}
+// Journée sans production (sql/migration_point_sans_production*.sql).
+function _pj_sans_prod_ok(): bool {
+    return db_colonne_existe('op_points_journaliers', 'sans_production');
+}
+const PJ_MOTIFS_SANS_PROD = [
+    'jour_ferie'          => 'Jour férié',
+    'panne_systeme'       => 'Panne du système',
+    'coupure_electricite' => "Coupure d'électricité",
+    'absence_personnel'   => 'Absence de personnel',
+    'rupture_stock'       => 'Rupture de stock',
+    'site_ferme'          => 'Site fermé',
+    'autre'               => 'Autre',
+];
+function _pj_libelle_sans_prod(array $p): string {
+    $lib = PJ_MOTIFS_SANS_PROD[$p['motif_sans_production'] ?? ''] ?? 'Motif non précisé';
+    $com = trim((string)($p['commentaire_sans_production'] ?? ''));
+    return $com !== '' ? "$lib — $com" : $lib;
 }
 function _pj_msg_manquants(array $manque): string {
     return "Impossible : ce point ne comporte aucun " . implode(', ', $manque) . ". Un point doit contenir des films, des rivets et des PMMA. "
@@ -328,6 +350,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // pop-up déclenché par la quantité endommagée.
         $endo_data  = json_decode($_POST['endommagements_data'] ?? '[]', true);
         if (!is_array($endo_data)) $endo_data = [];
+
+        // Journée sans production : tout est remis à zéro côté serveur, quoi
+        // qu'envoie l'écran — pas de mouvement de stock, pas d'heures (le
+        // jour ne dilue pas les moyennes V/H). Seules les observations restent.
+        $sans_prod   = !empty($_POST['sans_production']);
+        $motif_sp    = trim((string)($_POST['motif_sans_production'] ?? ''));
+        $comment_sp  = trim((string)($_POST['commentaire_sans_production'] ?? ''));
+        if ($sans_prod) {
+            if (!_pj_sans_prod_ok())
+                json_response(false, "Migration point_sans_production non jouée sur cette base.");
+            if ($type_point !== 'point_18h')
+                json_response(false, 'Une journée sans production se déclare dans le point 18h.');
+            if (!isset(PJ_MOTIFS_SANS_PROD[$motif_sp]))
+                json_response(false, 'Choisissez le motif de la journée sans production.');
+            if ($motif_sp === 'autre' && $comment_sp === '')
+                json_response(false, 'Précisez le motif « Autre » dans le commentaire.');
+            $nb_vp = $nb_camion = $nb_semi = $nb_moto = 0;
+            $nb_vp_dup = $nb_camion_dup = $nb_semi_dup = $nb_moto_dup = 0;
+            $nb_vp_pi = $nb_camion_pi = $nb_semi_pi = $nb_moto_pi = 0;
+            $riv_gonfl = $riv_gonfl_end = $riv_eclate = $riv_eclate_end = 0;
+            $riv_endomm = $total_gonfl = $total_eclate = $rivets_util = 0;
+            $np_conc = $np_usag = 0;
+            $heures = 0;
+            $films_data = []; $pmma_data = []; $endo_data = [];
+        } else {
+            $motif_sp = ''; $comment_sp = '';
+        }
 
         $types_valides = ['point_9h', 'point_13h', 'point_18h', 'final', 'intermediaire'];
         if (!$site_id)                              json_response(false, 'Veuillez sélectionner un site.');
@@ -710,8 +759,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 }
             }
 
+            if (_pj_sans_prod_ok())
+                db_query("UPDATE op_points_journaliers SET sans_production=?, motif_sans_production=?, commentaire_sans_production=? WHERE id=?",
+                    [$sans_prod ? 1 : 0, $sans_prod ? $motif_sp : null, $sans_prod && $comment_sp !== '' ? $comment_sp : null, $point_id]);
+
             audit_log($user['id'], 'CREATE', 'operations', $point_id,
-                "Point journalier $type_point — Site:$site_id — $date_point — $total_engins engins");
+                "Point journalier $type_point — Site:$site_id — $date_point — "
+                . ($sans_prod ? "sans production (" . PJ_MOTIFS_SANS_PROD[$motif_sp] . ")" : "$total_engins engins"));
             db_commit();
             $msg_save = $regle_18h
                 ? "Point enregistré. $total_engins engins, $total_plaques plaques. "
@@ -727,7 +781,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 'rivets posés'   => $rivets_util === 0,
                 'PMMA utilisés'  => $pmma_total_util === 0,
             ]));
-            if ($manque_save)
+            if ($sans_prod)
+                $msg_save = "Journée sans production enregistrée (" . PJ_MOTIFS_SANS_PROD[$motif_sp] . "). Soumettez le point au superviseur, qui la confirmera.";
+            elseif ($manque_save)
                 $msg_save .= " ⚠️ Aucun " . implode(', ', $manque_save) . " : le point reste en brouillon et ne pourra être soumis/validé qu'une fois complété.";
             json_response(true, $msg_save, [
                 'point_id'     => $point_id,
@@ -1451,6 +1507,8 @@ include __DIR__ . '/../../templates/header.php';
 /* ── SECTION HEADERS IN MODAL ── */
 .form-section{margin-bottom:24px}
 .form-section-title{display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid var(--border)}
+/* Journée sans production : seules les informations générales et les observations restent saisissables. */
+#mPoint.sans-prod .form-section:not(.fs-garde), #mPoint.sans-prod .pj-non-poses{opacity:.35;pointer-events:none;filter:grayscale(1)}
 .form-section-num{width:24px;height:24px;border-radius:50%;background:var(--navy);color:white;font-family:'Montserrat',sans-serif;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .form-section-title h4{font-family:'Montserrat',sans-serif;font-size:14px;font-weight:700;color:var(--navy);margin:0}
 
@@ -1844,6 +1902,9 @@ foreach($points as $p):
                   + (int)($p['total_plaques_postimmat'] ?? 0);
     ?>
     <div class="pj-pills">
+      <?php if(!empty($p['sans_production'])): ?>
+      <span class="pj-pill" style="background:#e2e8f0;color:#334155;font-weight:700"><i class="ph ph-moon" aria-hidden="true"></i> Sans production · <?= h(_pj_libelle_sans_prod($p)) ?></span>
+      <?php endif; ?>
       <span class="pj-pill engins"><i class="ph ph-car" aria-hidden="true"></i> <?= $p['total_engins'] ?> <?= $pj_reimmat ? 'ré-immat' : 'engins' ?></span>
       <?php if(($p['total_engins_duplicata'] ?? 0) > 0): ?>
       <span class="pj-pill" style="background:#f3e8ff;color:#6b21a8"><i class="ph ph-copy" aria-hidden="true"></i> <?= $p['total_engins_duplicata'] ?> Duplicata</span>
@@ -1874,7 +1935,7 @@ foreach($points as $p):
       <button class="btn btn-secondary btn-sm" onclick="viewPoint(<?= $p['id'] ?>)" title="Aperçu"><i class="ph ph-eye" aria-hidden="true"></i></button>
       <button class="btn btn-secondary btn-sm" onclick="printPoint(<?= $p['id'] ?>)" title="Imprimer"><i class="ph ph-printer" aria-hidden="true"></i></button>
       <?php
-        $manque_liste = $p['statut'] === 'brouillon' ? array_keys(array_filter([
+        $manque_liste = ($p['statut'] === 'brouillon' && empty($p['sans_production'])) ? array_keys(array_filter([
             'Films'  => (int)($p['films_utilises_total'] ?? 0) === 0,
             'Rivets' => (int)($p['rivets_utilises'] ?? 0) === 0,
             'PMMA'   => (int)($p['pmma_utilises'] ?? 0) === 0,
@@ -1971,7 +2032,7 @@ foreach($points as $p):
       </div>
 
       <!-- ① Informations générales -->
-      <div class="form-section">
+      <div class="form-section fs-garde">
         <div class="form-section-title">
           <div class="form-section-num">1</div>
           <h4>Informations générales</h4>
@@ -2006,6 +2067,31 @@ foreach($points as $p):
             </div>
           </div>
         </div>
+        <?php if(_pj_sans_prod_ok()): ?>
+        <!-- Journée sans production : point 18h à zéro, motif obligatoire,
+             confirmé par le superviseur. -->
+        <div id="sp-bloc" style="margin-top:12px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:10px 13px">
+          <label style="display:flex;gap:8px;align-items:center;font-size:13.5px;font-weight:700;color:var(--navy);cursor:pointer;margin:0">
+            <input type="checkbox" id="p-sans-prod" onchange="onSansProdChange()"> Aucune production ce jour
+          </label>
+          <div id="sp-details" style="display:none;margin-top:10px">
+            <div class="form-row cols-2">
+              <div class="form-group"><label for="p-sp-motif">Motif <span style="color:var(--danger-d)">*</span></label>
+                <select class="form-control" id="p-sp-motif" onchange="onSansProdChange()">
+                  <option value="">— Choisir le motif —</option>
+                  <?php foreach (PJ_MOTIFS_SANS_PROD as $code => $lib): ?>
+                  <option value="<?= $code ?>"><?= h($lib) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <div class="form-group"><label for="p-sp-comment">Commentaire <span id="sp-comment-req" style="color:var(--danger-d);display:none">*</span></label>
+                <input type="text" class="form-control" id="p-sp-comment" maxlength="500" placeholder="Précisions (obligatoire pour « Autre »)">
+              </div>
+            </div>
+            <div style="font-size:12px;color:#475569">Le point est enregistré à zéro, sans mouvement de stock. Le superviseur confirmera la journée sans production.</div>
+          </div>
+        </div>
+        <?php endif; ?>
       </div>
 
       <!-- ② Véhicules posés -->
@@ -2169,12 +2255,12 @@ foreach($points as $p):
       </div><!-- /form-section ⑤ -->
 
       <!-- ⑥ Compléments -->
-      <div class="form-section">
+      <div class="form-section fs-garde">
         <div class="form-section-title">
           <div class="form-section-num">8</div>
           <h4>Compléments</h4>
         </div>
-        <div class="form-row cols-2" style="margin-bottom:16px">
+        <div class="form-row cols-2 pj-non-poses" style="margin-bottom:16px">
           <div class="form-group"><label><i class="ph ph-prohibit" aria-hidden="true"></i> Non posés — Concessionnaires</label>
             <input type="number" class="form-control" id="p-np-conc" min="0" value="0">
           </div>
@@ -2413,6 +2499,20 @@ function onTypePointChange(type){
   info.textContent=msgs[type]||'';
   info.style.background=colors[type]||'#f8f9fa';
   info.style.color=textColors[type]||'#333';
+  onSansProdChange();
+}
+// Journée sans production : grise la saisie de production (le serveur remet
+// de toute façon tout à zéro) ; disponible pour le seul point 18h.
+function onSansProdChange(){
+  const cb = document.getElementById('p-sans-prod');
+  if (!cb) return;
+  const est18h = document.getElementById('p-type').value === 'point_18h';
+  document.getElementById('sp-bloc').style.display = est18h ? '' : 'none';
+  if (!est18h) cb.checked = false;
+  document.getElementById('sp-details').style.display = cb.checked ? '' : 'none';
+  document.getElementById('mPoint').classList.toggle('sans-prod', cb.checked);
+  document.getElementById('sp-comment-req').style.display =
+    document.getElementById('p-sp-motif').value === 'autre' ? '' : 'none';
 }
 function openPointForm(){
   resetPointForm();
@@ -2453,7 +2553,10 @@ function resetPointForm(){
   toggleReimmatSections();
   resetObservations();
   document.getElementById('p-date').value='<?= date('Y-m-d') ?>';
-  document.getElementById('p-type').value='final';
+  // 'final' n'est plus une option de la liste (le type restait vide) : le
+  // point 18h est le choix présélectionné du formulaire.
+  document.getElementById('p-type').value='point_18h';
+  onTypePointChange('point_18h');
   document.getElementById('p-heures').value='8';
   document.getElementById('p-gonfl-util').value='0';
   document.getElementById('p-gonfl-end').value='0';
@@ -2469,6 +2572,12 @@ function resetPointForm(){
   bobinesCache={}; stockRivets=0; stockGonfl=0; stockEclate=0;
   endommagementsSaisis = {};
   ordreEndo = {}; ordreEndoSeq = 0;
+  if (document.getElementById('p-sans-prod')) {
+    document.getElementById('p-sans-prod').checked = false;
+    document.getElementById('p-sp-motif').value = '';
+    document.getElementById('p-sp-comment').value = '';
+    onSansProdChange();
+  }
   recalcule();
 }
 
@@ -3255,7 +3364,20 @@ function savePoint(){
   // « la bobine a une déclaration » laisserait passer les films suivants.
   // On bloque avant l'envoi plutôt que de laisser le serveur refuser :
   // l'agent est déjà dans le formulaire, autant lui ouvrir le pop-up.
-  if (groupesNonJustifies().length) {
+  const sansProd = !!document.getElementById('p-sans-prod')?.checked;
+  if (sansProd) {
+    const motif = document.getElementById('p-sp-motif').value;
+    const com   = document.getElementById('p-sp-comment').value.trim();
+    const err = !motif ? 'Choisissez le motif de la journée sans production.'
+              : (motif === 'autre' && !com ? 'Précisez le motif « Autre » dans le commentaire.' : '');
+    if (err) {
+      btn.disabled = false; btn.textContent = '💾 Enregistrer le point';
+      document.getElementById('pAlert').innerHTML = `<div class="alert alert-danger">${err}</div>`;
+      document.getElementById('pAlert').scrollIntoView({behavior:'smooth', block:'center'});
+      return;
+    }
+  }
+  if (!sansProd && groupesNonJustifies().length) {
     btn.disabled = false; btn.textContent = '💾 Enregistrer le point';
     ouvrirPopupEndommagement();
     return;
@@ -3288,6 +3410,9 @@ function savePoint(){
     films_data:  JSON.stringify(films_data),
     pmma_data:   JSON.stringify(collectPmmaData()),
     endommagements_data: JSON.stringify(collectEndommagements()),
+    sans_production: sansProd ? 1 : 0,
+    motif_sans_production: sansProd ? document.getElementById('p-sp-motif').value : '',
+    commentaire_sans_production: sansProd ? document.getElementById('p-sp-comment').value.trim() : '',
   }).then(d=>{
     btn.disabled=false; btn.textContent='💾 Enregistrer le point';
     if(d.success){
@@ -3427,6 +3552,12 @@ async function viewPoint(id){
 
   const obsSection = renderObservationsSection(p.observations);
 
+  const SP_MOTIFS = <?= json_encode(PJ_MOTIFS_SANS_PROD, JSON_UNESCAPED_UNICODE) ?>;
+  const spSection = parseInt(p.sans_production||0) === 1 ? `
+    <div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:14px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:#334155;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">🌙 Journée sans production</div>
+      <div style="font-size:13px;color:#1e293b"><strong>${escEndo(SP_MOTIFS[p.motif_sans_production] || 'Motif non précisé')}</strong>${p.commentaire_sans_production ? ' — ' + escEndo(p.commentaire_sans_production) : ''}</div>
+    </div>` : '';
   const motifSection = p.motif_rejet ? `
     <div style="background:#fee2e2;border-radius:10px;padding:14px;margin-bottom:20px;border-left:3px solid #ef4444">
       <div style="font-size:12px;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">✏️ Motif de la demande de modification</div>
@@ -3527,6 +3658,7 @@ async function viewPoint(id){
     ${filmsSection}
     ${npSection}
     ${obsSection}
+    ${spSection}
     ${motifSection}
     ${justifSection}
 
@@ -3553,6 +3685,12 @@ async function editPoint(id){
   document.getElementById('p-heures').value= p.nb_heures_travail||'8';
   document.getElementById('p-np-conc').value = p.non_poses_concessionnaires||'0';
   document.getElementById('p-np-usag').value = p.non_poses_usagers||'0';
+  if (document.getElementById('p-sans-prod')) {
+    document.getElementById('p-sans-prod').checked = parseInt(p.sans_production||0) === 1;
+    document.getElementById('p-sp-motif').value = p.motif_sans_production || '';
+    document.getElementById('p-sp-comment').value = p.commentaire_sans_production || '';
+    onSansProdChange();
+  }
   chargerObservations(p.observations);
   // Véhicules
   const nbVP   = document.getElementById('nb-VP');   if(nbVP)   nbVP.value   = p.nb_vp||'0';

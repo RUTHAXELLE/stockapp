@@ -161,7 +161,7 @@ if ($f_vue === 'mensuel') {
                 SUM(p.total_engins) AS total_engins,
                 SUM(p.rivets_utilises) AS rivets_utilises,
                 SUM(p.nb_heures_travail) AS heures_total,
-                AVG(p.moyenne_prod) AS moy_vh_avg,
+                AVG(NULLIF(p.moyenne_prod,0)) AS moy_vh_avg,
                 SUM(CASE WHEN p.statut='valide' THEN 1 ELSE 0 END) AS points_valides,
                 SUM(CASE WHEN p.statut='brouillon' THEN 1 ELSE 0 END) AS points_brouillon
          FROM op_points_journaliers p

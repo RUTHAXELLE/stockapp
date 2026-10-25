@@ -1750,7 +1750,7 @@ function dash_registre(): array {
                         SUM(p.total_plaques)   AS total_plaques,
                         SUM(p.total_engins)    AS total_engins,
                         SUM(p.rivets_utilises) AS rivets_utilises,
-                        AVG(p.moyenne_prod)    AS moy_vh
+                        AVG(NULLIF(p.moyenne_prod,0)) AS moy_vh
                  FROM op_points_journaliers p
                  JOIN sites s ON s.id = p.site_id
                  WHERE DATE_FORMAT(p.date_point,'%Y-%m') = ? AND p.statut = 'valide' AND p.type_point IN ('point_18h','historique') $w
