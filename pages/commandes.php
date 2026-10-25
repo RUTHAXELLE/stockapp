@@ -1463,11 +1463,17 @@ include __DIR__ . '/../templates/header.php';
 .hist-chip{display:inline-block;padding:2px 7px;border-radius:6px;font-size:10.5px;font-weight:700;background:var(--tertiary);color:var(--muted)}
 </style>
 
+<?php
+// Libellés vus par le coordinateur : il ne valide ni ne prépare lui-même,
+// « À valider » / « À préparer » lui laissaient croire qu'il devait agir.
+$lbl_attente = $is_coord ? 'En attente de validation' : 'À valider';
+$lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
+?>
 <!-- ÉTAPES WORKFLOW (KPIs cliquables) -->
 <div class="cmd-steps" id="cmdSteps">
   <div class="step s-attente" onclick="filtrer('en_attente')">
     <div class="s-num"><?= $kpi['attente'] ?></div>
-    <div class="s-lbl">⏳ À valider</div>
+    <div class="s-lbl">⏳ <?= $lbl_attente ?></div>
   </div>
   <div class="step s-attente" onclick="filtrer('modification_demandee')">
     <div class="s-num"><?= $kpi['a_corriger'] ?></div>
@@ -1475,7 +1481,7 @@ include __DIR__ . '/../templates/header.php';
   </div>
   <div class="step s-valide" onclick="filtrer('en_attente_livraison')">
     <div class="s-num"><?= $kpi['attente_liv'] ?></div>
-    <div class="s-lbl"><i class="ph ph-clipboard-text" aria-hidden="true"></i> À préparer</div>
+    <div class="s-lbl"><i class="ph ph-clipboard-text" aria-hidden="true"></i> <?= $lbl_prepa ?></div>
   </div>
   <div class="step s-livraison" onclick="filtrer('en_cours_livraison')">
     <div class="s-num"><?= $kpi['en_cours'] ?></div>
@@ -1502,7 +1508,7 @@ include __DIR__ . '/../templates/header.php';
       <option value="">Tous statuts</option>
       <option value="en_attente" <?= $f_statut==='en_attente'?'selected':'' ?>>⏳ En attente validation</option>
       <option value="modification_demandee" <?= $f_statut==='modification_demandee'?'selected':'' ?>>✏️ À corriger</option>
-      <option value="en_attente_livraison" <?= $f_statut==='en_attente_livraison'?'selected':'' ?>>📋 À préparer</option>
+      <option value="en_attente_livraison" <?= $f_statut==='en_attente_livraison'?'selected':'' ?>>📋 <?= $lbl_prepa ?></option>
       <option value="en_cours_livraison" <?= $f_statut==='en_cours_livraison'?'selected':'' ?>>🚚 En livraison</option>
       <option value="recu" <?= $f_statut==='recu'?'selected':'' ?>>✅ Reçu</option>
       <option value="rejete" <?= $f_statut==='rejete'?'selected':'' ?>>❌ Rejeté</option>
@@ -1548,7 +1554,7 @@ include __DIR__ . '/../templates/header.php';
           <?php endif; ?>
           <td>
             <span class="st-badge st-<?= $cmd['statut'] ?>">
-              <?= ['en_attente'=>'⏳ À valider','modification_demandee'=>'✏️ À corriger','en_attente_livraison'=>'<i class="ph ph-clipboard-text" aria-hidden="true"></i> À préparer','en_cours_livraison'=>'<i class="ph ph-truck" aria-hidden="true"></i> En livraison','recu'=>'<i class="ph ph-check-circle" aria-hidden="true"></i> Reçu','rejete'=>'<i class="ph ph-x-circle" aria-hidden="true"></i> Rejeté','annule'=>'Annulé'][$cmd['statut']] ?? $cmd['statut'] ?>
+              <?= ['en_attente'=>'⏳ '.$lbl_attente,'modification_demandee'=>'✏️ À corriger','en_attente_livraison'=>'<i class="ph ph-clipboard-text" aria-hidden="true"></i> '.$lbl_prepa,'en_cours_livraison'=>'<i class="ph ph-truck" aria-hidden="true"></i> En livraison','recu'=>'<i class="ph ph-check-circle" aria-hidden="true"></i> Reçu','rejete'=>'<i class="ph ph-x-circle" aria-hidden="true"></i> Rejeté','annule'=>'Annulé'][$cmd['statut']] ?? $cmd['statut'] ?>
             </span>
           </td>
           <td style="font-size:12px"><?= h($cmd['agent']??'—') ?></td>
@@ -1938,7 +1944,7 @@ function ap(d){
 function fermer(m){document.getElementById('modal'+m).style.display='none';}
 
 // ── Voir détail commande ───────────────────────────────────────
-const _SL = {'en_attente':'⏳ À valider','modification_demandee':'✏️ À corriger','en_attente_livraison':'📋 À préparer','en_cours_livraison':'🚚 En livraison','recu':'✅ Reçu','livre':'✅ Livré','rejete':'❌ Rejeté','annule':'Annulé'};
+const _SL = {'en_attente':'⏳ <?= $lbl_attente ?>','modification_demandee':'✏️ À corriger','en_attente_livraison':'📋 <?= $lbl_prepa ?>','en_cours_livraison':'🚚 En livraison','recu':'✅ Reçu','livre':'✅ Livré','rejete':'❌ Rejeté','annule':'Annulé'};
 const _SC = {'en_attente':'st-en_attente','modification_demandee':'st-modification_demandee','en_attente_livraison':'st-en_attente_livraison','en_cours_livraison':'st-en_cours_livraison','recu':'st-recu','rejete':'st-rejete'};
 const _LS = {'valide':'✅ OK','rejete':'❌ Rejeté','modifie':'⚠️ Modifié','modification_demandee':'✏️ À corriger'};
 const _LC = {'valide':'#15803d','rejete':'#dc2626','modifie':'#d97706','modification_demandee':'#5b21b6'};
