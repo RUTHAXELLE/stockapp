@@ -84,6 +84,11 @@ function _pj_elements_manquants(array $point): array {
         $manque[] = 'PMMA utilisés';
     return $manque;
 }
+// Plaques réellement posées sur les duplicatas VP / camions
+// (sql/migration_duplicata_plaques*.sql) : 1 ou 2 par véhicule.
+function _pj_dup_plaques_ok(): bool {
+    return db_colonne_existe('op_points_journaliers', 'plaques_vp_duplicata');
+}
 // Journée sans production (sql/migration_point_sans_production*.sql).
 function _pj_sans_prod_ok(): bool {
     return db_colonne_existe('op_points_journaliers', 'sans_production');
@@ -328,6 +333,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $nb_camion_dup  = (int)($_POST['nb_camion_duplicata'] ?? 0);
         $nb_semi_dup    = (int)($_POST['nb_semi_duplicata']   ?? 0);
         $nb_moto_dup    = (int)($_POST['nb_moto_duplicata']   ?? 0);
+        // Un duplicata VP / camion peut ne remplacer qu'une des deux plaques :
+        // le coordinateur saisit les plaques posées (par défaut 2 par véhicule).
+        $plq_vp_dup     = (isset($_POST['plaques_vp_duplicata'])     && $_POST['plaques_vp_duplicata']     !== '') ? (int)$_POST['plaques_vp_duplicata']     : $nb_vp_dup * 2;
+        $plq_camion_dup = (isset($_POST['plaques_camion_duplicata']) && $_POST['plaques_camion_duplicata'] !== '') ? (int)$_POST['plaques_camion_duplicata'] : $nb_camion_dup * 2;
         $nb_vp_pi       = (int)($_POST['nb_vp_postimmat']     ?? 0);
         $nb_camion_pi   = (int)($_POST['nb_camion_postimmat'] ?? 0);
         $nb_semi_pi     = (int)($_POST['nb_semi_postimmat']   ?? 0);
@@ -368,6 +377,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 json_response(false, 'Précisez le motif « Autre » dans le commentaire.');
             $nb_vp = $nb_camion = $nb_semi = $nb_moto = 0;
             $nb_vp_dup = $nb_camion_dup = $nb_semi_dup = $nb_moto_dup = 0;
+            $plq_vp_dup = $plq_camion_dup = 0;
             $nb_vp_pi = $nb_camion_pi = $nb_semi_pi = $nb_moto_pi = 0;
             $riv_gonfl = $riv_gonfl_end = $riv_eclate = $riv_eclate_end = 0;
             $riv_endomm = $total_gonfl = $total_eclate = $rivets_util = 0;
@@ -400,7 +410,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $total_engins  = $nb_vp + $nb_camion + $nb_semi + $nb_moto;
         $total_plaques = ($nb_vp * 2) + ($nb_camion * 2) + ($nb_semi * 1) + ($nb_moto * 1);
         $total_engins_dup   = $nb_vp_dup + $nb_camion_dup + $nb_semi_dup + $nb_moto_dup;
-        $total_plaques_dup  = ($nb_vp_dup * 2) + ($nb_camion_dup * 2) + ($nb_semi_dup * 1) + ($nb_moto_dup * 1);
+        if (!_pj_dup_plaques_ok()) { $plq_vp_dup = $nb_vp_dup * 2; $plq_camion_dup = $nb_camion_dup * 2; }
+        foreach ([['VP', $nb_vp_dup, $plq_vp_dup], ['camion', $nb_camion_dup, $plq_camion_dup]] as [$lib_d, $nb_d, $plq_d])
+            if ($plq_d < $nb_d || $plq_d > 2 * $nb_d)
+                json_response(false, "Duplicatas $lib_d : $plq_d plaque(s) pour $nb_d véhicule(s). Comptez 1 ou 2 plaques par véhicule (entre $nb_d et " . (2 * $nb_d) . ").");
+        $total_plaques_dup  = $plq_vp_dup + $plq_camion_dup + ($nb_semi_dup * 1) + ($nb_moto_dup * 1);
         $total_engins_pi    = $nb_vp_pi + $nb_camion_pi + $nb_semi_pi + $nb_moto_pi;
         $total_plaques_pi   = ($nb_vp_pi * 2) + ($nb_camion_pi * 2) + ($nb_semi_pi * 1) + ($nb_moto_pi * 1);
         // V/H sur tous les engins posés : Primo/Re-Immatriculation +
@@ -759,6 +773,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 }
             }
 
+            if (_pj_dup_plaques_ok())
+                db_query("UPDATE op_points_journaliers SET plaques_vp_duplicata=?, plaques_camion_duplicata=? WHERE id=?",
+                    [$plq_vp_dup, $plq_camion_dup, $point_id]);
             if (_pj_sans_prod_ok())
                 db_query("UPDATE op_points_journaliers SET sans_production=?, motif_sans_production=?, commentaire_sans_production=? WHERE id=?",
                     [$sans_prod ? 1 : 0, $sans_prod ? $motif_sp : null, $sans_prod && $comment_sp !== '' ? $comment_sp : null, $point_id]);
@@ -2177,7 +2194,18 @@ foreach($points as $p):
             <input type="number" class="nb-input" id="nb-<?= $tv['code'] ?>-<?= $rs['suffix'] ?>"
                    min="0" value="0" placeholder="0"
                    aria-label="Nombre de <?= h($tv['libelle']) ?> posés en <?= $rs['titre'] ?>"
-                   oninput="recalculeExtra();autoFilmsFromVeh('<?= $tv['code'] ?>',<?= $tv['id'] ?>,'<?= $tv['serie_bobine'] ?>')">
+                   oninput="<?= $rs['suffix'] === 'DUP' ? "plaquesDupSync('{$tv['code']}');" : '' ?>recalculeExtra();autoFilmsFromVeh('<?= $tv['code'] ?>',<?= $tv['id'] ?>,'<?= $tv['serie_bobine'] ?>')">
+            <?php if ($rs['suffix'] === 'DUP' && in_array($tv['code'], ['VP','CAM'], true) && _pj_dup_plaques_ok()): ?>
+            <!-- Un duplicata peut ne remplacer qu'une des deux plaques. -->
+            <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;font-size:12px;color:#6b21a8;font-weight:600">
+              Plaques posées
+              <input type="number" class="form-control" id="plq-<?= $tv['code'] ?>-DUP" min="0" value="0"
+                     style="width:80px;padding:5px 8px;font-size:13px;text-align:center"
+                     aria-label="Plaques posées sur les duplicatas <?= h($tv['libelle']) ?> (1 ou 2 par véhicule)"
+                     oninput="this.dataset.manuel='1';recalculeExtra()">
+            </label>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">1 ou 2 par véhicule</div>
+            <?php endif; ?>
           </div>
           <?php endforeach; ?>
         </div>
@@ -2545,6 +2573,7 @@ function resetPointForm(){
   TYPES_V.forEach(tv=>{
     const el=document.getElementById('nb-'+tv.code); if(el) el.value=0;
     const elDup=document.getElementById('nb-'+tv.code+'-DUP'); if(elDup) elDup.value=0;
+    const plqDup=document.getElementById('plq-'+tv.code+'-DUP'); if(plqDup){ plqDup.value=0; plqDup.dataset.manuel=''; }
     const elPi=document.getElementById('nb-'+tv.code+'-PI');  if(elPi)  elPi.value=0;
   });
   <?php if($role_slug_pj !== 'coordinateur_site'): ?>
@@ -2632,13 +2661,26 @@ function recalcule(){
 }
 
 // ── CALCUL DUPLICATAS / POST-IMMAT (totaux séparés, jamais fusionnés)
+// Duplicata VP / camion : plaques posées par défaut 2 par véhicule, ajustables
+// entre 1 et 2 par véhicule ; une saisie manuelle est conservée tant
+// qu'elle reste dans ces limites.
+function plaquesDupSync(code){
+  const el = document.getElementById('plq-'+code+'-DUP');
+  if (!el) return;
+  const nb = parseInt(document.getElementById('nb-'+code+'-DUP')?.value||0) || 0;
+  el.min = nb; el.max = 2*nb;
+  let v = parseInt(el.value||0) || 0;
+  if (el.dataset.manuel !== '1') v = 2*nb;
+  el.value = Math.min(2*nb, Math.max(nb, v));
+}
 function recalculeExtra(){
   ['DUP','PI'].forEach(suffix=>{
     let engins=0, plaques=0;
     TYPES_V.forEach(tv=>{
       const n=parseInt(document.getElementById('nb-'+tv.code+'-'+suffix)?.value||0);
       engins  += n;
-      plaques += n * tv.nb_plaques;
+      const plq = suffix==='DUP' ? document.getElementById('plq-'+tv.code+'-DUP') : null;
+      plaques += plq ? (parseInt(plq.value||0)||0) : n * tv.nb_plaques;
     });
     const eEl=document.getElementById('c-engins-'+suffix);
     const pEl=document.getElementById('c-plaques-'+suffix);
@@ -3395,6 +3437,8 @@ function savePoint(){
     nb_camion_duplicata: document.getElementById('nb-CAM-DUP')?.value  || 0,
     nb_semi_duplicata:   document.getElementById('nb-SEMI-DUP')?.value || 0,
     nb_moto_duplicata:   document.getElementById('nb-MOTO-DUP')?.value || 0,
+    plaques_vp_duplicata:     document.getElementById('plq-VP-DUP')?.value  ?? '',
+    plaques_camion_duplicata: document.getElementById('plq-CAM-DUP')?.value ?? '',
     nb_vp_postimmat:     document.getElementById('nb-VP-PI')?.value    || 0,
     nb_camion_postimmat: document.getElementById('nb-CAM-PI')?.value   || 0,
     nb_semi_postimmat:   document.getElementById('nb-SEMI-PI')?.value  || 0,
@@ -3700,6 +3744,14 @@ async function editPoint(id){
   // Duplicatas / Post-Immat
   [['VP','nb_vp'],['CAM','nb_camion'],['SEMI','nb_semi'],['MOTO','nb_moto']].forEach(([code,field])=>{
     const elDup = document.getElementById('nb-'+code+'-DUP'); if(elDup) elDup.value = p[field+'_duplicata'] || '0';
+    const plqDup = document.getElementById('plq-'+code+'-DUP');
+    if (plqDup) {
+      const nbD = parseInt(p[field+'_duplicata']||0) || 0;
+      const enreg = p['plaques_'+field.replace(/^nb_/,'')+'_duplicata'];
+      plqDup.value = (enreg === null || enreg === undefined) ? 2*nbD : enreg;
+      plqDup.dataset.manuel = parseInt(plqDup.value) !== 2*nbD ? '1' : '';
+      plaquesDupSync(code);
+    }
     const elPi  = document.getElementById('nb-'+code+'-PI');  if(elPi)  elPi.value  = p[field+'_postimmat'] || '0';
   });
   recalculeExtra();
@@ -3857,12 +3909,13 @@ async function ouvrirComparaisonOptoplate(id, date){
         <textarea class="form-control" id="comp-justif" rows="3" placeholder="Import OptoPlate non disponible…"></textarea>
       </div>`;
   } else {
-    const toutes = [...c.primo, c.duplicata, c.post_immat, ...c.endommages, ...(c.par_bobine||[])];
+    const toutes = [...c.primo, c.duplicata, ...(c.duplicata_plaques ? [c.duplicata_plaques] : []), c.post_immat, ...c.endommages, ...(c.par_bobine||[])];
     const nbEcarts = toutes.filter(r => r.ecart !== 0).length;
 
     const primoCards = c.primo.map(r => compCategCard(VEH_ICON_COMP[r.code], VEH_BG_COMP[r.code], VEH_FG_COMP[r.code], r.libelle, r.coordinateur, r.optoplate, r.ecart)).join('');
     const reimprCards = `<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
         ${compCategCard('ph-copy', '#f3e8ff', '#6b21a8', 'Duplicatas', c.duplicata.coordinateur, c.duplicata.optoplate, c.duplicata.ecart)}
+        ${c.duplicata_plaques ? compCategCard('ph-identification-card', '#f3e8ff', '#6b21a8', 'Plaques duplicatas', c.duplicata_plaques.coordinateur, c.duplicata_plaques.optoplate, c.duplicata_plaques.ecart) : ''}
         ${compCategCard('ph-stamp', '#fff3e0', '#9a3412', 'Post-Immat', c.post_immat.coordinateur, c.post_immat.optoplate, c.post_immat.ecart)}
       </div>`;
     const endoList = c.endommages.length

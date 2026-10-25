@@ -250,6 +250,17 @@ function op_comparer_point(array $point): array {
     $opt_dup   = (int)($opto['duplicata']['vehicules'] ?? 0);
     $ecart_dup = $coord_dup - $opt_dup;
     if ($ecart_dup !== 0) $has_ecart = true;
+    // Plaques des duplicatas : un duplicata VP / camion peut n'en remplacer
+    // qu'une (saisie du coordinateur, sql/migration_duplicata_plaques*.sql).
+    // Comparées seulement quand le point les a saisies : un point antérieur
+    // porte le forfait de 2, qui n'est pas une déclaration.
+    $dup_plaques = null;
+    if (array_key_exists('plaques_vp_duplicata', $point) && $point['plaques_vp_duplicata'] !== null) {
+        $coord_dup_plq = (int)($point['total_plaques_duplicata'] ?? 0);
+        $opt_dup_plq   = (int)($opto['duplicata']['plaques'] ?? 0);
+        $dup_plaques = ['coordinateur' => $coord_dup_plq, 'optoplate' => $opt_dup_plq, 'ecart' => $coord_dup_plq - $opt_dup_plq];
+        if ($dup_plaques['ecart'] !== 0) $has_ecart = true;
+    }
 
     $coord_pi = (int)($point['nb_vp_postimmat'] ?? 0) + (int)($point['nb_camion_postimmat'] ?? 0)
               + (int)($point['nb_semi_postimmat'] ?? 0) + (int)($point['nb_moto_postimmat'] ?? 0);
@@ -307,6 +318,7 @@ function op_comparer_point(array $point): array {
     return [
         'primo'       => $primo,
         'duplicata'   => ['coordinateur' => $coord_dup, 'optoplate' => $opt_dup, 'ecart' => $ecart_dup],
+        'duplicata_plaques' => $dup_plaques,
         'post_immat'  => ['coordinateur' => $coord_pi,  'optoplate' => $opt_pi,  'ecart' => $ecart_pi],
         'endommages'  => $endommages,
         'par_bobine'  => $par_bobine,

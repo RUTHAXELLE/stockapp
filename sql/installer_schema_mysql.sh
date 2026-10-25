@@ -93,7 +93,7 @@ FICHIERS="stockapp.sql demandes_internes_mysql.sql agents_mysql.sql achats_mysql
  migration_optoplate_justification_superviseur_mysql.sql
  migration_equipements_agent_mysql.sql migration_site_point_auto_mysql.sql
  migration_optoplate_date_impression_mysql.sql migration_point_stock_validation_mysql.sql
- migration_commande_ligne_bobines_mysql.sql migration_commandes_bl_reception_mysql.sql migration_point_sans_production_mysql.sql"
+ migration_commande_ligne_bobines_mysql.sql migration_commandes_bl_reception_mysql.sql migration_point_sans_production_mysql.sql migration_duplicata_plaques_mysql.sql"
 
 echo "==> Installation du schéma dans $DB_NAME@$DB_HOST"
 for f in $FICHIERS; do
@@ -121,6 +121,7 @@ verif "import OptoTrace et corrections GSB acceptés en mode strict" "SELECT (SE
 verif "commandes.depot_source_id (dépôt source des livraisons)" "SELECT COUNT(*) = 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'commandes' AND column_name = 'depot_source_id'"
 verif "commandes.bl_reception (bon de livraison joint à la réception)" "SELECT COUNT(*) = 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'commandes' AND column_name = 'bl_reception'"
 verif "op_points_journaliers.sans_production (journée sans production)" "SELECT COUNT(*) = 3 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'op_points_journaliers' AND column_name IN ('sans_production','motif_sans_production','commentaire_sans_production')"
+verif "op_points_journaliers.plaques_*_duplicata (plaques des duplicatas)" "SELECT COUNT(*) = 2 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'op_points_journaliers' AND column_name IN ('plaques_vp_duplicata','plaques_camion_duplicata')"
 verif "plus aucune liste fermée (ENUM) hors colonnes calculées, comme sur main" "SELECT COUNT(*) = 0 FROM information_schema.columns WHERE table_schema = DATABASE() AND data_type = 'enum' AND extra NOT LIKE '%GENERATED%'"
 verif "droits des modules scindés (Nouvelle demande, À valider, Traitements IT, Vignette…)" "SELECT COUNT(DISTINCT module) = 5 FROM permissions WHERE module IN ('demandes_new','demandes_valider','demandes_it','equipements_operationnel','vignette')"
 verif "report du 14/10/2026 : Re-Immatriculation, endommagements par unité, non conformes" "SELECT COUNT(*) = 9 FROM information_schema.columns WHERE table_schema = DATABASE() AND ((table_name = 'sites' AND column_name = 'operation') OR (table_name = 'op_points_journaliers' AND column_name IN ('total_plaques_duplicata','total_plaques_postimmat','rivets_gonflables_end','rivets_eclates_end')) OR (table_name = 'op_endommagements' AND column_name IN ('objet','numero_consommable')) OR (table_name IN ('op_pmma_utilises','op_films_utilises') AND column_name = 'non_conformes'))"
