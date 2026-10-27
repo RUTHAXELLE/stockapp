@@ -230,15 +230,19 @@ function _pj_deduire_stock(array $point): void {
                 [(int)$f['films_utilises'], (int)$f['films_endommages'], $point['date_point'], (int)$f['bobine_id']]);
             continue;
         }
+        // statut AVANT films_restants : MySQL évalue les SET dans l'ordre
+        // avec les valeurs déjà modifiées (PostgreSQL avec les anciennes).
+        // Après le retrait, « films_restants - ? » passait sous zéro sur une
+        // colonne UNSIGNED (erreur 1690) dès qu'il restait moins de 2 × ? films.
         db_query("UPDATE op_bobines SET
+                  statut = CASE WHEN films_restants - ? <= 0 THEN 'epuisee'
+                                WHEN statut = 'epuisee' THEN statut ELSE 'en_cours' END,
                   films_utilises   = films_utilises + ?,
                   films_endommages = films_endommages + ?,
                   films_restants   = films_restants - ?,
-                  statut = CASE WHEN films_restants - ? <= 0 THEN 'epuisee'
-                                WHEN statut = 'epuisee' THEN statut ELSE 'en_cours' END,
                   date_ouverture = COALESCE(date_ouverture, ?)
                   WHERE id=?",
-            [(int)$f['films_utilises'], (int)$f['films_endommages'], $t, $t, $point['date_point'], (int)$f['bobine_id']]);
+            [$t, (int)$f['films_utilises'], (int)$f['films_endommages'], $t, $point['date_point'], (int)$f['bobine_id']]);
     }
     if ($g > 0) db_query("UPDATE op_stock_rivets SET quantite = quantite - ? WHERE site_id=? AND type_rivet='gonflable'", [$g, $site_id]);
     if ($e > 0) db_query("UPDATE op_stock_rivets SET quantite = quantite - ? WHERE site_id=? AND type_rivet='eclate'", [$e, $site_id]);
