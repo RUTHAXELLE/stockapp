@@ -16,7 +16,8 @@ function op_categorie_vers_type(?string $categorie): string {
         'VP'   => ['voiture particulière', 'voiture particuliere', 'camionnette', 'véhicule utilitaire', 'vehicule utilitaire', 'autocar', 'bus', 'autocar-bus'],
         'CAM'  => ['camion', 'tracteur routier'],
         'SEMI' => ['semi-remorque routier', 'semi-remorque', 'semi remorque routier'],
-        'MOTO' => ['motocyclette', 'moto'],
+        // Tricycles, quadricycles et scooters : déclarés en Moto par le coordinateur.
+        'MOTO' => ['motocyclette', 'moto', 'tricycle', 'quadricycle', 'scooter'],
     ];
     foreach ($map as $type => $labels) {
         foreach ($labels as $l) {
