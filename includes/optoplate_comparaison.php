@@ -8,6 +8,36 @@
 // ============================================================
 require_once __DIR__ . '/db.php';
 
+/**
+ * Désactivations Duplicata / Modification POST des véhicules posés
+ * ($poses : lignes avec immatriculation, vin), jusqu'au $jusqua COMPRIS,
+ * de la plus ancienne à la plus récente. TOUS SITES : un véhicule peut être
+ * désactivé sur un site et réimprimé sur un autre (ex. désactivation à
+ * SITE CFAO, réimpression à STAR AUTO — 27/10/2026) ; filtrer sur le site
+ * de pose le comptait en Primo.
+ */
+function op_desactivations_vehicules(array $poses, string $jusqua): array {
+    $cles = [];
+    foreach ($poses as $p)
+        foreach ([trim((string)($p['immatriculation'] ?? '')), trim((string)($p['vin'] ?? ''))] as $c)
+            if ($c !== '') $cles[$c] = true;
+    $cles = array_keys($cles);
+    $lignes = [];
+    foreach (array_chunk($cles, 500) as $lot) {
+        $in = implode(',', array_fill(0, count($lot), '?'));
+        foreach (db_fetch_all(
+            "SELECT id, immatriculation, vin, type_desactivation, date_desactivation
+             FROM import_optoplate
+             WHERE type_desactivation IN ('Duplicata','Modification POST')
+               AND date_desactivation IS NOT NULL AND date_desactivation <= ?
+               AND (immatriculation IN ($in) OR vin IN ($in))",
+            array_merge([$jusqua], $lot, $lot)) as $l)
+            $lignes[(int)$l['id']] = $l;   // un même id peut revenir de deux lots
+    }
+    usort($lignes, fn($a, $b) => [(string)$a['date_desactivation'], (int)$a['id']] <=> [(string)$b['date_desactivation'], (int)$b['id']]);
+    return $lignes;
+}
+
 /** Catégorie OptoPlate brute → type de véhicule du point journalier. */
 function op_categorie_vers_type(?string $categorie): string {
     $c = mb_strtolower(trim((string)$categorie));
@@ -146,20 +176,14 @@ function op_calc_jour_site(int $site_id, string $date): array {
     $dup_par_type = []; $pi_par_type = [];
 
     if (!empty($poses)) {
-        // Véhicules (immat/VIN) du site ayant une désactivation Duplicata ou
+        // Véhicules (immat/VIN) posés ayant une désactivation Duplicata ou
         // Modification POST jusqu'au jour comparé COMPRIS — désactivation et
         // réimpression peuvent tomber le même jour (« < » les comptait en
         // Primo). Lues de la plus ancienne à la plus récente : la dernière
         // désactivation décide du type (un duplicata d'il y a trois mois ne
         // fait pas d'une post-immat d'aujourd'hui un duplicata).
-        $desact = db_fetch_all(
-            "SELECT immatriculation, vin, type_desactivation
-             FROM import_optoplate
-             WHERE site_id=? AND type_desactivation IN ('Duplicata','Modification POST')
-               AND date_desactivation <= ?
-             ORDER BY date_desactivation, id",
-            [$site_id, $date]
-        );
+        // Tous sites : cf. op_desactivations_vehicules().
+        $desact = op_desactivations_vehicules($poses, $date);
         $type_vehicule = [];
         foreach ($desact as $d) {
             foreach (array_filter([trim((string)$d['immatriculation']), trim((string)$d['vin'])]) as $cle) {

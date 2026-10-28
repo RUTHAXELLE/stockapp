@@ -125,13 +125,9 @@ function historique_optoplate(string $du, string $au, bool $appliquer = false, i
         ksort($poses_jour);
 
         // Désactivations Duplicata / Modification POST : TOUTES celles d'avant la fin de la
-        // période (y compris avant son début), de la plus ancienne à la plus récente.
-        $desact = db_fetch_all(
-            "SELECT immatriculation, vin, type_desactivation, date_desactivation
-             FROM import_optoplate
-             WHERE site_id=? AND type_desactivation IN ('Duplicata','Modification POST')
-               AND date_desactivation IS NOT NULL AND date_desactivation <= ?
-             ORDER BY date_desactivation, id", [$site_id, $au]);
+        // période (y compris avant son début), de la plus ancienne à la plus récente,
+        // sur tous les sites (cf. op_desactivations_vehicules()).
+        $desact = op_desactivations_vehicules(array_merge(...array_values($poses_jour)), $au);
         // Incidents (plaques cassées) par jour et par bobine.
         $incidents = [];
         foreach (db_fetch_all(
