@@ -303,6 +303,15 @@ function achParseJson(r) {
     const tous = elements(el);
     tous.forEach(r => r.classList.remove('pg-hors-page'));
     const vis = tous.filter(r => r.style.display !== 'none' && !r.hidden);
+    // Retour en page 1 seulement si l'ensemble des lignes visibles a changé
+    // (filtre, rechargement). Une saisie dans une ligne (couleur, état…)
+    // modifie aussi des styles : elle ne doit pas faire changer de page.
+    if (el._pgReset) {
+      const avant = el._pgVis || [];
+      if (avant.length !== vis.length || vis.some((r, i) => r !== avant[i])) el._pgPage = 1;
+      el._pgReset = false;
+    }
+    el._pgVis = vis;
     const pages = Math.ceil(vis.length / n);
     let nav = el._pgNav;
     if (pages <= 1) { if (nav) nav.style.display = 'none'; return; }
@@ -338,7 +347,7 @@ function achParseJson(r) {
 
   const enAttente = new Set();
   function planifier(el, retourPage1) {
-    if (retourPage1) el._pgPage = 1;
+    if (retourPage1) el._pgReset = true;
     if (enAttente.has(el)) return;
     enAttente.add(el);
     requestAnimationFrame(() => { enAttente.delete(el); rendre(el); });
