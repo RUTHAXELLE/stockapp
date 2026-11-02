@@ -288,6 +288,21 @@ function inv_bobines_recompte_apres(int $site_id, string $date, bool $inclus = t
     return inv_recompte_apres('inventaires_bobines', $site_id, $date, $inclus);
 }
 
+// ── Rien à compter sur ce site pour ce type d'inventaire (mêmes critères que
+//    inv_creer_*() : sans bobine active, stock de rivets ou de PMMA, ni
+//    équipement actif, l'ouverture de session ne crée pas d'inventaire). Une
+//    session ne doit pas attendre un inventaire qui n'existera jamais.
+//    $type : bobines | rivets | pmma | equipements.
+function inv_rien_a_compter(string $type, int $site_id): bool {
+    $sql = [
+        'bobines'     => "SELECT COUNT(*) FROM op_bobines WHERE site_id=? AND statut NOT IN ('retiree','epuisee')",
+        'rivets'      => "SELECT COUNT(*) FROM op_stock_rivets WHERE site_id=?",
+        'pmma'        => "SELECT COUNT(*) FROM stock_pmma_site WHERE site_id=? AND type_pmma <> ''",
+        'equipements' => "SELECT COUNT(*) FROM equipements WHERE site_id=? AND actif=1",
+    ][$type] ?? null;
+    return $sql !== null && (int)db_fetch_value($sql, [$site_id]) === 0;
+}
+
 // ── Phrase commune aux messages du garde-fou.
 function inv_bobines_msg_recompte(string $date_inv): string {
     return "le stock des bobines de ce site a été recompté par l'inventaire validé du "

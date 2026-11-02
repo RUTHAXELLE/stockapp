@@ -19,6 +19,40 @@ $user        = current_user();
 $page_title  = "Sessions d'inventaire";
 $active_page = 'inventaire_sessions';
 
+// ── Sites d'une session et statut de leurs quatre inventaires. Par type :
+//    'valide', 'brouillon', 'sans_objet' (aucun inventaire et rien à
+//    compter, cf. inv_rien_a_compter() : ne bloque pas la clôture) ou null
+//    (pas encore d'inventaire alors qu'il y a de quoi compter).
+//    Un site est clôturé quand chaque type est 'valide' ou 'sans_objet'.
+function ses_sites_session(int $session_id): array {
+    $sites = db_fetch_all(
+        "SELECT s.id, s.nom,
+                ib.id AS inv_id, ib.statut AS inv_statut, ib.date_inventaire,
+                ib.nb_bobines, ib.nb_ecarts, ib.total_films_physique,
+                ir.id AS riv_inv_id, ir.statut AS riv_statut, ir.nb_ecarts AS riv_nb_ecarts,
+                ip.id AS pmma_inv_id, ip.statut AS pmma_statut, ip.nb_ecarts AS pmma_nb_ecarts,
+                ie.id AS equip_inv_id, ie.statut AS equip_statut, ie.nb_ecarts AS equip_nb_ecarts
+         FROM inventaire_session_sites iss
+         JOIN sites s ON s.id = iss.site_id
+         LEFT JOIN inventaires_bobines ib ON ib.session_id = iss.session_id AND ib.site_id = iss.site_id AND ib.statut != 'annule'
+         LEFT JOIN inventaires_rivets  ir ON ir.session_id = iss.session_id AND ir.site_id = iss.site_id AND ir.statut != 'annule'
+         LEFT JOIN inventaires_pmma    ip ON ip.session_id = iss.session_id AND ip.site_id = iss.site_id AND ip.statut != 'annule'
+         LEFT JOIN inventaires_equipements ie ON ie.session_id = iss.session_id AND ie.site_id = iss.site_id AND ie.statut != 'annule'
+         WHERE iss.session_id = ?
+         ORDER BY s.nom", [$session_id]
+    );
+    $cols = ['inv_statut' => 'bobines', 'riv_statut' => 'rivets', 'pmma_statut' => 'pmma', 'equip_statut' => 'equipements'];
+    foreach ($sites as &$s) {
+        $s['cloture'] = true;
+        foreach ($cols as $col => $type) {
+            if ($s[$col] === null && inv_rien_a_compter($type, (int)$s['id'])) $s[$col] = 'sans_objet';
+            if (!in_array($s[$col], ['valide', 'sans_objet'], true)) $s['cloture'] = false;
+        }
+    }
+    unset($s);
+    return $sites;
+}
+
 // ============================================================
 //  AJAX
 // ============================================================
@@ -156,19 +190,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!$session) json_response(false, 'Session introuvable.');
         if ($session['statut'] !== 'ouverte') json_response(false, 'Cette session est déjà clôturée.');
 
-        $non_clotures = db_fetch_all(
-            "SELECT DISTINCT s.nom
-             FROM inventaire_session_sites iss
-             JOIN sites s ON s.id = iss.site_id
-             LEFT JOIN inventaires_bobines ib ON ib.session_id = iss.session_id AND ib.site_id = iss.site_id AND ib.statut != 'annule'
-             LEFT JOIN inventaires_rivets  ir ON ir.session_id = iss.session_id AND ir.site_id = iss.site_id AND ir.statut != 'annule'
-             LEFT JOIN inventaires_pmma    ip ON ip.session_id = iss.session_id AND ip.site_id = iss.site_id AND ip.statut != 'annule'
-             LEFT JOIN inventaires_equipements ie ON ie.session_id = iss.session_id AND ie.site_id = iss.site_id AND ie.statut != 'annule'
-             WHERE iss.session_id = ?
-               AND ((ib.id IS NULL OR ib.statut != 'valide') OR (ir.id IS NULL OR ir.statut != 'valide') OR (ip.id IS NULL OR ip.statut != 'valide') OR (ie.id IS NULL OR ie.statut != 'valide'))
-             ORDER BY s.nom",
-            [$session_id]
-        );
+        $non_clotures = array_filter(ses_sites_session($session_id), fn($s) => !$s['cloture']);
         if ($non_clotures) {
             $noms = implode(', ', array_column($non_clotures, 'nom'));
             json_response(false, "Tous les sites ne sont pas encore clôturés (bobines, rivets, PMMA et équipements) : $noms.");
@@ -199,25 +221,10 @@ if ($detail_id) {
     );
     if (!$session) { header('Location: ' . APP_URL . '/pages/inventaire_sessions.php'); exit; }
 
-    $sites_session = db_fetch_all(
-        "SELECT s.id, s.nom,
-                ib.id AS inv_id, ib.statut AS inv_statut, ib.date_inventaire,
-                ib.nb_bobines, ib.nb_ecarts, ib.total_films_physique,
-                ir.id AS riv_inv_id, ir.statut AS riv_statut, ir.nb_ecarts AS riv_nb_ecarts,
-                ip.id AS pmma_inv_id, ip.statut AS pmma_statut, ip.nb_ecarts AS pmma_nb_ecarts,
-                ie.id AS equip_inv_id, ie.statut AS equip_statut, ie.nb_ecarts AS equip_nb_ecarts
-         FROM inventaire_session_sites iss
-         JOIN sites s ON s.id = iss.site_id
-         LEFT JOIN inventaires_bobines ib ON ib.session_id = iss.session_id AND ib.site_id = iss.site_id AND ib.statut != 'annule'
-         LEFT JOIN inventaires_rivets  ir ON ir.session_id = iss.session_id AND ir.site_id = iss.site_id AND ir.statut != 'annule'
-         LEFT JOIN inventaires_pmma    ip ON ip.session_id = iss.session_id AND ip.site_id = iss.site_id AND ip.statut != 'annule'
-         LEFT JOIN inventaires_equipements ie ON ie.session_id = iss.session_id AND ie.site_id = iss.site_id AND ie.statut != 'annule'
-         WHERE iss.session_id = ?
-         ORDER BY s.nom", [$detail_id]
-    );
+    $sites_session = ses_sites_session($detail_id);
     $nb_total    = count($sites_session);
-    $nb_clotures = count(array_filter($sites_session, fn($s) => $s['inv_statut'] === 'valide' && $s['riv_statut'] === 'valide' && $s['pmma_statut'] === 'valide' && $s['equip_statut'] === 'valide'));
-    $nb_en_cours = count(array_filter($sites_session, fn($s) => $s['inv_statut'] === 'brouillon' || $s['riv_statut'] === 'brouillon' || $s['pmma_statut'] === 'brouillon' || $s['equip_statut'] === 'brouillon'));
+    $nb_clotures = count(array_filter($sites_session, fn($s) => $s['cloture']));
+    $nb_en_cours = count(array_filter($sites_session, fn($s) => !$s['cloture'] && in_array('brouillon', [$s['inv_statut'], $s['riv_statut'], $s['pmma_statut'], $s['equip_statut']], true)));
     $nb_attente  = $nb_total - $nb_clotures - $nb_en_cours;
     $peut_cloturer = $session['statut'] === 'ouverte' && $nb_total > 0 && $nb_clotures === $nb_total;
 }
@@ -237,6 +244,13 @@ $sessions = db_fetch_all(
      ORDER BY se.statut = 'ouverte' DESC, se.date_debut DESC
      LIMIT 100"
 );
+// Sites clôturés : même règle que la fiche de session (un type sans rien à
+// compter ne bloque pas, cf. ses_sites_session()) — le SUM ci-dessus ne
+// compte que les sites aux quatre inventaires validés.
+foreach ($sessions as &$se) {
+    $se['nb_clotures'] = count(array_filter(ses_sites_session((int)$se['id']), fn($s) => $s['cloture']));
+}
+unset($se);
 
 include __DIR__ . '/../templates/header.php';
 ?>
@@ -252,6 +266,7 @@ include __DIR__ . '/../templates/header.php';
 .site-statut.non_commence{background:#f1f5f9;color:#64748b}
 .site-statut.en_cours{background:#fef9e7;color:#9a6c00}
 .site-statut.cloture{background:#d5f5e3;color:#1e7e40}
+.site-statut.sans_objet{background:#f1f5f9;color:#475569;font-weight:600}
 .site-picker{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:12px;background:#f8fafc}
 .site-chip{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 10px;border-radius:8px;background:white;border:1px solid var(--border);cursor:pointer}
 .site-chip:has(input:checked){border-color:var(--blue);background:#eaf2fb}
@@ -301,15 +316,19 @@ include __DIR__ . '/../templates/header.php';
           <th style="text-align:center">Actions</th>
         </tr></thead>
         <tbody>
-        <?php foreach ($sites_session as $s):
-          $st = $s['inv_statut'] === 'valide' ? 'cloture' : ($s['inv_statut'] === 'brouillon' ? 'en_cours' : 'non_commence');
-          $st_lbl = ['non_commence'=>'⏳ Non commencé','en_cours'=>'<i class="ph ph-note-pencil" aria-hidden="true"></i> En cours','cloture'=>'<i class="ph ph-check-circle" aria-hidden="true"></i> Clôturé'][$st];
-          $riv_st = $s['riv_statut'] === 'valide' ? 'cloture' : ($s['riv_statut'] === 'brouillon' ? 'en_cours' : 'non_commence');
-          $riv_st_lbl = ['non_commence'=>'⏳ Non commencé','en_cours'=>'<i class="ph ph-note-pencil" aria-hidden="true"></i> En cours','cloture'=>'<i class="ph ph-check-circle" aria-hidden="true"></i> Clôturé'][$riv_st];
-          $pmma_st = $s['pmma_statut'] === 'valide' ? 'cloture' : ($s['pmma_statut'] === 'brouillon' ? 'en_cours' : 'non_commence');
-          $pmma_st_lbl = ['non_commence'=>'⏳ Non commencé','en_cours'=>'<i class="ph ph-note-pencil" aria-hidden="true"></i> En cours','cloture'=>'<i class="ph ph-check-circle" aria-hidden="true"></i> Clôturé'][$pmma_st];
-          $equip_st = $s['equip_statut'] === 'valide' ? 'cloture' : ($s['equip_statut'] === 'brouillon' ? 'en_cours' : 'non_commence');
-          $equip_st_lbl = ['non_commence'=>'⏳ Non commencé','en_cours'=>'<i class="ph ph-note-pencil" aria-hidden="true"></i> En cours','cloture'=>'<i class="ph ph-check-circle" aria-hidden="true"></i> Clôturé'][$equip_st];
+        <?php
+        $st_lbls = ['non_commence'=>'⏳ Non commencé','en_cours'=>'<i class="ph ph-note-pencil" aria-hidden="true"></i> En cours',
+                    'cloture'=>'<i class="ph ph-check-circle" aria-hidden="true"></i> Clôturé',
+                    'sans_objet'=>'<i class="ph ph-minus-circle" aria-hidden="true"></i> Sans objet'];
+        foreach ($sites_session as $s):
+          $st = ['valide' => 'cloture', 'brouillon' => 'en_cours', 'sans_objet' => 'sans_objet'][$s['inv_statut'] ?? ''] ?? 'non_commence';
+          $st_lbl = $st_lbls[$st];
+          $riv_st = ['valide' => 'cloture', 'brouillon' => 'en_cours', 'sans_objet' => 'sans_objet'][$s['riv_statut'] ?? ''] ?? 'non_commence';
+          $riv_st_lbl = $st_lbls[$riv_st];
+          $pmma_st = ['valide' => 'cloture', 'brouillon' => 'en_cours', 'sans_objet' => 'sans_objet'][$s['pmma_statut'] ?? ''] ?? 'non_commence';
+          $pmma_st_lbl = $st_lbls[$pmma_st];
+          $equip_st = ['valide' => 'cloture', 'brouillon' => 'en_cours', 'sans_objet' => 'sans_objet'][$s['equip_statut'] ?? ''] ?? 'non_commence';
+          $equip_st_lbl = $st_lbls[$equip_st];
         ?>
           <tr>
             <td style="font-weight:700"><?= h($s['nom']) ?></td>
