@@ -278,6 +278,25 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 
+    // ── ANNULER L'INVENTAIRE (brouillon seulement) : un inventaire qui ne
+    //    sera jamais validé — remplacé par un comptage plus récent déjà
+    //    validé (cf. inv_verifier_pas_plus_recent()), ouvert par erreur —
+    //    sort des listes en cours, des sessions et de l'export global. Il n'a
+    //    jamais touché au stock : rien à remettre. Motif obligatoire, gardé
+    //    dans les notes et le journal d'audit.
+    if ($action==='annuler') {
+        if ($inv['statut'] !== 'brouillon') json_response(false,"Seul un inventaire en cours peut être annulé.");
+        if (!$can_validate) json_response(false,"Seuls les profils qui valident l'inventaire peuvent l'annuler.");
+        $motif = trim($_POST['motif'] ?? '');
+        if ($motif === '') json_response(false,"Le motif de l'annulation est obligatoire.");
+        $notes = trim(($inv['notes'] ?? '') . "\n" . 'Annulé le ' . date('d/m/Y H:i') . ' par '
+               . trim(($user['prenom'] ?? '') . ' ' . ($user['nom'] ?? '')) . ' : ' . $motif);
+        $n = db_query("UPDATE inventaires_equipements SET statut='annule', notes=? WHERE id=? AND statut='brouillon'", [$notes, $inv_id])->rowCount();
+        if (!$n) json_response(false,"Seul un inventaire en cours peut être annulé.");
+        audit_log($user['id'],'UPDATE','inventaire_equipements',$inv_id,"Annulation inventaire équipements #$inv_id — motif : $motif");
+        json_response(true,'Inventaire annulé.');
+    }
+
     json_response(false,'Action inconnue.');
 }
 
@@ -372,6 +391,7 @@ include __DIR__ . '/../templates/header.php';
     <?php endif; ?>
     <?php if($can_validate): ?>
     <button class="btn btn-success" onclick="ouvrirRecapValidation()"><i class="ph ph-check-circle" aria-hidden="true"></i> Valider l'inventaire</button>
+    <button class="btn btn-danger" onclick="annulerInventaire()"><i class="ph ph-x-circle" aria-hidden="true"></i> Annuler l'inventaire</button>
     <?php endif; ?>
   </div>
 </div>
@@ -838,6 +858,14 @@ function ouvrirRecapValidation(){
   }
 
   document.getElementById('modalRecapValidation').style.display='flex';
+}
+
+async function annulerInventaire(){
+  const motif = (prompt("Motif de l'annulation (obligatoire), par exemple « remplacé par l'inventaire du 30/10 ».\n\nL'inventaire ne touche pas au stock ; il restera consultable avec le statut « Annulé ».") || '').trim();
+  if(!motif) return;
+  const d = await ap({action:'annuler', motif});
+  if(d.success){toast(d.message);setTimeout(()=>location.reload(),1200);}
+  else{document.getElementById('alertZone').innerHTML=`<div style="background:#fdf0ef;padding:10px 16px;border-radius:8px;font-size:13px;color:#c0392b;margin-bottom:12px"><i class="ph ph-x-circle" aria-hidden="true"></i> ${d.message}</div>`;}
 }
 
 async function confirmerValidation(){

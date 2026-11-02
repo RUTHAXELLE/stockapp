@@ -259,7 +259,8 @@ function inv_verifier_pas_plus_recent(string $table, array $inv): void {
           WHERE site_id = ? AND statut = 'valide' AND date_inventaire > ? AND id <> ?",
         [(int)$inv['site_id'], (string)$inv['date_inventaire'], (int)$inv['id']]);
     if ($d) throw new Exception("un inventaire plus récent de ce site (du " . date('d/m/Y', strtotime($d))
-        . ") est déjà validé ; ce comptage plus ancien ne peut plus remplacer le stock.");
+        . ") est déjà validé ; ce comptage plus ancien ne peut plus remplacer le stock."
+        . " S'il n'a plus lieu d'être, annulez-le (bouton « Annuler l'inventaire » de la fiche).");
 }
 
 // ── Garde-fou : un inventaire validé fait foi pour le stock de son site.
