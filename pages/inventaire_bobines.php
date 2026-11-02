@@ -299,7 +299,7 @@ include __DIR__ . '/../templates/header.php';
         <?php if(!$is_coord): /* n 2.3 CR PDG */ ?>
         <th style="text-align:center">Stock physique (déclaré)</th>
         <?php endif; ?>
-        <th style="text-align:center">Stock physique</th>
+        <th style="text-align:center">Stock compté</th>
         <?php if(!$is_coord): ?>
         <th style="text-align:center">Écarts</th>
         <?php endif; ?>

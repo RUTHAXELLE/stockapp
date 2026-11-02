@@ -455,7 +455,7 @@ if ($export === 'xlsx') {
     ]);
     $sh->getRowDimension(1)->setRowHeight(24);
 
-    $headers = ['Numéro','Type','Site','Qté physique (déclarée)','Qté Physique','Écart Mesuré','Conso/jour','Jours restants','Date épuisement','Statut Bobine','Notes'];
+    $headers = ['Numéro','Type','Site','Qté physique (déclarée)','Qté comptée','Écart Mesuré','Conso/jour','Jours restants','Date épuisement','Statut Bobine','Notes'];
     foreach ($headers as $i => $h) {
         $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
         $sh->setCellValue("{$col}2", $h);
@@ -576,8 +576,8 @@ if ($export === 'pdf') {
     <table>
       <thead><tr>
         <th>Numéro</th><th>Type</th><th>Site</th>
-        <th style="text-align:right">Qté Système</th>
-        <th style="text-align:right">Qté Physique</th>
+        <th style="text-align:right">Qté physique (déclarée)</th>
+        <th style="text-align:right">Qté comptée</th>
         <th style="text-align:right">Écart</th>
         <th style="text-align:center">Jours rest.</th>
         <th style="text-align:center">Date épuis.</th>
@@ -734,7 +734,7 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
   <div style="background:white;border-radius:16px;padding:22px 24px;width:100%;max-width:440px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
     <h3 style="font-family:'Montserrat',sans-serif;font-size:16px;font-weight:800;color:var(--navy);margin:0 0 6px">↩ Répondre à la demande</h3>
     <p style="font-size:12.5px;color:var(--muted);margin:0 0 14px">
-      Corrigez d'abord la valeur dans la colonne « Qté physique », puis confirmez ici.
+      Corrigez d'abord la valeur dans la colonne « Qté comptée », puis confirmez ici.
     </p>
     <div id="repModifAlert"></div>
     <div class="form-group" style="margin-bottom:6px">
@@ -761,7 +761,7 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
 <!-- TABLEAU PRINCIPAL -->
 <?php if(!$is_coord): /* décrit les colonnes masquées au coordinateur */ ?>
 <div style="background:#e8f4fd;border:1px solid #90caf9;border-radius:10px;padding:10px 16px;margin-bottom:14px;font-size:13px;display:flex;gap:20px;flex-wrap:wrap">
-  <span><i class="ph ph-push-pin" aria-hidden="true"></i> <strong>Qté physique</strong> = photo figée à la date de l'inventaire</span>
+  <span><i class="ph ph-push-pin" aria-hidden="true"></i> <strong>Qté comptée</strong> = photo figée à la date de l'inventaire</span>
   <span style="border-left:1px solid #90caf9;padding-left:20px"><i class="ph ph-circle" aria-hidden="true"></i> <strong>Qté temps réel</strong> = stock actuel mis à jour en continu par les consommations</span>
   <span style="border-left:1px solid #90caf9;padding-left:20px;border-bottom:2px dashed #f39c12;padding-bottom:1px"><strong>Écart connu</strong> = différence connue avant l'inventaire</span>
 </div>
@@ -778,7 +778,7 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
           <?php if(!$is_coord): ?>
           <th style="padding:10px 14px;text-align:right">Qté physique (déclarée) <i class="ph ph-monitor" aria-hidden="true"></i></th>
           <?php endif; ?>
-          <th style="padding:10px 14px;text-align:right;border-right:1px solid rgba(255,255,255,.15)">Qté physique <i class="ph ph-push-pin" aria-hidden="true"></i></th>
+          <th style="padding:10px 14px;text-align:right;border-right:1px solid rgba(255,255,255,.15)">Qté comptée <i class="ph ph-push-pin" aria-hidden="true"></i></th>
           <?php if(!$is_coord): /* n° 2.3 CR PDG — les écarts, mais aussi tout
                le bloc « temps réel » : la quantité temps réel EST la valeur
                système, et jours restants / épuisement s'en déduisent. */ ?>
@@ -853,7 +853,7 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
         </td>
         <?php endif; ?>
 
-        <!-- Qté physique (figée) -->
+        <!-- Qté comptée (figée) -->
         <td style="padding:9px 14px;text-align:right;border-right:1px solid #e2e8f0">
           <?php if($can_edit): ?>
           <?php /* n° 2.3 CR PDG — pour le coordinateur, ni data-sys ni
