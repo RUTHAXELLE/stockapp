@@ -284,9 +284,14 @@ include __DIR__ . '/../templates/header.php';
   <?php // Le coordinateur de site dépend désormais entièrement de la session
         // ouverte par l'admin (mensuel/trimestriel/semestriel/annuel) : il n'a
         // plus de création libre d'inventaire, journalier compris. ?>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+  <?php if(!$is_coord): /* export global : tous sites, période au choix (pages/inventaire_export.php) */ ?>
+  <a href="inventaire_export.php?types[]=bobines" class="btn btn-secondary"><i class="ph ph-export" aria-hidden="true"></i> Export global</a>
+  <?php endif; ?>
   <?php if($can_create && !$is_coord): ?>
   <button class="btn btn-primary" onclick="ouvrirModal()">+ Nouvel inventaire</button>
   <?php endif; ?>
+  </div>
 </div>
 
 <div class="card">

@@ -266,9 +266,14 @@ include __DIR__ . '/../templates/header.php';
     <input type="month" name="mois" value="<?= h($f_mois) ?>" onchange="this.form.submit()" aria-label="Choisir le mois"
            style="padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-size:13px;outline:none">
   </form>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+  <?php if(!$is_coord): /* export global : tous sites, période au choix (pages/inventaire_export.php) */ ?>
+  <a href="inventaire_export.php?types[]=pmma" class="btn btn-secondary"><i class="ph ph-export" aria-hidden="true"></i> Export global</a>
+  <?php endif; ?>
   <?php if($can_create && !$is_coord): ?>
   <button class="btn btn-primary" onclick="ouvrirModal()">+ Nouvel inventaire</button>
   <?php endif; ?>
+  </div>
 </div>
 
 <div class="card">

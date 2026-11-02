@@ -166,6 +166,13 @@ function _groupes_def(): array {
                 ['label'=>"Sessions d'inventaire", 'icon'=>'ph-calendar-check',
                  'url'=>'pages/inventaire_sessions.php','active_keys'=>['inventaire_sessions'],
                  'perm'=>['inventaire_sessions','can_read']],
+                // Export global (tous sites, période, types au choix) : ouvert à
+                // qui lit les inventaires bobines, sauf le coordinateur (la
+                // page le refuse aussi, cf. pages/inventaire_export.php).
+                ['label'=>'Export des inventaires', 'icon'=>'ph-export',
+                 'url'=>'pages/inventaire_export.php','active_keys'=>['inventaire_export'],
+                 'perm'=>['inventaire_bobines','can_read'],
+                 'roles_exclude'=>['coordinateur_site']],
                 // perm plutôt que roles_include : sinon le droit 'inventaire'
                 // (visibilité du groupe) ne suffit jamais à faire apparaître
                 // cet écran pour un rôle qui n'était pas dans la liste en dur,
