@@ -995,6 +995,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // Comparaison OptoPlate : écart tolérance 0 (plan 15/10/2026). Une
         // justification est exigée côté serveur, pas seulement côté écran —
         // la requête pourrait être rejouée sans être passée par la comparaison.
+        // Inventaire du jour : le comptage du matin pose le stock physique ;
+        // la consommation de la journée ne se retire qu'après sa validation.
+        if (($point['type_point'] ?? '') === 'point_18h' && _pj_regle_18h()
+            && (int)($point['stock_deduit'] ?? 0) === 0
+            && ($inv_ouverts = inv_ouverts_du_jour((int)$point['site_id'], (string)$point['date_point'])))
+            json_response(false, "Impossible de valider ce point pour l'instant : l'inventaire "
+                . implode(', ', $inv_ouverts) . " du " . date('d/m/Y', strtotime($point['date_point']))
+                . " de ce site n'est pas encore validé. Le stock compté ce matin doit d'abord être validé par le GSB ;"
+                . " la consommation de la journée sera retirée ensuite, à la validation de ce point.");
+
         $ecart_json = null;
         if (($point['type_point'] ?? '') === 'point_18h' && _pj_optoplate_comparaison_ok()) {
             $comparaison = op_comparer_point($point);

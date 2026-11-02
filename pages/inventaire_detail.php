@@ -81,7 +81,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         );
         if (!$det) json_response(false,'Ligne introuvable.');
 
-        $stock_sys    = (int)$det['erp_actuel'];
+        // Stock au comptage : ERP actuel + films retirés depuis par les
+        // points du jour de l'inventaire (cf. inv_conso_depuis()).
+        $stock_sys    = (int)$det['erp_actuel']
+                      + (inv_conso_depuis((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films')[(int)$det['bobine_id']] ?? 0);
         $stock_phy    = $stock_physique !== null ? $stock_physique : (int)$det['stock_physique'];
         $ecart_connu  = (int)($det['ecart_connu_avant'] ?? 0);
         $ecart_mesure = $stock_phy - $stock_sys;       // écart détecté lors de l'inventaire
@@ -301,6 +304,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         if (!$can_edit) json_response(false,'Inventaire non modifiable.');
         $lignes_data = json_decode($_POST['lignes'] ?? '[]', true);
         $saved = 0; $errors = 0;
+        $conso_inv = inv_conso_depuis((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films');
         db_begin();
         try {
             foreach ($lignes_data as $ld) {
@@ -319,7 +323,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
                 // Référence ERP, cf. sauver_ligne (plus de repli sur OptoTrace
                 // quand l'ERP est à zéro : zéro est une quantité comme une autre)
-                $stock_sys  = (int)$det['erp_actuel'];
+                $stock_sys  = (int)$det['erp_actuel'] + ($conso_inv[(int)$det['bobine_id']] ?? 0);
                 $ecart_mes  = $phy_val - $stock_sys;
                 $conso_moy  = (float)$det['conso_quotidienne_moy'];
                 $jours_phy  = $conso_moy > 0 ? (int)ceil($phy_val / $conso_moy) : null;
@@ -451,7 +455,7 @@ if ($export === 'xlsx') {
     ]);
     $sh->getRowDimension(1)->setRowHeight(24);
 
-    $headers = ['Numéro','Type','Site','Qté Système','Qté Physique','Écart Mesuré','Conso/jour','Jours restants','Date épuisement','Statut Bobine','Notes'];
+    $headers = ['Numéro','Type','Site','Qté physique (déclarée)','Qté Physique','Écart Mesuré','Conso/jour','Jours restants','Date épuisement','Statut Bobine','Notes'];
     foreach ($headers as $i => $h) {
         $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
         $sh->setCellValue("{$col}2", $h);
@@ -772,7 +776,7 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
           <th style="padding:10px 14px">Type</th>
           <th style="padding:10px 14px">Site</th>
           <?php if(!$is_coord): ?>
-          <th style="padding:10px 14px;text-align:right">Qté système <i class="ph ph-monitor" aria-hidden="true"></i></th>
+          <th style="padding:10px 14px;text-align:right">Qté physique (déclarée) <i class="ph ph-monitor" aria-hidden="true"></i></th>
           <?php endif; ?>
           <th style="padding:10px 14px;text-align:right;border-right:1px solid rgba(255,255,255,.15)">Qté physique <i class="ph ph-push-pin" aria-hidden="true"></i></th>
           <?php if(!$is_coord): /* n° 2.3 CR PDG — les écarts, mais aussi tout
@@ -841,7 +845,7 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
         <td style="padding:9px 14px;font-size:12px;color:var(--muted)"><?= h($l['site_nom']??'—') ?></td>
 
         <?php if(!$is_coord): ?>
-        <!-- Qté système (figée — valeur au moment de l'inventaire) -->
+        <!-- Qté physique déclarée (figée — stock ERP déclaré à l'ouverture de l'inventaire, pas l'import OptoTrace) -->
         <td style="padding:9px 14px;text-align:right">
           <span style="font-family:'Montserrat',sans-serif;font-weight:800;font-size:15px;color:var(--navy)">
             <?= number_format((int)$l['stock_systeme']) ?>

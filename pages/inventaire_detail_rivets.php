@@ -12,6 +12,7 @@ require_once __DIR__ . '/../includes/session.php';
 require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
+require_once __DIR__ . '/../includes/inventaire.php';
 
 require_auth();
 // Gate pilotée par la permission DB — cf. pages/inventaire_rivets.php.
@@ -264,6 +265,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $nb_ecarts = 0; $total_physique = 0;
         db_begin();
         try {
+            inv_verifier_pas_plus_recent('inventaires_rivets', $inv);
+            // Comptage du matin : ce que les points du jour de l'inventaire
+            // ont déjà retiré est déduit du physique (cf. inv_conso_depuis()).
+            $conso = inv_conso_depuis((int)$inv['site_id'], (string)$inv['date_inventaire'], 'rivets');
             foreach ($lignes as $l) {
                 if ((int)$l['stock_physique'] <= 0 && (int)$l['ecart'] == 0) continue;
                 $phy = (int)$l['stock_physique'];
@@ -273,7 +278,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
                 db_query(
                     "INSERT INTO op_stock_rivets (site_id,type_rivet,quantite) VALUES (?,?,?)
                      ON DUPLICATE KEY UPDATE quantite=?",
-                    [$inv['site_id'], $l['type_rivet'], $phy, $phy]
+                    [$inv['site_id'], $l['type_rivet'], max(0, $phy - ($conso[$l['type_rivet']] ?? 0)), max(0, $phy - ($conso[$l['type_rivet']] ?? 0))]
                 );
 
                 db_query("UPDATE ecarts_rivets SET statut='resolu', resolu_at=NOW(), resolu_par=?

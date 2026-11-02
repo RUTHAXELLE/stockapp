@@ -297,7 +297,7 @@ include __DIR__ . '/../templates/header.php';
         <th>Date</th><th>Type</th><th>Site</th>
         <th style="text-align:center">Bobines</th>
         <?php if(!$is_coord): /* n 2.3 CR PDG */ ?>
-        <th style="text-align:center">Stock système</th>
+        <th style="text-align:center">Stock physique (déclaré)</th>
         <?php endif; ?>
         <th style="text-align:center">Stock physique</th>
         <?php if(!$is_coord): ?>

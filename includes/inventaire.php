@@ -96,8 +96,11 @@ function inv_creer_mensuel(int $site_id, string $date, ?int $session_id, int $us
 }
 
 // ── Valide un inventaire de bobines : chaque bobine comptée prend son stock
-//    physique comme quantité ERP (films_restants) et OptoTrace
-//    (stock_systeme). Partagée par la liste des inventaires et la fiche
+//    physique comme quantité ERP déclarée (films_restants). Le stock système
+//    (stock_systeme) n'est PAS touché : il vient de l'import OptoTrace, et la
+//    validation du stock compare justement l'import au déclaratif — le
+//    recopier effacerait cette comparaison. Rivets et PMMA, sans import,
+//    n'ont qu'une quantité : leur inventaire la remplace. Partagée par la liste des inventaires et la fiche
 //    détail, qui divergeaient : la liste n'appliquait que les lignes à
 //    écart non nul — écart mesuré contre OptoTrace, si bien qu'une bobine
 //    comptée au chiffre d'OptoTrace gardait sa quantité ERP fausse
@@ -107,7 +110,9 @@ function inv_creer_mensuel(int $site_id, string $date, ?int $session_id, int $us
 //    l'inventaire corrige. À appeler dans la transaction de l'appelant.
 function inv_valider_bobines(array $inv, int $user_id): array {
     $inv_id = (int)$inv['id'];
+    inv_verifier_pas_plus_recent('inventaires_bobines', $inv);
     $lignes = db_fetch_all("SELECT * FROM inventaire_details_bobines WHERE inventaire_id=?", [$inv_id]);
+    $conso  = inv_conso_depuis((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films');
     $nb_ecarts = 0;
     $total_physique = 0;
     foreach ($lignes as $l) {
@@ -118,18 +123,27 @@ function inv_valider_bobines(array $inv, int $user_id): array {
         $bob = db_fetch_one("SELECT films_restants FROM op_bobines WHERE id=?", [$l['bobine_id']]);
         if (!$bob) continue;
         $phy       = (int)$l['stock_physique'];
-        $erp_avant = (int)$bob['films_restants'];
+        $deja      = $conso[(int)$l['bobine_id']] ?? 0;
+        // Comptage du matin, avant la production : les points du jour de
+        // l'inventaire déjà validés ont retiré des films après le comptage.
+        // Stock au comptage = ERP actuel + ce retrait ; nouveau stock =
+        // physique - ce retrait. Valider avant ou après le point 18h du
+        // jour donne ainsi le même résultat.
+        $erp_actuel = (int)$bob['films_restants'];
+        $erp_avant  = $erp_actuel + $deja;
+        $nouveau    = max(0, $phy - $deja);
         $total_physique += $phy;
 
         // Statut : même règle que l'import OptoTrace (entamée = en_cours).
         db_query(
-            "UPDATE op_bobines SET films_restants=?, stock_systeme=?,
+            "UPDATE op_bobines SET
              statut = CASE WHEN statut='retiree' THEN 'retiree'
                            WHEN ? <= 0 THEN 'epuisee'
                            WHEN ? < qte_initiale THEN 'en_cours'
-                           ELSE 'en_stock' END
+                           ELSE 'en_stock' END,
+             films_restants=?
              WHERE id=?",
-            [$phy, $phy, $phy, $phy, $l['bobine_id']]
+            [$nouveau, $nouveau, $nouveau, $l['bobine_id']]
         );
         db_query(
             "UPDATE ecarts_bobines SET statut='resolu', resolu_at=NOW(), resolu_par=?, resolution_notes=?
@@ -143,7 +157,7 @@ function inv_valider_bobines(array $inv, int $user_id): array {
             db_query(
                 "INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,ref_id,created_by)
                  VALUES (?,?,?,?,?,?,?,?)",
-                [$l['bobine_id'], 'ajustement_inventaire', $ecart, $erp_avant, $phy,
+                [$l['bobine_id'], 'ajustement_inventaire', $nouveau - $erp_actuel, $erp_actuel, $nouveau,
                  "Inventaire #$inv_id ({$inv['type_inventaire']})", $inv_id, $user_id]
             );
             db_query(
@@ -169,6 +183,68 @@ function inv_valider_bobines(array $inv, int $user_id): array {
         [$nb_ecarts, $total_physique, $user_id, $inv_id]
     );
     return ['nb_ecarts' => $nb_ecarts, 'total_physique' => $total_physique];
+}
+
+// ── Inventaires du site non encore validés (brouillon), datés de $date.
+//    L'inventaire validé pose exactement le stock physique compté le matin,
+//    avant la production : le point 18h de ce jour ne se valide qu'ensuite
+//    (cf. valider_point dans point_journalier.php), sinon sa consommation
+//    serait effacée par le comptage. Le lendemain est déjà bloqué tant que
+//    la journée n'est pas close (_site_bloque_ecart). Renvoie les libellés
+//    (« bobines », « rivets », « PMMA »).
+function inv_ouverts_du_jour(int $site_id, string $date): array {
+    $res = [];
+    foreach (['inventaires_bobines' => 'bobines', 'inventaires_rivets' => 'rivets', 'inventaires_pmma' => 'PMMA'] as $t => $lib)
+        if ((int)db_fetch_value("SELECT COUNT(*) FROM $t WHERE site_id = ? AND date_inventaire = ? AND statut = 'brouillon'",
+                                [$site_id, $date]) > 0)
+            $res[] = $lib;
+    return $res;
+}
+
+// ── Consommation retirée du stock par les points du site datés du jour de
+//    l'inventaire ou après. Le point 18h de ce jour attend normalement la
+//    validation de l'inventaire (inv_ouverts_du_jour()) : ce retrait vaut
+//    alors 0 et le stock devient exactement le physique compté. Il ne joue
+//    que pour un point validé avant cette règle, ou corrigé depuis : ses
+//    retraits, postérieurs au comptage du matin, sont déduits du physique.
+//    $quoi : 'films' (par bobine_id), 'rivets' (par type_rivet), 'pmma'
+//    (par type_pmma). Seuls les points dont le stock est retiré comptent
+//    (stock_deduit 1 ou 2 ; sans la colonne, ancienne règle : tous).
+function inv_conso_depuis(int $site_id, string $date, string $quoi): array {
+    $deduit = db_colonne_existe('op_points_journaliers', 'stock_deduit') ? ' AND p.stock_deduit IN (1,2)' : '';
+    if ($quoi === 'rivets') {
+        $r = db_fetch_one(
+            "SELECT COALESCE(SUM(p.rivets_gonflables),0) AS g, COALESCE(SUM(p.rivets_eclates),0) AS e
+               FROM op_points_journaliers p WHERE p.site_id = ? AND p.date_point >= ?$deduit", [$site_id, $date]);
+        return ['gonflable' => (int)($r['g'] ?? 0), 'eclate' => (int)($r['e'] ?? 0)];
+    }
+    if ($quoi === 'films') {
+        $rows = db_fetch_all(
+            "SELECT fu.bobine_id AS k, SUM(fu.films_utilises + fu.films_endommages) AS n
+               FROM op_films_utilises fu JOIN op_points_journaliers p ON p.id = fu.point_id
+              WHERE p.site_id = ? AND p.date_point >= ?$deduit GROUP BY fu.bobine_id", [$site_id, $date]);
+    } else {
+        $nc = db_colonne_existe('op_pmma_utilises', 'non_conformes') ? ' + pm.non_conformes' : '';
+        $rows = db_fetch_all(
+            "SELECT pm.type_pmma AS k, SUM(pm.utilises + pm.endommages$nc) AS n
+               FROM op_pmma_utilises pm JOIN op_points_journaliers p ON p.id = pm.point_id
+              WHERE p.site_id = ? AND p.date_point >= ?$deduit GROUP BY pm.type_pmma", [$site_id, $date]);
+    }
+    $res = [];
+    foreach ($rows as $r) $res[$r['k']] = (int)$r['n'];
+    return $res;
+}
+
+// ── Un inventaire plus ancien qu'un inventaire déjà validé du même site ne
+//    se valide plus : il remplacerait un stock recompté par un comptage
+//    antérieur. $table : inventaires_bobines | inventaires_rivets | inventaires_pmma.
+function inv_verifier_pas_plus_recent(string $table, array $inv): void {
+    $d = db_fetch_value(
+        "SELECT MAX(date_inventaire) FROM $table
+          WHERE site_id = ? AND statut = 'valide' AND date_inventaire > ? AND id <> ?",
+        [(int)$inv['site_id'], (string)$inv['date_inventaire'], (int)$inv['id']]);
+    if ($d) throw new Exception("un inventaire plus récent de ce site (du " . date('d/m/Y', strtotime($d))
+        . ") est déjà validé ; ce comptage plus ancien ne peut plus remplacer le stock.");
 }
 
 // ── Garde-fou : un inventaire de bobines validé fait foi pour le stock de
