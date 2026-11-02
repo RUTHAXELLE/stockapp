@@ -551,95 +551,102 @@ if ($export === 'pptx') {
 if ($export === 'pdf') {
     if (!file_exists($_autoload)) { echo 'Dompdf non installé.'; exit; }
 
-    // En-têtes tableau
-    $hdr_types = array_map(fn($t) => "<th style='padding:6px 8px;white-space:nowrap'>Bobs.<br><strong>$t</strong></th><th style='padding:6px 8px;white-space:nowrap'>Films<br><strong>$t</strong></th>", $types);
+    // Deux colonnes par type (bobines, films) : au-delà d'une dizaine de
+    // types, le tableau dépassait la largeur de l'A4 et les derniers types
+    // (et les totaux) sortaient de la page. Le tableau est donc découpé en
+    // blocs de $par_bloc types, un bloc par page, la colonne Site répétée ;
+    // les totaux par site sont dans le dernier bloc.
+    $par_bloc = 8;
+    $blocs    = array_chunk(array_values($types), $par_bloc);
+    if (!$blocs) $blocs = [[]];
+    $idx_ss   = !empty($sans_site) ? array_column($sans_site, null, 'type_code') : [];
+    $nb_c     = fn($nb) => "<td class='c' style='color:" . ($nb > 0 ? '#1B75BC' : '#94a3b8') . "'>$nb</td>";
 
-    // Lignes de données
-    $rows_html = '';
-    $even = false;
-    foreach (array_keys($par_site) as $sn) {
-        $bg = $even ? '#f8fafc' : '#fff';
-        $cells = '';
-        foreach ($types as $t) {
-            $cell = $idx[$sn][$t] ?? null;
-            $nb   = $cell ? (int)$cell['nb_bobines']  : 0;
-            $fil  = $cell ? (int)$cell['total_films']  : 0;
-            $cells .= "<td style='text-align:center;color:".($nb>0?'#1B75BC':'#94a3b8')."'>$nb</td>
-                       <td style='text-align:center'>".number_format($fil)."</td>";
+    $tables = '';
+    foreach ($blocs as $i => $bloc) {
+        $dernier = $i === count($blocs) - 1;
+        $th = '';
+        foreach ($bloc as $t) {
+            $t_h = htmlspecialchars($t);
+            $th .= "<th>Bobs.<br>$t_h</th><th>Films<br>$t_h</th>";
         }
-        $rows_html .= "<tr style='background:$bg'>
-            <td style='padding:5px 8px;font-weight:600'>".htmlspecialchars($sn)."</td>
-            $cells
-            <td style='text-align:center;font-weight:700;color:#06033A'>".(int)$par_site[$sn]['nb_bobines']."</td>
-            <td style='text-align:center;font-weight:700;color:#06033A'>".number_format((int)$par_site[$sn]['total_films'])."</td>
-        </tr>";
-        $even = !$even;
-    }
-    if (!empty($sans_site)) {
-        $idx_ss = array_column($sans_site, null, 'type_code');
-        $cells = '';
-        foreach ($types as $t) {
-            $ss = $idx_ss[$t] ?? null;
-            $cells .= "<td style='text-align:center'>".($ss?(int)$ss['nb']:0)."</td>
-                       <td style='text-align:center'>".($ss?number_format((int)$ss['films']):'0')."</td>";
-        }
-        $rows_html .= "<tr style='background:#fffbeb'>
-            <td style='padding:5px 8px;font-style:italic;color:#92400e'>En dépôt (sans site)</td>
-            $cells
-            <td style='text-align:center;font-weight:600'>".array_sum(array_column($sans_site,'nb'))."</td>
-            <td style='text-align:center;font-weight:600'>".number_format(array_sum(array_column($sans_site,'films')))."</td>
-        </tr>";
-    }
-    // Ligne TOTAL
-    $cells_tot = '';
-    foreach ($types as $t) {
-        $cells_tot .= "<td style='text-align:center;font-weight:700'>".(int)($par_type[$t]['nb_bobines']??0)."</td>
-                       <td style='text-align:center;font-weight:700'>".number_format((int)($par_type[$t]['total_films']??0))."</td>";
-    }
-    $rows_html .= "<tr style='background:#e8f0fe'>
-        <td style='padding:5px 8px;font-weight:800;color:#06033A'>TOTAL</td>
-        $cells_tot
-        <td style='text-align:center;font-weight:800;color:#06033A'>$total_bobines</td>
-        <td style='text-align:center;font-weight:800;color:#06033A'>".number_format($total_films)."</td>
-    </tr>";
+        if ($dernier) $th .= '<th>Total<br>bobines</th><th>Total<br>films</th>';
 
-    $th_types = implode('', $hdr_types);
+        $rows = '';
+        $even = false;
+        foreach (array_keys($par_site) as $sn) {
+            $cells = '';
+            foreach ($bloc as $t) {
+                $cell = $idx[$sn][$t] ?? null;
+                $cells .= $nb_c($cell ? (int)$cell['nb_bobines'] : 0)
+                        . "<td class='c'>" . number_format($cell ? (int)$cell['total_films'] : 0) . "</td>";
+            }
+            if ($dernier)
+                $cells .= "<td class='c tot'>" . (int)$par_site[$sn]['nb_bobines'] . "</td>"
+                        . "<td class='c tot'>" . number_format((int)$par_site[$sn]['total_films']) . "</td>";
+            $rows .= "<tr style='background:" . ($even ? '#f8fafc' : '#fff') . "'><td class='site'>" . htmlspecialchars($sn) . "</td>$cells</tr>";
+            $even = !$even;
+        }
+        if (!empty($sans_site)) {
+            $cells = '';
+            foreach ($bloc as $t) {
+                $ss = $idx_ss[$t] ?? null;
+                $cells .= "<td class='c'>" . ($ss ? (int)$ss['nb'] : 0) . "</td><td class='c'>" . ($ss ? number_format((int)$ss['films']) : '0') . "</td>";
+            }
+            if ($dernier)
+                $cells .= "<td class='c tot'>" . array_sum(array_column($sans_site, 'nb')) . "</td>"
+                        . "<td class='c tot'>" . number_format(array_sum(array_column($sans_site, 'films'))) . "</td>";
+            $rows .= "<tr style='background:#fffbeb'><td class='site' style='font-style:italic;color:#92400e'>En dépôt (sans site)</td>$cells</tr>";
+        }
+        $cells = '';
+        foreach ($bloc as $t)
+            $cells .= "<td class='c tot'>" . (int)($par_type[$t]['nb_bobines'] ?? 0) . "</td>"
+                    . "<td class='c tot'>" . number_format((int)($par_type[$t]['total_films'] ?? 0)) . "</td>";
+        if ($dernier)
+            $cells .= "<td class='c tot'>$total_bobines</td><td class='c tot'>" . number_format($total_films) . "</td>";
+        $rows .= "<tr class='total'><td class='site'>TOTAL</td>$cells</tr>";
+
+        $titre_bloc = count($blocs) > 1
+            ? '<div class="bloc">Types ' . htmlspecialchars(reset($bloc) . ' à ' . end($bloc)) . ' &nbsp;·&nbsp; partie ' . ($i + 1) . ' / ' . count($blocs) . '</div>'
+            : '';
+        $tables .= ($i > 0 ? '<div style="page-break-before:always"></div>' : '') . $titre_bloc
+                 . "<table class='grille'><thead><tr><th class='site'>Site</th>$th</tr></thead><tbody>$rows</tbody></table>";
+    }
+
     $filtre_txt = '';
     if ($f_site)   $filtre_txt .= ' · Site filtré';
     if ($f_type)   $filtre_txt .= ' · Type : ' . htmlspecialchars($f_type);
     if ($f_statut) $filtre_txt .= ' · Statut : ' . htmlspecialchars($f_statut);
 
     $html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-    body{font-family:Arial,sans-serif;font-size:9px;margin:15px}
-    h1{font-size:13px;color:#06033A;margin:0 0 2px}
-    .sub{font-size:8px;color:#64748b;margin-bottom:12px}
-    table{width:100%;border-collapse:collapse}
-    thead tr.hdr1 th{background:#06033A;color:#fff;padding:7px 8px;font-size:9px;text-align:center}
-    thead tr.hdr2 th{background:#1B75BC;color:#fff;padding:5px 8px;font-size:8px;text-align:center}
-    td{padding:4px 8px;border-bottom:1px solid #e2e8f0;font-size:9px}
+    @page{margin:12mm 10mm}
+    body{font-family:DejaVu Sans,Arial,sans-serif;font-size:8px;color:#1e293b}
+    .sub{font-size:8px;color:#64748b;margin-bottom:8px}
+    .bloc{font-size:9px;font-weight:bold;color:#06033A;margin:0 0 5px}
+    table.grille{width:100%;border-collapse:collapse}
+    table.grille thead{display:table-header-group}
+    table.grille tr{page-break-inside:avoid}
+    table.grille th{background:#06033A;color:#fff;padding:5px 4px;font-size:7.5px;text-align:center;font-weight:bold}
+    table.grille td{padding:4px 4px;border-bottom:1px solid #e2e8f0}
+    table.grille .site{text-align:left;font-weight:bold;width:110px}
+    table.grille .c{text-align:center;white-space:nowrap}
+    table.grille .tot{font-weight:bold;color:#06033A}
+    table.grille tr.total td{background:#e8f0fe;font-weight:bold;color:#06033A}
     </style></head><body>
-    <table width="100%" style="border-collapse:collapse;margin-bottom:10px"><tr>
+    <table width="100%" style="border-collapse:collapse;margin-bottom:8px"><tr>
       <td style="vertical-align:middle;width:85px;padding-right:10px">' . pdf_logo_img('38px') . '</td>
       <td style="vertical-align:middle;padding-left:12px;border-left:3px solid #06033A">
         <div style="font-size:13px;font-weight:bold;color:#06033A">Vue Stock Bobines</div>
         <div style="font-size:8px;color:#64748b;margin-top:2px">Express Multiservices CI</div>
       </td>
     </tr></table>
-    <div class="sub">Généré le ' . date('d/m/Y H:i') . $filtre_txt . ' &nbsp;·&nbsp; ' . count(array_keys($par_site)) . ' site(s) &nbsp;·&nbsp; ' . $total_bobines . ' bobines &nbsp;·&nbsp; ' . number_format($total_films) . ' films</div>
-    <table>
-      <thead>
-        <tr class="hdr1">
-          <th style="text-align:left">Site</th>
-          ' . $th_types . '
-          <th>Total Bobines</th><th>Total Films</th>
-        </tr>
-      </thead>
-      <tbody>' . $rows_html . '</tbody>
-    </table>
+    <div class="sub">Généré le ' . date('d/m/Y H:i') . $filtre_txt . ' &nbsp;·&nbsp; ' . count(array_keys($par_site)) . ' site(s) &nbsp;·&nbsp; ' . $total_bobines . ' bobines &nbsp;·&nbsp; ' . number_format($total_films) . ' films &nbsp;·&nbsp; ' . count($types) . ' type(s)</div>
+    ' . $tables . '
     </body></html>';
 
     $opts = new Options();
     $opts->set('isRemoteEnabled', false);
+    $opts->set('defaultFont', 'DejaVu Sans');
     $pdf = new Dompdf($opts);
     $pdf->loadHtml($html);
     $pdf->setPaper('A4', 'landscape');
