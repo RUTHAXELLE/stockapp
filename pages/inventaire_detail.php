@@ -82,9 +82,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         if (!$det) json_response(false,'Ligne introuvable.');
 
         // Stock au comptage : ERP actuel + films retirés depuis par les
-        // points du jour de l'inventaire (cf. inv_conso_depuis()).
+        // points datés d'après l'inventaire (cf. inv_conso_apres()).
         $stock_sys    = (int)$det['erp_actuel']
-                      + (inv_conso_depuis((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films')[(int)$det['bobine_id']] ?? 0);
+                      + (inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films')[(int)$det['bobine_id']] ?? 0);
         $stock_phy    = $stock_physique !== null ? $stock_physique : (int)$det['stock_physique'];
         $ecart_connu  = (int)($det['ecart_connu_avant'] ?? 0);
         $ecart_mesure = $stock_phy - $stock_sys;       // écart détecté lors de l'inventaire
@@ -304,7 +304,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         if (!$can_edit) json_response(false,'Inventaire non modifiable.');
         $lignes_data = json_decode($_POST['lignes'] ?? '[]', true);
         $saved = 0; $errors = 0;
-        $conso_inv = inv_conso_depuis((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films');
+        $conso_inv = inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films');
         db_begin();
         try {
             foreach ($lignes_data as $ld) {

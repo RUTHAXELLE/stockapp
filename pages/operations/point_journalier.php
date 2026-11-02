@@ -147,13 +147,18 @@ function _pj_restaurer_stock(int $point_id, int $site_id, int $riv_gonfl, int $r
         }
     }
     if ($deja_remis) return;
+    // Garde-fou inventaire (rivets, PMMA) : comme les films, un point daté
+    // du jour d'un inventaire validé ou d'avant ne remet rien.
+    $date_pt = (string)db_fetch_value("SELECT date_point FROM op_points_journaliers WHERE id=?", [$point_id]);
+    if (inv_recompte_apres('inventaires_rivets', $site_id, $date_pt)) { $riv_gonfl = 0; $riv_eclate = 0; }
+    $pmma_recompte = inv_recompte_apres('inventaires_pmma', $site_id, $date_pt) !== null;
     if ($riv_gonfl > 0)
         db_query("UPDATE op_stock_rivets SET quantite = quantite + ? WHERE site_id=? AND type_rivet='gonflable'",
             [$riv_gonfl, $site_id]);
     if ($riv_eclate > 0)
         db_query("UPDATE op_stock_rivets SET quantite = quantite + ? WHERE site_id=? AND type_rivet='eclate'",
             [$riv_eclate, $site_id]);
-    $old_pmma = db_fetch_all("SELECT * FROM op_pmma_utilises WHERE point_id=?", [$point_id]);
+    $old_pmma = $pmma_recompte ? [] : db_fetch_all("SELECT * FROM op_pmma_utilises WHERE point_id=?", [$point_id]);
     foreach ($old_pmma as $op_) {
         $total_pm_restore = (int)$op_['utilises'] + (int)$op_['endommages'] + (int)($op_['non_conformes'] ?? 0);
         if ($total_pm_restore > 0)
@@ -204,13 +209,17 @@ function _pj_deduire_stock(array $point): void {
         if (!$films_recomptes && isset($besoin_bob[$b]) && $besoin_bob[$b] > (int)$f['films_restants'])
             $manques[$b] = "bobine {$f['numero']} : {$f['films_restants']} films restants, {$besoin_bob[$b]} demandés";
     }
-    $g = (int)($point['rivets_gonflables'] ?? 0);
-    $e = (int)($point['rivets_eclates'] ?? 0);
+    // Garde-fou inventaire (rivets, PMMA) : un inventaire validé daté du
+    // jour du point ou d'après a déjà compté cette consommation.
+    $riv_recomptes  = inv_recompte_apres('inventaires_rivets', $site_id, (string)$point['date_point']) !== null;
+    $pmma_recomptes = inv_recompte_apres('inventaires_pmma',   $site_id, (string)$point['date_point']) !== null;
+    $g = $riv_recomptes ? 0 : (int)($point['rivets_gonflables'] ?? 0);
+    $e = $riv_recomptes ? 0 : (int)($point['rivets_eclates'] ?? 0);
     $stock_g = (int)(db_fetch_value("SELECT COALESCE(quantite,0) FROM op_stock_rivets WHERE site_id=? AND type_rivet='gonflable'", [$site_id]) ?? 0);
     $stock_e = (int)(db_fetch_value("SELECT COALESCE(quantite,0) FROM op_stock_rivets WHERE site_id=? AND type_rivet='eclate'", [$site_id]) ?? 0);
     if ($g > $stock_g) $manques[] = "rivets gonflables : $stock_g disponibles, $g demandés";
     if ($e > $stock_e) $manques[] = "rivets éclatés : $stock_e disponibles, $e demandés";
-    $pmma = db_fetch_all("SELECT * FROM op_pmma_utilises WHERE point_id=?", [$point_id]);
+    $pmma = $pmma_recomptes ? [] : db_fetch_all("SELECT * FROM op_pmma_utilises WHERE point_id=?", [$point_id]);
     foreach ($pmma as $pm) {
         $t = (int)$pm['utilises'] + (int)$pm['endommages'] + (int)($pm['non_conformes'] ?? 0);
         $dispo = (int)(db_fetch_value("SELECT COALESCE(quantite,0) FROM stock_pmma_site WHERE site_id=? AND type_pmma=?",
@@ -285,7 +294,7 @@ function _site_bloque_ecart(int $site_id, string $date_today): ?string {
     $date_prec = $dernier_point['date_point'];
     // Un inventaire de bobines validé depuis ce point a rétabli le stock du
     // site : la validation de ce jour-là ne décide plus de rien.
-    if (inv_bobines_recompte_apres($site_id, $date_prec)) return null;
+    if (inv_bobines_recompte_apres($site_id, $date_prec, false)) return null;
     $jour  = date('d/m/Y', strtotime($date_prec));
     $motif = trim((string)($dernier_point['motif_rejet'] ?? ''));
     switch ($dernier_point['statut']) {
@@ -995,16 +1004,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // Comparaison OptoPlate : écart tolérance 0 (plan 15/10/2026). Une
         // justification est exigée côté serveur, pas seulement côté écran —
         // la requête pourrait être rejouée sans être passée par la comparaison.
-        // Inventaire du jour : le comptage du matin pose le stock physique ;
-        // la consommation de la journée ne se retire qu'après sa validation.
-        if (($point['type_point'] ?? '') === 'point_18h' && _pj_regle_18h()
-            && (int)($point['stock_deduit'] ?? 0) === 0
-            && ($inv_ouverts = inv_ouverts_du_jour((int)$point['site_id'], (string)$point['date_point'])))
-            json_response(false, "Impossible de valider ce point pour l'instant : l'inventaire "
-                . implode(', ', $inv_ouverts) . " du " . date('d/m/Y', strtotime($point['date_point']))
-                . " de ce site n'est pas encore validé. Le stock compté ce matin doit d'abord être validé par le GSB ;"
-                . " la consommation de la journée sera retirée ensuite, à la validation de ce point.");
-
         $ecart_json = null;
         if (($point['type_point'] ?? '') === 'point_18h' && _pj_optoplate_comparaison_ok()) {
             $comparaison = op_comparer_point($point);
@@ -1169,9 +1168,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 }
             }
 
-            // Restaurer les rivets
-            $riv_gonfl  = (int)($point['rivets_gonflables'] ?? 0);
-            $riv_eclate = (int)($point['rivets_eclates']    ?? 0);
+            // Restaurer les rivets (garde-fou inventaire : rien si recomptés)
+            $riv_recompte = inv_recompte_apres('inventaires_rivets', (int)$point['site_id'], (string)$point['date_point']) !== null;
+            $riv_gonfl  = $riv_recompte ? 0 : (int)($point['rivets_gonflables'] ?? 0);
+            $riv_eclate = $riv_recompte ? 0 : (int)($point['rivets_eclates']    ?? 0);
             if ($riv_gonfl > 0)
                 db_query("UPDATE op_stock_rivets SET quantite = quantite + ? WHERE site_id=? AND type_rivet='gonflable'",
                     [$riv_gonfl, $point['site_id']]);
@@ -1180,7 +1180,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     [$riv_eclate, $point['site_id']]);
 
             // Restaurer les PMMA
-            $pmmats = db_fetch_all("SELECT * FROM op_pmma_utilises WHERE point_id=?", [$point_id]);
+            $pmmats = inv_recompte_apres('inventaires_pmma', (int)$point['site_id'], (string)$point['date_point']) !== null
+                ? [] : db_fetch_all("SELECT * FROM op_pmma_utilises WHERE point_id=?", [$point_id]);
             foreach ($pmmats as $pm) {
                 $total_pm = (int)$pm['utilises'] + (int)$pm['endommages'] + (int)($pm['non_conformes'] ?? 0);
                 if ($total_pm > 0) {

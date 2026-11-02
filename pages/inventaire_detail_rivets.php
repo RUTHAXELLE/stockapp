@@ -266,9 +266,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         db_begin();
         try {
             inv_verifier_pas_plus_recent('inventaires_rivets', $inv);
-            // Comptage du matin : ce que les points du jour de l'inventaire
-            // ont déjà retiré est déduit du physique (cf. inv_conso_depuis()).
-            $conso = inv_conso_depuis((int)$inv['site_id'], (string)$inv['date_inventaire'], 'rivets');
+            // Comptage de fin de journée : le point 18h du jour d'abord ; ce
+            // que des points datés d'après ont déjà retiré est déduit du
+            // physique (cf. inv_conso_apres(), RÈGLE INVENTAIRE).
+            inv_verifier_point18h($inv);
+            $conso = inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'rivets');
             foreach ($lignes as $l) {
                 if ((int)$l['stock_physique'] <= 0 && (int)$l['ecart'] == 0) continue;
                 $phy = (int)$l['stock_physique'];

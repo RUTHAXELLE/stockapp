@@ -111,8 +111,9 @@ function inv_creer_mensuel(int $site_id, string $date, ?int $session_id, int $us
 function inv_valider_bobines(array $inv, int $user_id): array {
     $inv_id = (int)$inv['id'];
     inv_verifier_pas_plus_recent('inventaires_bobines', $inv);
+    inv_verifier_point18h($inv);
     $lignes = db_fetch_all("SELECT * FROM inventaire_details_bobines WHERE inventaire_id=?", [$inv_id]);
-    $conso  = inv_conso_depuis((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films');
+    $conso  = inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films');
     $nb_ecarts = 0;
     $total_physique = 0;
     foreach ($lignes as $l) {
@@ -124,11 +125,11 @@ function inv_valider_bobines(array $inv, int $user_id): array {
         if (!$bob) continue;
         $phy       = (int)$l['stock_physique'];
         $deja      = $conso[(int)$l['bobine_id']] ?? 0;
-        // Comptage du matin, avant la production : les points du jour de
-        // l'inventaire déjà validés ont retiré des films après le comptage.
-        // Stock au comptage = ERP actuel + ce retrait ; nouveau stock =
-        // physique - ce retrait. Valider avant ou après le point 18h du
-        // jour donne ainsi le même résultat.
+        // Comptage de fin de journée (cf. RÈGLE INVENTAIRE) : le chiffre
+        // compté devient le stock. Seuls des points datés d'après, déjà
+        // validés, ont retiré des films depuis le comptage : stock au
+        // comptage = ERP actuel + ce retrait ; nouveau stock = physique -
+        // ce retrait (0 dans le cas courant : stock = physique).
         $erp_actuel = (int)$bob['films_restants'];
         $erp_avant  = $erp_actuel + $deja;
         $nouveau    = max(0, $phy - $deja);
@@ -185,50 +186,64 @@ function inv_valider_bobines(array $inv, int $user_id): array {
     return ['nb_ecarts' => $nb_ecarts, 'total_physique' => $total_physique];
 }
 
-// ── Inventaires du site non encore validés (brouillon), datés de $date.
-//    L'inventaire validé pose exactement le stock physique compté le matin,
-//    avant la production : le point 18h de ce jour ne se valide qu'ensuite
-//    (cf. valider_point dans point_journalier.php), sinon sa consommation
-//    serait effacée par le comptage. Le lendemain est déjà bloqué tant que
-//    la journée n'est pas close (_site_bloque_ecart). Renvoie les libellés
-//    (« bobines », « rivets », « PMMA »).
-function inv_ouverts_du_jour(int $site_id, string $date): array {
-    $res = [];
-    foreach (['inventaires_bobines' => 'bobines', 'inventaires_rivets' => 'rivets', 'inventaires_pmma' => 'PMMA'] as $t => $lib)
-        if ((int)db_fetch_value("SELECT COUNT(*) FROM $t WHERE site_id = ? AND date_inventaire = ? AND statut = 'brouillon'",
-                                [$site_id, $date]) > 0)
-            $res[] = $lib;
-    return $res;
+// ── RÈGLE INVENTAIRE (02/11/2026) : le comptage se fait en FIN de journée,
+//    après la validation du point 18h. Le chiffre compté est le stock de
+//    clôture du jour de l'inventaire : il devient le stock tel quel, et le
+//    lendemain en part. Conséquences :
+//    - un point daté du jour de l'inventaire ou d'avant ne touche plus au
+//      stock une fois l'inventaire validé (inv_recompte_apres()) ;
+//    - les points datés d'APRÈS, déjà validés au moment de la validation de
+//      l'inventaire, ont retiré une consommation postérieure au comptage :
+//      elle est déduite du chiffre compté (inv_conso_apres()) ;
+//    - l'inventaire ne se valide qu'une fois le point 18h du jour validé
+//      (inv_point18h_en_attente()), sinon l'écart mesuré compterait la
+//      consommation du jour comme un manque.
+
+// ── Point 18h du site daté du jour de l'inventaire, saisi mais dont le stock
+//    n'est pas encore retiré (non validé par le superviseur). Renvoie son
+//    statut, ou null s'il n'y en a pas (pas de point : rien à attendre).
+function inv_point18h_en_attente(int $site_id, string $date): ?string {
+    if (!db_colonne_existe('op_points_journaliers', 'stock_deduit')) return null;
+    $st = db_fetch_value(
+        "SELECT statut FROM op_points_journaliers
+          WHERE site_id = ? AND date_point = ? AND type_point = 'point_18h' AND stock_deduit = 0
+          ORDER BY id DESC LIMIT 1", [$site_id, $date]);
+    return $st !== null && $st !== false ? (string)$st : null;
 }
 
-// ── Consommation retirée du stock par les points du site datés du jour de
-//    l'inventaire ou après. Le point 18h de ce jour attend normalement la
-//    validation de l'inventaire (inv_ouverts_du_jour()) : ce retrait vaut
-//    alors 0 et le stock devient exactement le physique compté. Il ne joue
-//    que pour un point validé avant cette règle, ou corrigé depuis : ses
-//    retraits, postérieurs au comptage du matin, sont déduits du physique.
+// ── Message commun du refus de validation tant que le point 18h attend.
+function inv_verifier_point18h(array $inv): void {
+    if (inv_point18h_en_attente((int)$inv['site_id'], (string)$inv['date_inventaire']) !== null)
+        throw new Exception("le point 18h du " . date('d/m/Y', strtotime($inv['date_inventaire']))
+            . " de ce site n'est pas encore validé par le superviseur. Le comptage est le stock de fin de journée :"
+            . " validez d'abord ce point, puis l'inventaire.");
+}
+
+// ── Consommation retirée du stock par les points du site datés d'APRÈS le
+//    jour de l'inventaire : postérieure au comptage de fin de journée, elle
+//    est déduite du chiffre compté à la validation.
 //    $quoi : 'films' (par bobine_id), 'rivets' (par type_rivet), 'pmma'
 //    (par type_pmma). Seuls les points dont le stock est retiré comptent
 //    (stock_deduit 1 ou 2 ; sans la colonne, ancienne règle : tous).
-function inv_conso_depuis(int $site_id, string $date, string $quoi): array {
+function inv_conso_apres(int $site_id, string $date, string $quoi): array {
     $deduit = db_colonne_existe('op_points_journaliers', 'stock_deduit') ? ' AND p.stock_deduit IN (1,2)' : '';
     if ($quoi === 'rivets') {
         $r = db_fetch_one(
             "SELECT COALESCE(SUM(p.rivets_gonflables),0) AS g, COALESCE(SUM(p.rivets_eclates),0) AS e
-               FROM op_points_journaliers p WHERE p.site_id = ? AND p.date_point >= ?$deduit", [$site_id, $date]);
+               FROM op_points_journaliers p WHERE p.site_id = ? AND p.date_point > ?$deduit", [$site_id, $date]);
         return ['gonflable' => (int)($r['g'] ?? 0), 'eclate' => (int)($r['e'] ?? 0)];
     }
     if ($quoi === 'films') {
         $rows = db_fetch_all(
             "SELECT fu.bobine_id AS k, SUM(fu.films_utilises + fu.films_endommages) AS n
                FROM op_films_utilises fu JOIN op_points_journaliers p ON p.id = fu.point_id
-              WHERE p.site_id = ? AND p.date_point >= ?$deduit GROUP BY fu.bobine_id", [$site_id, $date]);
+              WHERE p.site_id = ? AND p.date_point > ?$deduit GROUP BY fu.bobine_id", [$site_id, $date]);
     } else {
         $nc = db_colonne_existe('op_pmma_utilises', 'non_conformes') ? ' + pm.non_conformes' : '';
         $rows = db_fetch_all(
             "SELECT pm.type_pmma AS k, SUM(pm.utilises + pm.endommages$nc) AS n
                FROM op_pmma_utilises pm JOIN op_points_journaliers p ON p.id = pm.point_id
-              WHERE p.site_id = ? AND p.date_point >= ?$deduit GROUP BY pm.type_pmma", [$site_id, $date]);
+              WHERE p.site_id = ? AND p.date_point > ?$deduit GROUP BY pm.type_pmma", [$site_id, $date]);
     }
     $res = [];
     foreach ($rows as $r) $res[$r['k']] = (int)$r['n'];
@@ -247,23 +262,30 @@ function inv_verifier_pas_plus_recent(string $table, array $inv): void {
         . ") est déjà validé ; ce comptage plus ancien ne peut plus remplacer le stock.");
 }
 
-// ── Garde-fou : un inventaire de bobines validé fait foi pour le stock de
-//    son site. Le comptage du jour J (le matin, avant la production) tient
-//    déjà compte de tout ce qui a été consommé jusqu'à J-1 : une opération
-//    datée d'avant J qui toucherait encore aux films restants fausserait la
+// ── Garde-fou : un inventaire validé fait foi pour le stock de son site.
+//    Le comptage du jour J (fin de journée, cf. RÈGLE INVENTAIRE) tient déjà
+//    compte de tout ce qui a été consommé jusqu'à J inclus : une opération
+//    datée de J ou d'avant qui toucherait encore au stock fausserait la
 //    quantité comptée — un réajustement la remplacerait par une valeur
-//    d'avant, un point saisi après coup déduirait des films déjà absents
-//    au comptage, un brouillon supprimé en remettrait.
-//    Renvoie la date du dernier inventaire validé du site postérieur à
-//    $date, ou null si rien n'a été recompté depuis.
-function inv_bobines_recompte_apres(int $site_id, string $date): ?string {
+//    d'avant, un point validé ou corrigé après coup déduirait ce qui était
+//    déjà absent au comptage, un point rejeté en remettrait.
+//    $table : inventaires_bobines | inventaires_rivets | inventaires_pmma.
+//    $inclus = false : inventaire daté strictement d'après $date (clôture
+//    de journée, cf. _site_bloque_ecart()).
+//    Renvoie la date du dernier inventaire validé concerné, ou null.
+function inv_recompte_apres(string $table, int $site_id, string $date, bool $inclus = true): ?string {
     if ($site_id <= 0 || $date === '') return null;
+    $op = $inclus ? '>=' : '>';
     $d = db_fetch_value(
-        "SELECT MAX(date_inventaire) FROM inventaires_bobines
-          WHERE site_id = ? AND statut = 'valide' AND date_inventaire > ?",
+        "SELECT MAX(date_inventaire) FROM $table
+          WHERE site_id = ? AND statut = 'valide' AND date_inventaire $op ?",
         [$site_id, $date]
     );
     return $d ? (string)$d : null;
+}
+
+function inv_bobines_recompte_apres(int $site_id, string $date, bool $inclus = true): ?string {
+    return inv_recompte_apres('inventaires_bobines', $site_id, $date, $inclus);
 }
 
 // ── Phrase commune aux messages du garde-fou.
