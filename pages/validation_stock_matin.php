@@ -318,8 +318,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     $stock_av = max(0, (int)$e['films_restants']); // ERP EMUCI avant ajust.
                     $nouveau  = max(0, (int)$e['stock_systeme']);   // cible = valeur EMUCI
                     $diff     = $nouveau - $stock_av;
-                    db_query("UPDATE op_bobines SET films_restants=? WHERE id=?",
-                        [$nouveau, $e['bobine_id']]);
+                    // Statut recalculé : une bobine « épuisée » remise à 19 films
+                    // restait épuisée, invisible des points journaliers.
+                    db_query("UPDATE op_bobines SET films_restants=?,
+                         statut = CASE WHEN statut='epuisee' AND ? > 0 THEN 'en_cours'
+                                       WHEN statut='en_cours' AND ? <= 0 THEN 'epuisee'
+                                       ELSE statut END WHERE id=?",
+                        [$nouveau, $nouveau, $nouveau, $e['bobine_id']]);
                     db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
                               VALUES (?,?,?,?,?,?,?)",
                         [$e['bobine_id'],'ajustement_gsb',$diff,$stock_av,$nouveau,
@@ -495,7 +500,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 $stock_av = (int)db_fetch_value("SELECT films_restants FROM op_bobines WHERE id=?", [$c['bobine_id']]);
                 $nouveau  = $inv_recompte !== null ? $stock_av : (int)$c['films_final'];
                 $diff     = $nouveau - $stock_av;
-                db_query("UPDATE op_bobines SET films_restants=? WHERE id=?", [$nouveau, $c['bobine_id']]);
+                db_query("UPDATE op_bobines SET films_restants=?,
+                         statut = CASE WHEN statut='epuisee' AND ? > 0 THEN 'en_cours'
+                                       WHEN statut='en_cours' AND ? <= 0 THEN 'epuisee'
+                                       ELSE statut END WHERE id=?",
+                         [$nouveau, $nouveau, $nouveau, $c['bobine_id']]);
                 if ($diff !== 0) {
                     db_query(
                         "INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
@@ -591,7 +600,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     $nouveau  = $inv_recompte !== null ? $stock_av : (int)$corr['films_final'];
                     $diff     = $nouveau - $stock_av;
                     // Appliquer la valeur corrigée au stock physique
-                    db_query("UPDATE op_bobines SET films_restants=? WHERE id=?", [$nouveau, $bobine_id]);
+                    db_query("UPDATE op_bobines SET films_restants=?,
+                         statut = CASE WHEN statut='epuisee' AND ? > 0 THEN 'en_cours'
+                                       WHEN statut='en_cours' AND ? <= 0 THEN 'epuisee'
+                                       ELSE statut END WHERE id=?",
+                        [$nouveau, $nouveau, $nouveau, $bobine_id]);
                     if ($diff !== 0) {
                         db_query(
                             "INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
