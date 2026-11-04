@@ -13,7 +13,7 @@ require_once __DIR__ . '/../includes/session.php';
 require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
-// ach_debiter_stock_magasin() : contrepartie du décrément global à l'expédition.
+// Débit du stock article : dépôt (entrepôt/magasin) choisi ligne par ligne à l'expédition.
 require_once __DIR__ . '/../includes/achats.php';
 require_once __DIR__ . '/../includes/referentiels.php';
 // Lignes « bobine » : choix des bobines par le GSB, affectation à la réception.
@@ -39,10 +39,12 @@ $site_force    = ($is_coord && $user['site_id']) ? (int)$user['site_id'] : 0;
 require_permission('commandes', 'can_read');
 $can_create    = can('commandes', 'can_create');
 $sites_list    = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
-// Dépôts depuis lesquels le gestionnaire peut expédier du PMMA/des rivets
-// (Entrepôt et Stock-Siège) — choisi à l'émission de la livraison, cf.
-// action 'emettre_livraison'.
-$depots_list   = db_fetch_all("SELECT id,nom FROM sites WHERE type IN ('entrepot','magasin') AND actif=1 ORDER BY nom");
+// Dépôts depuis lesquels le gestionnaire expédie (entrepôt, magasin) —
+// choisis LIGNE PAR LIGNE à l'émission de la livraison, cf. action
+// 'emettre_livraison' : chaque quantité est débitée du dépôt d'où elle sort.
+$depots_list   = db_fetch_all("SELECT id,nom,type FROM sites WHERE type IN ('entrepot','magasin') AND actif=1 ORDER BY type, nom");
+// Types de ligne débités d'un dépôt choisi à l'expédition.
+const CMD_TYPES_DEPOT = ['article', 'pmma', 'rivet'];
 
 // ============================================================
 //  AJAX
@@ -485,17 +487,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // au choix du gestionnaire qui sait physiquement d'où il expédie) :
         // pas de débit silencieux d'un site au hasard, et pas de stock qui
         // apparaît sans contrepartie si le dépôt choisi n'a pas la quantité.
-        $besoin_depot = false;
+        // Le dépôt est choisi pour chaque ligne (entrepôt ou magasin) ; le
+        // dépôt global de l'ancien écran ne sert plus que de repli.
+        $depots_ok  = array_map('intval', array_column($depots_list, 'id'));
+        $depot_map  = [];   // ligne_id => site_id débité
         foreach ($lignes_liv as $l) {
-            $ta = $type_article_map[(int)($l['ligne_id'] ?? 0)] ?? '';
-            if (in_array($ta, ['pmma','rivet'], true) && (int)($l['quantite_livree'] ?? 0) > 0) { $besoin_depot = true; break; }
-        }
-        if ($besoin_depot) {
-            if (!$depot_source_id) json_response(false, 'Dépôt source obligatoire pour les lignes PMMA/Rivets.');
-            $depot_ok = (int)(db_fetch_value(
-                "SELECT COUNT(*) FROM sites WHERE id=? AND type IN ('entrepot','magasin')", [$depot_source_id]
-            ) ?? 0);
-            if (!$depot_ok) json_response(false, 'Dépôt source invalide.');
+            $lid = (int)($l['ligne_id'] ?? 0);
+            $ta  = $type_article_map[$lid] ?? '';
+            if (!in_array($ta, CMD_TYPES_DEPOT, true) || (int)($l['quantite_livree'] ?? 0) <= 0) continue;
+            if ($ta === 'article' && empty($l['article_id'])) continue;   // saisie libre : rien à débiter
+            $dep = (int)($l['depot_id'] ?? 0) ?: $depot_source_id;
+            if (!$dep) json_response(false, "Choisissez d'où sort « " . ($l['libelle'] ?? 'la ligne') . " » (entrepôt ou magasin).");
+            if (!in_array($dep, $depots_ok, true)) json_response(false, 'Dépôt source invalide pour « ' . ($l['libelle'] ?? '') . ' ».');
+            $depot_map[$lid] = $dep;
         }
 
         db_begin();
@@ -547,17 +551,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     );
                     // Décrémenter stock central articles
                     if ($ta === 'article' && !empty($l['article_id'])) {
+                        // Débit du dépôt choisi pour la ligne (entrepôt ou
+                        // magasin), bloquant comme pour le PMMA et les rivets :
+                        // mieux vaut arrêter l'expédition que sortir du stock
+                        // d'un dépôt qui ne l'a pas.
+                        $dep_art   = $depot_map[(int)$l['ligne_id']];
+                        $stock_dep = (int)(db_fetch_value(
+                            "SELECT quantite FROM stock_site WHERE article_id=? AND site_id=? FOR UPDATE",
+                            [(int)$l['article_id'], $dep_art]
+                        ) ?? 0);
+                        if ($stock_dep < $q_liv)
+                            throw new Exception("Stock insuffisant pour « " . ($l['libelle'] ?? '') . " » au dépôt choisi : $stock_dep disponible(s), $q_liv requis.");
+                        db_query("UPDATE stock_site SET quantite=quantite-? WHERE article_id=? AND site_id=?",
+                            [$q_liv, (int)$l['article_id'], $dep_art]);
                         db_query("UPDATE articles SET stock_global = GREATEST(0, stock_global - ?) WHERE id=?",
                             [$q_liv, (int)$l['article_id']]);
-                        // …et sa contrepartie au magasin : le décrément global
-                        // seul laissait stock_site inchangé côté source, donc
-                        // ach_stock_magasin() proposait encore des unités déjà
-                        // parties.
-                        $deb = ach_debiter_stock_magasin((int)$l['article_id'], $q_liv);
-                        if ($deb['manquant'] > 0) {
-                            $manques[] = ($l['libelle'] ?? "article #{$l['article_id']}")
-                                       . " : {$deb['manquant']} non couvert(s) par le stock magasin";
-                        }
                     }
                     // Débit du dépôt source pour rivets/PMMA — contrepartie
                     // du crédit fait au site à la réception (action
@@ -565,6 +573,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     // quantité : mieux vaut arrêter l'expédition que livrer
                     // un site avec un stock qui ne serait jamais sorti de
                     // nulle part.
+                    $depot_ligne = $depot_map[(int)($l['ligne_id'] ?? 0)] ?? 0;
+                    if ($depot_ligne) {
+                        db_query("UPDATE commande_lignes SET depot_source_id=? WHERE id=?", [$depot_ligne, (int)$l['ligne_id']]);
+                    }
                     if ($ta === 'rivet') {
                         $lib_norm = strtolower(str_replace(
                             ['é','è','ê','ë','É','È','Ê','Ë'],
@@ -574,12 +586,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                         $type_rivet = (strpos($lib_norm, 'eclat') !== false) ? 'eclate' : 'gonflable';
                         $stock_dep  = (int)(db_fetch_value(
                             "SELECT quantite FROM op_stock_rivets WHERE site_id=? AND type_rivet=?",
-                            [$depot_source_id, $type_rivet]
+                            [$depot_ligne, $type_rivet]
                         ) ?? 0);
                         if ($stock_dep < $q_liv)
                             throw new Exception("Stock dépôt insuffisant pour les rivets $type_rivet : $stock_dep disponible(s), $q_liv requis.");
                         db_query("UPDATE op_stock_rivets SET quantite=quantite-? WHERE site_id=? AND type_rivet=?",
-                            [$q_liv, $depot_source_id, $type_rivet]);
+                            [$q_liv, $depot_ligne, $type_rivet]);
                     } elseif ($ta === 'pmma') {
                         $type_pmma = resoudre_type_pmma($l['libelle'] ?? '')
                                   ?? trim(preg_replace('/^PMMA\s*/i', '', $l['libelle'] ?? ''));
@@ -588,12 +600,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                             $q_unites  = pmma_qte_en_unites($type_pmma, $unite_map[(int)($l['ligne_id'] ?? 0)] ?? null, $q_liv);
                             $stock_dep = (int)(db_fetch_value(
                                 "SELECT quantite FROM stock_pmma_site WHERE site_id=? AND type_pmma=?",
-                                [$depot_source_id, $type_pmma]
+                                [$depot_ligne, $type_pmma]
                             ) ?? 0);
                             if ($stock_dep < $q_unites)
                                 throw new Exception("Stock dépôt insuffisant pour PMMA $type_pmma : $stock_dep unité(s) disponible(s), $q_unites requise(s).");
                             db_query("UPDATE stock_pmma_site SET quantite=quantite-? WHERE site_id=? AND type_pmma=?",
-                                [$q_unites, $depot_source_id, $type_pmma]);
+                                [$q_unites, $depot_ligne, $type_pmma]);
                         }
                     }
                 }
@@ -612,7 +624,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             }
             db_query(
                 "UPDATE commandes SET statut='en_cours_livraison',livraison_par=?,livraison_at=NOW(),notes_livraison=?,depot_source_id=? WHERE id=?",
-                [$user['id'],$notes_liv,$depot_source_id ?: null,$cmd_id]
+                // Un seul dépôt pour toute la commande : on le garde aussi ici ;
+                // plusieurs : le détail est sur chaque ligne.
+                [$user['id'],$notes_liv,count(array_unique($depot_map)) === 1 ? reset($depot_map) : null,$cmd_id]
             );
 
             // Notifier coordinateur
@@ -823,17 +837,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     // l'action 'emettre_livraison' plus haut, pour que ce qui est affiché
     // corresponde exactement à ce qui sera vérifié à la confirmation.
     if ($action === 'get_stock_depot') {
-        $cmd_id   = (int)($_POST['cmd_id']   ?? 0);
-        $depot_id = (int)($_POST['depot_id'] ?? 0);
+        $cmd_id = (int)($_POST['cmd_id'] ?? 0);
         $out = [];
-        if ($depot_id) {
-            $lignes = db_fetch_all(
-                "SELECT id, type_article, libelle, unite FROM commande_lignes
-                 WHERE commande_id=? AND type_article IN ('pmma','rivet')",
-                [$cmd_id]
-            );
-            foreach ($lignes as $l) {
-                if ($l['type_article'] === 'rivet') {
+        $lignes = db_fetch_all(
+            "SELECT id, article_id, type_article, libelle, unite FROM commande_lignes
+             WHERE commande_id=? AND type_article IN ('article','pmma','rivet')",
+            [$cmd_id]
+        );
+        foreach ($lignes as $l) {
+            $stocks = [];
+            foreach ($depots_list as $d) {
+                $dep = (int)$d['id'];
+                if ($l['type_article'] === 'article') {
+                    $stock = (int)(db_fetch_value(
+                        "SELECT quantite FROM stock_site WHERE article_id=? AND site_id=?",
+                        [(int)$l['article_id'], $dep]) ?? 0);
+                } elseif ($l['type_article'] === 'rivet') {
                     $lib_norm = strtolower(str_replace(
                         ['é','è','ê','ë','É','È','Ê','Ë'],
                         ['e','e','e','e','e','e','e','e'],
@@ -842,22 +861,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     $type = (strpos($lib_norm, 'eclat') !== false) ? 'eclate' : 'gonflable';
                     $stock = (int)(db_fetch_value(
                         "SELECT quantite FROM op_stock_rivets WHERE site_id=? AND type_rivet=?",
-                        [$depot_id, $type]
-                    ) ?? 0);
+                        [$dep, $type]) ?? 0);
                 } else {
                     $type = resoudre_type_pmma($l['libelle'])
                          ?? trim(preg_replace('/^PMMA\s*/i', '', $l['libelle']));
                     $stock = (int)(db_fetch_value(
                         "SELECT quantite FROM stock_pmma_site WHERE site_id=? AND type_pmma=?",
-                        [$depot_id, $type]
-                    ) ?? 0);
+                        [$dep, $type]) ?? 0);
                     // Ligne en cartons : afficher le dépôt en cartons pleins
                     // pour le comparer à la quantité saisie.
                     $par_carton = pmma_qte_en_unites($type, $l['unite'] ?? null, 1);
                     if ($par_carton > 1) $stock = intdiv($stock, $par_carton);
                 }
-                $out[] = ['ligne_id' => (int)$l['id'], 'stock_depot' => $stock];
+                $stocks[$dep] = $stock;
             }
+            $out[] = ['ligne_id' => (int)$l['id'], 'stocks' => $stocks];
         }
         json_response(true, '', $out);
     }
@@ -1918,16 +1936,6 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
       Si la quantité livrée diffère de la quantité commandée, une <strong>justification est obligatoire</strong>.
     </div>
     <div id="lignesLivraison"></div>
-    <div class="form-group" id="depotSourceGrp" style="margin:14px 0;display:none">
-      <label>Dépôt source (PMMA / Rivets) *</label>
-      <select class="form-control" id="depotSource" onchange="majStockDepot()">
-        <option value="">— Sélectionner —</option>
-        <?php foreach($depots_list as $d): ?>
-        <option value="<?= $d['id'] ?>"><?= h($d['nom']) ?></option>
-        <?php endforeach; ?>
-      </select>
-      <div style="font-size:12px;color:var(--muted);margin-top:4px">D'où ce PMMA/ces rivets sortent physiquement.</div>
-    </div>
     <div class="form-group" style="margin:14px 0">
       <label>Notes de livraison</label>
       <textarea class="form-control" id="notesLivraison" rows="2" placeholder="Informations expédition, transporteur…"></textarea>
@@ -2647,9 +2655,6 @@ async function ouvrirLivraison(cmdId,numCmd){
   document.getElementById('notesLivraison').value='';
   const d=await ap({action:'get_lignes',cmd_id:cmdId});
   lignesCmd=d.data||[];
-  const besoinDepot=lignesCmd.some(l=>l.type_article==='pmma'||l.type_article==='rivet');
-  document.getElementById('depotSourceGrp').style.display=besoinDepot?'block':'none';
-  document.getElementById('depotSource').value='';
   depotStockCache={};
   document.getElementById('lignesLivraison').innerHTML=lignesCmd.map((l,i)=>`
     <div style="background:#f8f9fa;border-radius:10px;padding:13px;margin-bottom:8px">
@@ -2657,7 +2662,13 @@ async function ouvrirLivraison(cmdId,numCmd){
         <div>
           <div style="font-size:13.5px;font-weight:700;color:var(--navy)">${l.libelle}</div>
           <div style="font-size:12px;color:var(--muted)">Commandé : <strong>${l.quantite}</strong> ${l.unite||''} · ${l.type_article||'article'}</div>
-          ${(l.type_article==='pmma'||l.type_article==='rivet')?`<div id="stockDepot${i}" style="font-size:12px;font-weight:700;margin-top:2px"></div>`:''}
+          ${ligneAvecDepot(l)?`<div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+            <label style="font-size:12px;font-weight:700;color:var(--navy);white-space:nowrap">Sortie depuis *</label>
+            <select class="form-control depot-liv" data-idx="${i}" onchange="this.style.borderColor='';rafraichirStockDepotAffichage()" style="border-radius:8px;font-size:12.5px;padding:4px 8px;height:auto">
+              <option value="">— Choisir —</option>
+              ${depotsData.map(d=>`<option value="${d.id}" ${d.id===depotParDefaut(l)?'selected':''}>${escB(d.nom)} (${d.type==='magasin'?'magasin':'entrepôt'})</option>`).join('')}
+            </select></div>
+            <div id="stockDepot${i}" style="font-size:12px;font-weight:700;margin-top:3px"></div>`:''}
           ${(estRouleau(l.type_article)&&(l.bobines||[]).length)?`<div style="font-size:12px;margin-top:3px;color:#075985">Bobines choisies par le GSB : <strong style="font-family:monospace">${l.bobines.map(b=>escB(b.numero)).join(', ')}</strong></div>`:''}
           ${l.statut_ligne==='rejete'?'<span style="background:#FEE2E2;color:#991B1B;padding:2px 7px;border-radius:8px;font-size:10.5px;font-weight:700">❌ Ligne rejetée — '+l.motif_rejet+'</span>':''}
         </div>
@@ -2678,6 +2689,7 @@ async function ouvrirLivraison(cmdId,numCmd){
       </div>
     </div>`).join('');
   document.getElementById('modalLivraison').style.display='flex';
+  majStockDepot();
 }
 function checkEcart(i){
   const qteInput=document.querySelector(`.qte-liv[data-idx="${i}"]`);
@@ -2689,35 +2701,44 @@ function checkEcart(i){
   else{motifGrp.style.display='none';okLabel.style.display='block';}
   rafraichirStockDepotAffichage();
 }
-// Stock du dépôt choisi pour chaque ligne PMMA/rivet, affiché en direct
-// dans le modal avant de confirmer — évite de découvrir "stock insuffisant"
-// seulement après avoir cliqué Expédier.
+// Dépôt de sortie choisi LIGNE PAR LIGNE (entrepôt ou magasin) : chaque
+// quantité est débitée du dépôt d'où elle part réellement. Le stock de la
+// ligne dans le dépôt choisi s'affiche en direct, pour ne pas découvrir
+// "stock insuffisant" seulement après avoir cliqué Expédier.
+const depotsData = <?= json_encode(array_map(fn($d) => ['id'=>(int)$d['id'],'nom'=>$d['nom'],'type'=>$d['type']], $depots_list)) ?>;
+const ligneAvecDepot = l => l.statut_ligne!=='rejete' && (l.type_article==='pmma'||l.type_article==='rivet'||((l.type_article||'article')==='article'&&l.article_id));
+// Proposition : magasin pour les articles, entrepôt pour PMMA/rivets ; le
+// gestionnaire corrige si la marchandise part d'ailleurs.
+function depotParDefaut(l){
+  const voulu=(l.type_article||'article')==='article'?'magasin':'entrepot';
+  const d=depotsData.find(x=>x.type===voulu)||(depotsData.length===1?depotsData[0]:null);
+  return d?d.id:null;
+}
 let depotStockCache={};
 async function majStockDepot(){
-  const depotId=document.getElementById('depotSource').value;
   depotStockCache={};
-  if(!depotId){ rafraichirStockDepotAffichage(); return; }
-  const d=await ap({action:'get_stock_depot',cmd_id:currentCmdId,depot_id:depotId});
-  (d.data||[]).forEach(s=>{ depotStockCache[s.ligne_id]=s.stock_depot; });
+  const d=await ap({action:'get_stock_depot',cmd_id:currentCmdId});
+  (d.data||[]).forEach(s=>{ depotStockCache[s.ligne_id]=s.stocks||{}; });
   rafraichirStockDepotAffichage();
 }
 function rafraichirStockDepotAffichage(){
   lignesCmd.forEach((l,i)=>{
-    if(l.type_article!=='pmma'&&l.type_article!=='rivet') return;
     const el=document.getElementById(`stockDepot${i}`);
-    if(!el) return;
-    if(!(l.id in depotStockCache)){ el.textContent=''; return; }
-    const stock=depotStockCache[l.id];
+    const sel=document.querySelector(`.depot-liv[data-idx="${i}"]`);
+    if(!el||!sel) return;
+    const stocks=depotStockCache[l.id];
+    if(!sel.value||!stocks||!(sel.value in stocks)){ el.textContent=''; return; }
+    const stock=stocks[sel.value];
     const qteInput=document.querySelector(`.qte-liv[data-idx="${i}"]`);
     const qteLiv=qteInput?parseInt(qteInput.value)||0:0;
     const insuffisant=stock<qteLiv;
     el.style.color=insuffisant?'var(--danger-d)':'var(--success-d)';
-    el.textContent=`Disponible au dépôt : ${stock} ${l.unite||""}`+(insuffisant?' ⚠️ insuffisant':'');
+    el.textContent=`Disponible : ${stock} ${l.unite||""}`+(insuffisant?' ⚠️ insuffisant':'');
   });
 }
 async function confirmerLivraison(){
   const qteInputs=document.querySelectorAll('.qte-liv');
-  const lignesData=[]; let valid=true;
+  const lignesData=[]; let valid=true; let sansDepot=0;
   qteInputs.forEach(inp=>{
     const i=parseInt(inp.dataset.idx);
     const qteLiv=parseInt(inp.value)||0;
@@ -2725,6 +2746,8 @@ async function confirmerLivraison(){
     const motifEl=document.querySelector(`.motif-ecart[data-idx="${i}"]`);
     const motif=motifEl?motifEl.value.trim():'';
     if(qteLiv!==qteCmd&&!motif){inp.style.borderColor='var(--danger-d)';valid=false;}
+    const depEl=document.querySelector(`.depot-liv[data-idx="${i}"]`);
+    if(depEl&&qteLiv>0&&!depEl.value){depEl.style.borderColor='var(--danger-d)';sansDepot++;}
     lignesData.push({
       ligne_id:lignesCmd[i]?.id,
       article_id:lignesCmd[i]?.article_id||null,
@@ -2732,17 +2755,16 @@ async function confirmerLivraison(){
       quantite:qteCmd,
       unite:lignesCmd[i]?.unite||'unité',
       quantite_livree:qteLiv,
-      motif_ecart:motif||null
+      motif_ecart:motif||null,
+      depot_id:depEl&&depEl.value?parseInt(depEl.value):null
     });
   });
   if(!valid){document.getElementById('alertLivraison').innerHTML='<div class="alert alert-danger">Justification obligatoire pour les écarts.</div>';return;}
-  const depotGrp=document.getElementById('depotSourceGrp');
-  const depotSource=document.getElementById('depotSource').value;
-  if(depotGrp.style.display!=='none' && !depotSource){
-    document.getElementById('alertLivraison').innerHTML='<div class="alert alert-danger">Sélectionnez le dépôt source (PMMA/Rivets).</div>';
+  if(sansDepot){
+    document.getElementById('alertLivraison').innerHTML=`<div class="alert alert-danger">Choisissez d'où sort chaque ligne (entrepôt ou magasin) : ${sansDepot} ligne(s) sans dépôt.</div>`;
     return;
   }
-  const d=await ap({action:'emettre_livraison',cmd_id:currentCmdId,notes_livraison:document.getElementById('notesLivraison').value,lignes:JSON.stringify(lignesData),depot_source_id:depotSource});
+  const d=await ap({action:'emettre_livraison',cmd_id:currentCmdId,notes_livraison:document.getElementById('notesLivraison').value,lignes:JSON.stringify(lignesData)});
   if(d.success){toast(d.message,'success');fermer('Livraison');setTimeout(()=>location.reload(),800);}
   else document.getElementById('alertLivraison').innerHTML=`<div class="alert alert-danger">${d.message}</div>`;
 }
