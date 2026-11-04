@@ -10,6 +10,7 @@ require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/upload.php';
+require_once __DIR__ . '/../includes/achats.php';
 
 require_auth();
 require_permission('consommables', 'can_read');
@@ -139,11 +140,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
                         }
 
                         if ($site_id !== null) {
+                            $ancienne = (int)(db_fetch_value(
+                                "SELECT quantite FROM stock_site WHERE article_id=? AND site_id=?",
+                                [$article_id, $site_id]) ?? 0);
                             db_query(
                                 "INSERT INTO stock_site (article_id,site_id,quantite) VALUES (?,?,?)
                                  ON DUPLICATE KEY UPDATE quantite=VALUES(quantite)",
                                 [$article_id, $site_id, $qte_site]
                             );
+                            // Un stock posé au magasin est du stock central
+                            // distribuable : sans ce report, l'article restait
+                            // à 0 dans la liste et la Distribution le refusait.
+                            $est_magasin = (bool)db_fetch_value(
+                                "SELECT COUNT(*) FROM sites WHERE id=? AND type='magasin'", [$site_id]);
+                            if ($est_magasin && $qte_site !== $ancienne) {
+                                db_query("UPDATE articles SET stock_global = GREATEST(0, stock_global + ?) WHERE id=?",
+                                    [$qte_site - $ancienne, $article_id]);
+                            }
                         }
                         $nb_ok++;
                     }
@@ -262,7 +275,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             }
 
             // Compat legacy : enregistrer aussi dans receptions_consommables si elle existe
-            $has_old = (bool)db_fetch_value("SELECT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='receptions_consommables') > 0");
+            $has_old = (bool)db_fetch_value("SELECT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='receptions_consommables') > 0")
+                // Table historique liée par clé étrangère à `consommables` :
+                // un article du catalogue actuel n'y existe pas, l'insertion
+                // faisait échouer toute la réception.
+                && (bool)db_fetch_value("SELECT COUNT(*) FROM consommables WHERE id=?", [$article_id]);
             if ($has_old) {
                 db_query(
                     "INSERT INTO receptions_consommables (consommable_id,quantite,prix_unitaire,prix_total,date_reception,fournisseur,numero_bon,notes,created_by)
@@ -274,6 +291,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             // Mettre à jour stock global
             db_query("UPDATE articles SET stock_global = stock_global + ?, prix_unitaire = CASE WHEN ? > 0 THEN ? ELSE prix_unitaire END WHERE id=?",
                 [$qte, $prix_unit, $prix_unit, $article_id]);
+            // La marchandise reçue entre physiquement au magasin : sans ce
+            // crédit, le stock central montait mais le site Magasin restait
+            // inchangé, et la Distribution suivante ne trouvait rien à sortir.
+            $magasin_id = (int)(db_fetch_value(
+                "SELECT id FROM sites WHERE type='magasin' AND actif=1 ORDER BY id LIMIT 1") ?? 0);
+            if ($magasin_id) {
+                db_query("INSERT INTO stock_site (article_id,site_id,quantite) VALUES (?,?,?)
+                          ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)",
+                    [$article_id, $magasin_id, $qte]);
+            }
 
             // Enregistrer mouvement
             $new_stock = (int)db_fetch_value("SELECT stock_global FROM articles WHERE id=?", [$article_id]);
@@ -322,7 +349,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             $num_dist = 'DS-'.date('Ymd').'-'.str_pad(rand(1,999),3,'0',STR_PAD_LEFT);
 
             // compat legacy livraisons_consommables
-            $has_lc = (bool)db_fetch_value("SELECT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='livraisons_consommables') > 0");
+            $has_lc = (bool)db_fetch_value("SELECT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='livraisons_consommables') > 0")
+                // Même garde que pour la réception : clé étrangère vers `consommables`.
+                && (bool)db_fetch_value("SELECT COUNT(*) FROM consommables WHERE id=?", [$article_id]);
             if ($has_lc) {
                 db_query(
                     "INSERT INTO livraisons_consommables (consommable_id,site_id,type_mouvement,quantite,prix_unitaire,prix_total,date_livraison,bon_livraison,fichier_bl,notes,created_by)
@@ -351,6 +380,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
             // Stock global -
             db_query("UPDATE articles SET stock_global = stock_global - ? WHERE id=?", [$qte, $article_id]);
+            // …et la même quantité sort physiquement du magasin (même règle
+            // que l'expédition d'une commande, pages/commandes.php). Un
+            // manque n'est pas bloquant : il est signalé dans l'audit.
+            $deb = ach_debiter_stock_magasin($article_id, $qte);
             // Stock site +
             db_query("INSERT INTO stock_site (article_id,site_id,quantite) VALUES (?,?,?) ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)",
                 [$article_id,$site_id,$qte]);
@@ -379,7 +412,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     null, '/pages/articles.php', false);
             }
             audit_log($user['id'], 'CREATE', 'articles', $article_id,
-                "Distribution $qte {$article['unite']}(s) → site:$site_id (BL:{$upload_bl['filename']})");
+                "Distribution $qte {$article['unite']}(s) → site:$site_id (BL:{$upload_bl['filename']})"
+                . ($deb['manquant'] > 0 ? " — {$deb['manquant']} non couvert(s) par le stock magasin" : ''));
             db_commit();
             json_response(true, "Distribution de $qte {$article['unite']}(s) enregistrée. Stock restant : $new_stock.");
         } catch (Exception $e) {
