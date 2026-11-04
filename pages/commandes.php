@@ -476,6 +476,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             db_fetch_all("SELECT id, type_article FROM commande_lignes WHERE commande_id=?", [$cmd_id]),
             'type_article', 'id'
         );
+        $unite_map = array_column(
+            db_fetch_all("SELECT id, unite FROM commande_lignes WHERE commande_id=?", [$cmd_id]),
+            'unite', 'id'
+        );
         // PMMA et rivets viennent d'un dépôt réel (Entrepôt ou Stock-Siège,
         // au choix du gestionnaire qui sait physiquement d'où il expédie) :
         // pas de débit silencieux d'un site au hasard, et pas de stock qui
@@ -579,14 +583,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                         $type_pmma = resoudre_type_pmma($l['libelle'] ?? '')
                                   ?? trim(preg_replace('/^PMMA\s*/i', '', $l['libelle'] ?? ''));
                         if ($type_pmma) {
+                            // Ligne en cartons : le stock, lui, est en unités.
+                            $q_unites  = pmma_qte_en_unites($type_pmma, $unite_map[(int)($l['ligne_id'] ?? 0)] ?? null, $q_liv);
                             $stock_dep = (int)(db_fetch_value(
                                 "SELECT quantite FROM stock_pmma_site WHERE site_id=? AND type_pmma=?",
                                 [$depot_source_id, $type_pmma]
                             ) ?? 0);
-                            if ($stock_dep < $q_liv)
-                                throw new Exception("Stock dépôt insuffisant pour PMMA $type_pmma : $stock_dep disponible(s), $q_liv requis.");
+                            if ($stock_dep < $q_unites)
+                                throw new Exception("Stock dépôt insuffisant pour PMMA $type_pmma : $stock_dep unité(s) disponible(s), $q_unites requise(s).");
                             db_query("UPDATE stock_pmma_site SET quantite=quantite-? WHERE site_id=? AND type_pmma=?",
-                                [$q_liv, $depot_source_id, $type_pmma]);
+                                [$q_unites, $depot_source_id, $type_pmma]);
                         }
                     }
                 }
@@ -726,7 +732,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
             // Mettre à jour stock PMMA (+)
             $lignes_pmma = db_fetch_all(
-                "SELECT cl.libelle, cl.quantite_livree AS qte
+                "SELECT cl.libelle, cl.unite, cl.quantite_livree AS qte
                  FROM commande_lignes cl
                  WHERE cl.commande_id=? AND cl.type_article='pmma' AND cl.quantite_livree > 0",
                 [$cmd_id]
@@ -740,7 +746,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 $type_pmma = resoudre_type_pmma($lr['libelle'])
                           ?? trim(preg_replace('/^PMMA\s*/i', '', $lr['libelle']));
                 if ($type_pmma) {
-                    $qte_liv   = (int)$lr['qte'];
+                    $qte_liv   = pmma_qte_en_unites($type_pmma, $lr['unite'] ?? null, (int)$lr['qte']);
                     db_query(
                         "INSERT INTO stock_pmma_site (site_id, type_pmma, quantite) VALUES (?,?,?)
                          ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)",
@@ -821,7 +827,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $out = [];
         if ($depot_id) {
             $lignes = db_fetch_all(
-                "SELECT id, type_article, libelle FROM commande_lignes
+                "SELECT id, type_article, libelle, unite FROM commande_lignes
                  WHERE commande_id=? AND type_article IN ('pmma','rivet')",
                 [$cmd_id]
             );
@@ -844,6 +850,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                         "SELECT quantite FROM stock_pmma_site WHERE site_id=? AND type_pmma=?",
                         [$depot_id, $type]
                     ) ?? 0);
+                    // Ligne en cartons : afficher le dépôt en cartons pleins
+                    // pour le comparer à la quantité saisie.
+                    $par_carton = pmma_qte_en_unites($type, $l['unite'] ?? null, 1);
+                    if ($par_carton > 1) $stock = intdiv($stock, $par_carton);
                 }
                 $out[] = ['ligne_id' => (int)$l['id'], 'stock_depot' => $stock];
             }
@@ -2689,7 +2699,7 @@ function rafraichirStockDepotAffichage(){
     const qteLiv=qteInput?parseInt(qteInput.value)||0:0;
     const insuffisant=stock<qteLiv;
     el.style.color=insuffisant?'var(--danger-d)':'var(--success-d)';
-    el.textContent=`Disponible au dépôt : ${stock}`+(insuffisant?' ⚠️ insuffisant':'');
+    el.textContent=`Disponible au dépôt : ${stock} ${l.unite||""}`+(insuffisant?' ⚠️ insuffisant':'');
   });
 }
 async function confirmerLivraison(){

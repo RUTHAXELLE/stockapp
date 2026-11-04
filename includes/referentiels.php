@@ -74,9 +74,9 @@ function capacite_bobine_serie(string $serie, int $defaut = 500): int {
 /**
  * Unités de PMMA contenues dans un carton du type donné.
  *
- * Le stock et la saisie restent comptés en unités : cette valeur ne sert
- * qu'à convertir un besoin en nombre de cartons à commander. Elle ne doit
- * jamais entrer dans une déduction de stock.
+ * Le stock et la saisie restent comptés en unités : cette valeur sert à
+ * convertir un besoin en cartons, et une ligne de commande passée en
+ * cartons en unités de stock (cf. pmma_qte_en_unites()).
  */
 function capacite_carton_pmma(string $type_pmma, int $defaut = 25): int {
     static $cache = [];
@@ -87,6 +87,18 @@ function capacite_carton_pmma(string $type_pmma, int $defaut = 25): int {
             "SELECT unites_par_carton FROM op_types_pmma WHERE code = ?", [$k]);
     }
     return $cache[$k] ?? $defaut;
+}
+
+/**
+ * Quantité d'une ligne de commande PMMA ramenée en unités de stock.
+ * Le stock PMMA est compté en unités : une ligne saisie en CARTON doit être
+ * multipliée par la capacité du carton, sinon 50 cartons commandés
+ * deviennent 50 unités (un seul carton) au dépôt comme sur le site.
+ */
+function pmma_qte_en_unites(string $type_pmma, ?string $unite, int $qte): int {
+    return strtoupper(trim((string)$unite)) === 'CARTON'
+        ? $qte * capacite_carton_pmma($type_pmma)
+        : $qte;
 }
 
 /**
