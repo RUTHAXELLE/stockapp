@@ -16,6 +16,20 @@
 //  ligne bobine garde l'ancien fonctionnement (aucune affectation).
 // ============================================================
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/referentiels.php';
+
+/** Types de ligne servis par des rouleaux précis choisis à l'entrepôt : bobines (A-D) et vignettes (TL, WSL). */
+const CMDBOB_TYPES = ['bobine', 'vignette'];
+const CMDBOB_TYPES_SQL = "('bobine','vignette')";
+
+function cmdbob_est_rouleau(?string $type_article): bool {
+    return in_array($type_article, CMDBOB_TYPES, true);
+}
+
+/** Mot pour le contenu d'un rouleau : films (bobine) ou vignettes. */
+function cmdbob_mot(array $l): string {
+    return ($l['type_article'] ?? '') === 'vignette' ? 'vignettes' : 'films';
+}
 
 /** Une bobine compte 500 films à l'origine — certaines démarrent à 497, 498 ou 499. */
 const CMDBOB_FILMS_BOBINE = 500;
@@ -72,9 +86,18 @@ function cmdbob_en_bobines(array $l): bool {
     return strtoupper(trim((string)($l['unite'] ?? ''))) === 'BOBINE';
 }
 
-/** Films demandés par la ligne : N bobines = N × 500 films. */
+/**
+ * Contenu d'un rouleau neuf du type de la ligne (op_types_bobines.films_par_bobine) :
+ * 500 films pour une bobine A-D, 2000 vignettes pour un rouleau TL/WSL.
+ */
+function cmdbob_films_bobine(array $l): int {
+    $code = cmdbob_type_code((int)($l['article_id'] ?? 0));
+    return $code !== null ? capacite_bobine($code, CMDBOB_FILMS_BOBINE) : CMDBOB_FILMS_BOBINE;
+}
+
+/** Films (ou vignettes) demandés par la ligne : N rouleaux = N × contenu du type. */
 function cmdbob_films_demandes(array $l): int {
-    return (int)$l['quantite'] * (cmdbob_en_bobines($l) ? CMDBOB_FILMS_BOBINE : 1);
+    return (int)$l['quantite'] * (cmdbob_en_bobines($l) ? cmdbob_films_bobine($l) : 1);
 }
 
 /**
@@ -86,18 +109,20 @@ function cmdbob_films_demandes(array $l): int {
  */
 function cmdbob_controle(array $l, array $bobines): ?string {
     $cible  = cmdbob_films_demandes($l);
+    $fb     = cmdbob_films_bobine($l);
+    $mot    = cmdbob_mot($l);
     $somme  = 0;
     $tolere = 0;
     foreach ($bobines as $b) {
         $somme  += (int)$b['stock_systeme'];
-        $tolere += min(CMDBOB_MANQUE_INITIAL_MAX, max(0, CMDBOB_FILMS_BOBINE - (int)$b['qte_initiale']));
+        $tolere += min(CMDBOB_MANQUE_INITIAL_MAX, max(0, $fb - (int)$b['qte_initiale']));
     }
     if ($somme > $cible)
-        return "Les bobines choisies totalisent $somme films : c'est " . ($somme - $cible)
-             . " de plus que les $cible films demandés.";
+        return "Les rouleaux choisis totalisent $somme $mot : c'est " . ($somme - $cible)
+             . " de plus que les $cible $mot demandés.";
     if ($somme < $cible - $tolere)
-        return "Les bobines choisies totalisent $somme films : il manque " . ($cible - $somme)
-             . " films pour atteindre les $cible demandés.";
+        return "Les rouleaux choisis totalisent $somme $mot : il manque " . ($cible - $somme)
+             . " $mot pour atteindre les $cible demandés.";
     return null;
 }
 
@@ -112,7 +137,7 @@ function cmdbob_lignes_a_choisir(int $cmd_id): int {
     if (!cmdbob_actif()) return 0;
     return (int)db_fetch_value(
         "SELECT COUNT(*) FROM commande_lignes cl
-         WHERE cl.commande_id=? AND cl.type_article='bobine' AND cl.statut_ligne='valide'
+         WHERE cl.commande_id=? AND cl.type_article IN " . CMDBOB_TYPES_SQL . " AND cl.statut_ligne='valide'
            AND NOT EXISTS (SELECT 1 FROM commande_ligne_bobines clb
                            WHERE clb.commande_ligne_id = cl.id AND clb.statut = 'assigne')", [$cmd_id]);
 }

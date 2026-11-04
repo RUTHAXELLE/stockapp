@@ -243,7 +243,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 if ($nouvelle_qte < 1) json_response(false,"Quantité invalide pour \"{$ligne['libelle']}\".");
                 // Unité : celles du formulaire de commande ; une ligne bobine se
                 // commande en BOBINE ou en UNITE (films).
-                $unites_ok    = $ligne['type_article'] === 'bobine' ? ['BOBINE','UNITE'] : ['UNITE','CARTON','BOBINE','BOITE'];
+                $unites_ok    = cmdbob_est_rouleau($ligne['type_article']) ? ['BOBINE','UNITE'] : ['UNITE','CARTON','BOBINE','BOITE'];
                 $nouvelle_un  = strtoupper(trim((string)($l['unite'] ?? '')));
                 if ($nouvelle_un === '') $nouvelle_un = $ligne['unite'];
                 elseif (!in_array($nouvelle_un, $unites_ok, true))
@@ -313,7 +313,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!$is_gsb && !$is_gestionnaire) json_response(false, 'Accès refusé.');
         if (!cmdbob_actif()) json_response(false, "Migration commande_ligne_bobines non jouée sur cette base.");
         $ligne_id = (int)($_POST['ligne_id'] ?? 0);
-        $l = db_fetch_one("SELECT * FROM commande_lignes WHERE id=? AND type_article='bobine'", [$ligne_id]);
+        $l = db_fetch_one("SELECT * FROM commande_lignes WHERE id=? AND type_article IN " . CMDBOB_TYPES_SQL, [$ligne_id]);
         if (!$l) json_response(false, 'Ligne bobine introuvable.');
         $code = cmdbob_type_code((int)$l['article_id']);
         $dispo = db_fetch_all(
@@ -338,7 +338,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                                              'quantite' => (int)$l['quantite'], 'type' => $code,
                                              'en_bobines' => cmdbob_en_bobines($l),
                                              'films' => cmdbob_films_demandes($l),
-                                             'films_bobine' => CMDBOB_FILMS_BOBINE,
+                                             'films_bobine' => cmdbob_films_bobine($l),
+                                             'mot' => cmdbob_mot($l),
                                              'manque_max' => CMDBOB_MANQUE_INITIAL_MAX],
                                  'dispo' => $dispo, 'choisies' => $choisies]);
     }
@@ -351,7 +352,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $l = db_fetch_one(
             "SELECT cl.*, c.statut AS cmd_statut, c.numero_commande FROM commande_lignes cl
              JOIN commandes c ON c.id = cl.commande_id
-             WHERE cl.id=? AND cl.type_article='bobine' AND cl.statut_ligne='valide'", [$ligne_id]);
+             WHERE cl.id=? AND cl.type_article IN " . CMDBOB_TYPES_SQL . " AND cl.statut_ligne='valide'", [$ligne_id]);
         if (!$l || $l['cmd_statut'] !== 'en_attente_livraison')
             json_response(false, 'Ligne introuvable, non validée, ou commande qui n\'est plus à préparer.');
         if (!$ids) json_response(false, 'Choisissez au moins une bobine.');
@@ -415,7 +416,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         try {
             $libelles = [];
             foreach ($lids as $lid) {
-                $l = db_fetch_one("SELECT * FROM commande_lignes WHERE id=? AND commande_id=? AND type_article='bobine' AND statut_ligne='valide'", [$lid, $cmd_id]);
+                $l = db_fetch_one("SELECT * FROM commande_lignes WHERE id=? AND commande_id=? AND type_article IN " . CMDBOB_TYPES_SQL . " AND statut_ligne='valide'", [$lid, $cmd_id]);
                 if (!$l) throw new Exception("Ligne #$lid introuvable dans cette commande.");
                 db_query("DELETE FROM commande_ligne_bobines WHERE commande_ligne_id=? AND statut='assigne'", [$lid]);
                 audit_log($user['id'], 'UPDATE', 'commandes', $cmd_id, "Bobines à refaire [ligne {$lid}] « {$l['libelle']} » : {$motif}");
@@ -453,7 +454,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             json_response(false, "Le GSB doit d'abord choisir les bobines de $n_a_choisir ligne(s) bobine avant l'expédition.");
         if (cmdbob_actif()) {
             $lignes_bobine = array_column(db_fetch_all(
-                "SELECT id, quantite, unite FROM commande_lignes WHERE commande_id=? AND type_article='bobine'", [$cmd_id]), null, 'id');
+                "SELECT id, article_id, type_article, quantite, unite FROM commande_lignes WHERE commande_id=? AND type_article IN " . CMDBOB_TYPES_SQL, [$cmd_id]), null, 'id');
             foreach ($lignes_liv as &$_l) {
                 $_lb = $lignes_bobine[(int)($_l['ligne_id'] ?? 0)] ?? null;
                 if ($_lb) $_l['quantite_livree'] = cmdbob_qte_livree($_lb, $bob_par_ligne[(int)$_l['ligne_id']] ?? []);
@@ -797,7 +798,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $lgns = db_fetch_all("SELECT * FROM commande_lignes WHERE commande_id=? ORDER BY id", [$cmd_id]);
         $bob = cmdbob_par_ligne($cmd_id);
         $bob_recu = cmdbob_par_ligne($cmd_id, 'recu');
-        foreach ($lgns as &$_l) $_l['bobines'] = $_l['type_article'] === 'bobine'
+        foreach ($lgns as &$_l) $_l['bobines'] = cmdbob_est_rouleau($_l['type_article'])
             ? ($bob[(int)$_l['id']] ?? $bob_recu[(int)$_l['id']] ?? []) : [];
         unset($_l);
         json_response(true, '', ['cmd' => $det, 'lignes' => $lgns]);
@@ -810,7 +811,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             LEFT JOIN articles a ON a.id=cl.article_id WHERE cl.commande_id=? ORDER BY cl.id", [$cmd_id]);
         $bob = cmdbob_par_ligne($cmd_id);
         foreach ($lignes as &$_l) {
-            $_l['bobines'] = $_l['type_article'] === 'bobine' ? ($bob[(int)$_l['id']] ?? []) : [];
+            $_l['bobines'] = cmdbob_est_rouleau($_l['type_article']) ? ($bob[(int)$_l['id']] ?? []) : [];
             if ($_l['bobines']) $_l['qte_bobines'] = cmdbob_qte_livree($_l, $_l['bobines']);
         }
         unset($_l);
@@ -981,12 +982,15 @@ if (isset($_GET['export'], $_GET['id'])) {
                 break;
 
             case 'bobine':
-                // Stock = total films_restants des bobines en_stock sur ce site
+            case 'vignette':
+                // Stock = films (ou vignettes) restants des rouleaux en_stock
+                // de CE type sur ce site — sans filtre, bobines et vignettes
+                // s'additionnaient.
                 $ctx[$l['id']] = [
                     'stock_site' => (int)(db_fetch_value(
                         "SELECT COALESCE(SUM(films_restants),0) FROM op_bobines
-                         WHERE statut='en_stock' AND site_id=?",
-                        [$sid]) ?? 0),
+                         WHERE statut='en_stock' AND site_id=? AND type_code=?",
+                        [$sid, (string)cmdbob_type_code((int)$aid)]) ?? 0),
                     'derniere'   => $fn_derniere(),
                     'conso'      => $fn_conso(),
                 ];
@@ -1028,7 +1032,7 @@ $commandes = db_fetch_all(
             COUNT(l.id) AS nb_lignes,
             COALESCE(SUM(l.quantite*l.prix_unitaire),0) AS total_ht,
             SUM(CASE WHEN l.statut_ligne='rejete' THEN 1 ELSE 0 END) AS nb_rejets,
-            SUM(CASE WHEN l.type_article='bobine' AND l.statut_ligne='valide' THEN 1 ELSE 0 END) AS nb_lignes_bobine,
+            SUM(CASE WHEN l.type_article IN ('bobine','vignette') AND l.statut_ligne='valide' THEN 1 ELSE 0 END) AS nb_lignes_bobine,
             SUM(CASE WHEN l.quantite_livree IS NOT NULL AND l.quantite_livree != l.quantite THEN 1 ELSE 0 END) AS nb_ecarts
      FROM commandes c
      LEFT JOIN sites s ON s.id=c.site_id
@@ -1097,28 +1101,32 @@ foreach (db_fetch_all("SELECT DISTINCT type_pmma FROM stock_pmma_site WHERE quan
     ];
 }
 
-// ── Bobines : liste des TYPES de bobines (commande par type, pas par numéro individuel)
-$bobines_list = db_fetch_all(
-    "SELECT tb.id,
-            CONCAT(tb.code,' — ',tb.libelle) AS libelle,
-            'bobine' AS unite,
-            0 AS prix_unitaire,
-            -- Stock disponible en entrepôt pour ce type (bobines en_stock)
-            COALESCE((SELECT COUNT(*) FROM op_bobines b
-                      WHERE b.type_code=tb.code AND b.statut='en_stock'),0) AS stock_global,
-            0 AS stock_site,
-            -- Dernière quantité commandée pour ce type sur ce site
-            COALESCE((SELECT cl.quantite FROM commande_lignes cl
-                      JOIN commandes c ON c.id=cl.commande_id
-                      WHERE cl.type_article='bobine' AND cl.libelle LIKE CONCAT(tb.code,' %')
-                        AND (? = 0 OR c.site_id=?) AND c.statut NOT IN ('annule','rejete')
-                      ORDER BY c.created_at DESC LIMIT 1), 0) AS derniere,
-            0 AS conso
-     FROM op_types_bobines tb
-     WHERE tb.actif=1
-     ORDER BY tb.serie, tb.code",
-    [$_sid ?: 0, $_sid ?: 0]
-);
+// ── Bobines (séries A-D) et vignettes (TL, WSL) : liste des TYPES commandables
+//    (par type, pas par numéro). Les deux suivent le même circuit : le GSB
+//    choisit les rouleaux précis, qui passent au site à la réception.
+$fn_types_rouleaux = function (string $categorie) use ($_sid): array {
+    $series = $categorie === 'vignette' ? "('TL','WSL')" : "('A','B','C','D')";
+    return db_fetch_all(
+        "SELECT tb.id,
+                CONCAT(tb.code,' — ',tb.libelle) AS libelle,
+                'bobine' AS unite,
+                0 AS prix_unitaire,
+                COALESCE((SELECT COUNT(*) FROM op_bobines b
+                          WHERE b.type_code=tb.code AND b.statut='en_stock'),0) AS stock_global,
+                0 AS stock_site,
+                COALESCE((SELECT cl.quantite FROM commande_lignes cl
+                          JOIN commandes c ON c.id=cl.commande_id
+                          WHERE cl.type_article=? AND cl.libelle LIKE CONCAT(tb.code,' %')
+                            AND (? = 0 OR c.site_id=?) AND c.statut NOT IN ('annule','rejete')
+                          ORDER BY c.created_at DESC LIMIT 1), 0) AS derniere,
+                0 AS conso
+         FROM op_types_bobines tb
+         WHERE tb.actif=1 AND UPPER(TRIM(tb.serie)) IN $series
+         ORDER BY tb.serie, tb.code",
+        [$categorie, $_sid ?: 0, $_sid ?: 0]);
+};
+$bobines_list   = $fn_types_rouleaux('bobine');
+$vignettes_list = $fn_types_rouleaux('vignette');
 
 // ── Rivets : deux types (gonflable / eclate) avec stock et historique par type
 $rivet_types = [
@@ -1696,6 +1704,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
           <select class="form-control" id="aType" onchange="onTypeChange()" style="margin-top:4px">
             <option value="article">📦 Article</option>
             <option value="bobine">🎞️ Bobine</option>
+            <option value="vignette">🏷️ Vignette</option>
             <option value="pmma">🖨️ PMMA</option>
             <option value="rivet">🔩 Rivets</option>
             <option value="equipement_informatique">🖥️ Équipement Informatique</option>
@@ -2032,6 +2041,8 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
 // ── Data
 const articlesData = <?= json_encode(array_values($articles_dispo)) ?>;
 const bobinesData  = <?= json_encode(array_values($bobines_list)) ?>;
+const vignettesData = <?= json_encode(array_values($vignettes_list)) ?>;
+const estRouleau = t => t==='bobine' || t==='vignette';
 const pmmaData     = <?= json_encode(array_values($pmma_list)) ?>;
 const rivetData    = <?= json_encode($rivet_data) ?>;
 const equipDataInfo = <?= json_encode(array_values($equip_informatique_list)) ?>;
@@ -2268,8 +2279,8 @@ async function ouvrirCorrection(cmdId, numCmd) {
           <div>
             <label style="font-size:12px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Unité</label>
             <select class="form-control unite-correction" data-idx="${i}" style="padding:7px;border-radius:8px;font-size:13px;width:150px">
-              ${(l.type_article==='bobine' ? ['BOBINE','UNITE'] : ['UNITE','CARTON','BOBINE','BOITE']).map(u =>
-                `<option value="${u}" ${normaliserUnite(l.unite)===u?'selected':''}>${u}${l.type_article==='bobine'&&u==='UNITE'?' (films)':''}</option>`).join('')}
+              ${(estRouleau(l.type_article) ? ['BOBINE','UNITE'] : ['UNITE','CARTON','BOBINE','BOITE']).map(u =>
+                `<option value="${u}" ${normaliserUnite(l.unite)===u?'selected':''}>${u}${estRouleau(l.type_article)&&u==='UNITE'?(l.type_article==='vignette'?' (vignettes)':' (films)'):''}</option>`).join('')}
             </select>
           </div>
         </div>
@@ -2297,7 +2308,7 @@ function onTypeChange(){
   if(type==='autre'){grpA.style.display='none';grpL.style.display='block';return;}
   grpA.style.display='block'; grpL.style.display='none';
   sel.innerHTML='<option value="">— Sélectionner —</option>';
-  const map = {article:articlesData,bobine:bobinesData,pmma:pmmaData,rivet:rivetData,equipement_informatique:equipDataInfo,equipement_operationnel:equipDataOp};
+  const map = {article:articlesData,bobine:bobinesData,vignette:vignettesData,pmma:pmmaData,rivet:rivetData,equipement_informatique:equipDataInfo,equipement_operationnel:equipDataOp};
   (map[type]||[]).forEach(a=>{
     const lib=a.libelle||a.numero||'—';
     sel.innerHTML+=`<option value="${a.id||''}"
@@ -2492,7 +2503,7 @@ async function ouvrirBobines(cmdId, numCmd, lecture){
   document.getElementById('modalBobines').style.display = 'flex';
   document.getElementById('alertBobines').innerHTML = '';
   const d = await ap({action:'get_lignes', cmd_id:cmdId});
-  const lignes = (d.data||[]).filter(l => l.type_article==='bobine' && l.statut_ligne==='valide');
+  const lignes = (d.data||[]).filter(l => estRouleau(l.type_article) && l.statut_ligne==='valide');
   let html = '';
   for (const l of lignes) {
     const r = await ap({action:'get_bobines_ligne', ligne_id:l.id});
@@ -2500,7 +2511,8 @@ async function ouvrirBobines(cmdId, numCmd, lecture){
     const choisies = r.data.choisies||[], dispo = r.data.dispo||[];
     const items = [...choisies.map(b => ({...b, ch:true})), ...dispo.map(b => ({...b, ch:false}))];
     const lg = r.data.ligne;
-    const demande = lg.en_bobines ? `${lg.quantite} bobine(s), soit ${lg.films} films` : `${lg.films} films`;
+    const mot = lg.mot||'films', rouleaux = mot==='vignettes' ? 'rouleau(x)' : 'bobine(s)';
+    const demande = lg.en_bobines ? `${lg.quantite} ${rouleaux}, soit ${lg.films} ${mot}` : `${lg.films} ${mot}`;
     if (lecture) {
       const somme = choisies.reduce((t, b) => t + (parseInt(b.stock_systeme)||0), 0);
       html += `<div style="background:#f8f9fa;border-radius:10px;padding:13px;margin-bottom:10px">
@@ -2512,13 +2524,13 @@ async function ouvrirBobines(cmdId, numCmd, lecture){
         <div style="display:grid;gap:4px">${choisies.map(b => `
           <div style="display:flex;gap:8px;align-items:center;font-size:13px;padding:5px 8px;background:white;border-radius:6px">
             <span style="font-family:monospace;font-weight:700">${escB(b.numero)}</span>
-            <span style="color:#334155">${b.stock_systeme} films</span>
+            <span style="color:#334155">${b.stock_systeme} ${mot}</span>
           </div>`).join('')}</div>
-        <div style="font-size:12.5px;margin-top:8px;color:var(--success-d)">✅ ${choisies.length} bobine(s) · <strong>${somme}</strong> / ${lg.films} films — sélection validée</div>
+        <div style="font-size:12.5px;margin-top:8px;color:var(--success-d)">✅ ${choisies.length} ${rouleaux} · <strong>${somme}</strong> / ${lg.films} ${mot} — sélection validée</div>
       </div>`;
       continue;
     }
-    html += `<div style="background:#f8f9fa;border-radius:10px;padding:13px;margin-bottom:10px" data-ligne="${l.id}" data-cible="${lg.films}" data-fb="${lg.films_bobine}" data-mm="${lg.manque_max}">
+    html += `<div style="background:#f8f9fa;border-radius:10px;padding:13px;margin-bottom:10px" data-ligne="${l.id}" data-cible="${lg.films}" data-fb="${lg.films_bobine}" data-mm="${lg.manque_max}" data-mot="${mot}">
       <div style="font-size:13.5px;font-weight:700;color:var(--navy)">${escB(l.libelle)}</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Demandé : <strong>${demande}</strong> · type ${escB(lg.type||'?')}</div>
       ${lg.motif_refaire ? `<div style="background:#FFF7ED;border:1px solid #FED7AA;border-radius:8px;padding:8px 10px;margin-bottom:8px">
@@ -2531,7 +2543,7 @@ async function ouvrirBobines(cmdId, numCmd, lecture){
         <label class="bob-item" data-num="${escB(String(b.numero).toLowerCase())}" style="display:flex;gap:8px;align-items:center;font-size:13px;padding:5px 8px;background:white;border-radius:6px;cursor:pointer">
           <input type="checkbox" value="${b.id}" data-qs="${b.stock_systeme}" data-qi="${b.qte_initiale}" ${b.ch?'checked':''} onchange="compterBobines(this)">
           <span style="font-family:monospace;font-weight:700">${escB(b.numero)}</span>
-          <span style="color:#334155">${b.stock_systeme} films</span>
+          <span style="color:#334155">${b.stock_systeme} ${mot}</span>
           ${b.qte_initiale < lg.films_bobine ? `<span style="color:var(--muted);font-size:12px">(initiale ${b.qte_initiale})</span>` : ''}
         </label>`).join('')}</div>
         <div class="bob-vide" style="display:none;font-size:12.5px;color:var(--muted);padding:6px 2px">Aucune bobine ne correspond.</div>`
@@ -2570,7 +2582,8 @@ function compterBobines(el){
   const ecart = somme > cible ? ` · ${somme-cible} de trop` : (!ok && n ? ` · il manque ${cible-somme}` : '');
   const box = bloc.querySelector('.somme-bob');
   box.style.color = ok ? 'var(--success-d)' : (n ? 'var(--danger-d)' : 'var(--muted)');
-  box.innerHTML = `${n} bobine(s) · <strong>${somme}</strong> / ${cible} films${ecart}${ok?' ✓':''}`;
+  const mot = bloc.dataset.mot||'films';
+  box.innerHTML = `${n} ${mot==='vignettes'?'rouleau(x)':'bobine(s)'} · <strong>${somme}</strong> / ${cible} ${mot}${ecart}${ok?' ✓':''}`;
   return ok;
 }
 let currentBobinesCmd = null;
@@ -2645,7 +2658,7 @@ async function ouvrirLivraison(cmdId,numCmd){
           <div style="font-size:13.5px;font-weight:700;color:var(--navy)">${l.libelle}</div>
           <div style="font-size:12px;color:var(--muted)">Commandé : <strong>${l.quantite}</strong> ${l.unite||''} · ${l.type_article||'article'}</div>
           ${(l.type_article==='pmma'||l.type_article==='rivet')?`<div id="stockDepot${i}" style="font-size:12px;font-weight:700;margin-top:2px"></div>`:''}
-          ${(l.type_article==='bobine'&&(l.bobines||[]).length)?`<div style="font-size:12px;margin-top:3px;color:#075985">Bobines choisies par le GSB : <strong style="font-family:monospace">${l.bobines.map(b=>escB(b.numero)).join(', ')}</strong></div>`:''}
+          ${(estRouleau(l.type_article)&&(l.bobines||[]).length)?`<div style="font-size:12px;margin-top:3px;color:#075985">Bobines choisies par le GSB : <strong style="font-family:monospace">${l.bobines.map(b=>escB(b.numero)).join(', ')}</strong></div>`:''}
           ${l.statut_ligne==='rejete'?'<span style="background:#FEE2E2;color:#991B1B;padding:2px 7px;border-radius:8px;font-size:10.5px;font-weight:700">❌ Ligne rejetée — '+l.motif_rejet+'</span>':''}
         </div>
         <div>
