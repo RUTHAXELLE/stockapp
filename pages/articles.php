@@ -452,6 +452,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     }
 
     // ── AJUSTEMENT STOCK
+    // ── SORTIE SITE — consommation, perte ou casse sur un site, saisie par
+    //    son coordinateur (qui n'a pas le droit d'ajuster). Sans cet écran,
+    //    le stock d'un site ne faisait que monter à chaque réception.
+    if ($action === 'sortie_site') {
+        $coord_sortie = $role_slug === 'coordinateur_site';
+        if (!$coord_sortie) require_permission('consommables', 'can_update');
+        $article_id = (int)($_POST['article_id'] ?? 0);
+        // Le coordinateur ne sort que du stock de SON site.
+        $site_id    = $coord_sortie ? (int)($user['site_id'] ?? 0) : (int)($_POST['site_id'] ?? 0);
+        $qte        = (int)($_POST['quantite'] ?? 0);
+        $motif      = trim($_POST['motif'] ?? '');
+        $note       = trim($_POST['note'] ?? '');
+        $motifs_ok  = ['consommation' => 'Consommation', 'perte' => 'Perte', 'casse' => 'Casse / détérioration', 'autre' => 'Autre'];
+        if (!$article_id || !$site_id) json_response(false, 'Article et site obligatoires.');
+        if ($qte <= 0) json_response(false, 'Quantité (> 0) obligatoire.');
+        if (!isset($motifs_ok[$motif])) json_response(false, 'Motif obligatoire.');
+        if ($motif === 'autre' && $note === '') json_response(false, 'Précisez le motif.');
+        $article = db_fetch_one("SELECT id, libelle, unite FROM articles WHERE id=?", [$article_id]);
+        if (!$article) json_response(false, 'Article introuvable.');
+
+        db_begin();
+        try {
+            $dispo = (int)(db_fetch_value(
+                "SELECT quantite FROM stock_site WHERE article_id=? AND site_id=? FOR UPDATE",
+                [$article_id, $site_id]) ?? 0);
+            if ($dispo < $qte) {
+                db_rollback();
+                json_response(false, "Stock insuffisant sur le site : $dispo {$article['unite']}(s) disponible(s).");
+            }
+            db_query("UPDATE stock_site SET quantite = quantite - ? WHERE article_id=? AND site_id=?",
+                [$qte, $article_id, $site_id]);
+            // Le stock central n'agrège que ce qui est distribuable (magasin) :
+            // il ne bouge que si la sortie se fait au magasin lui-même.
+            if ((bool)db_fetch_value("SELECT COUNT(*) FROM sites WHERE id=? AND type='magasin'", [$site_id])) {
+                db_query("UPDATE articles SET stock_global = GREATEST(0, stock_global - ?) WHERE id=?", [$qte, $article_id]);
+            }
+            $libelle_motif = $motifs_ok[$motif] . ($note !== '' ? " — $note" : '');
+            db_query(
+                "INSERT INTO mouvements_stock (article_id,site_id,type_mouvement,quantite,solde_apres,reference,notes,created_by)
+                 VALUES (?,?,'sortie',?,?,?,?,?)",
+                [$article_id, $site_id, $qte, $dispo - $qte, $motifs_ok[$motif], $libelle_motif, $user['id']]
+            );
+            audit_log($user['id'], 'UPDATE', 'articles', $article_id,
+                "Sortie site:$site_id de $qte {$article['unite']}(s) de {$article['libelle']} ($libelle_motif)");
+            db_commit();
+            json_response(true, "Sortie de $qte {$article['unite']}(s) enregistrée. Reste sur le site : " . ($dispo - $qte) . '.');
+        } catch (Exception $e) {
+            db_rollback();
+            json_response(false, 'Erreur : ' . $e->getMessage());
+        }
+    }
+
     if ($action === 'ajustement') {
         require_permission('consommables', 'can_update');
         $article_id = (int)($_POST['article_id'] ?? 0);
@@ -493,6 +545,9 @@ $f_type   = trim($_GET['type']    ?? '');
 // affiché sur chaque carte devient alors sa quantité sur CE site plutôt
 // que le stock central agrégé.
 $f_site      = $site_force ?: (int)($_GET['site'] ?? 0);
+// Sortie de stock (consommation, perte, casse) sur le site affiché : le
+// coordinateur sur son site, ou un gestionnaire qui a filtré un site.
+$peut_sortir = $f_site && ($site_force || can('consommables', 'can_update'));
 $where = ['1=1']; $params = [];
 if ($search)   { $where[] = '(a.code LIKE ? OR a.libelle LIKE ?)'; $s="%$search%"; $params=[$s,$s]; }
 if ($f_alerte) { $where[] = 'a.stock_global <= a.seuil_alerte'; }
@@ -595,6 +650,7 @@ include __DIR__ . '/../templates/header.php';
 .flux-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:12px;font-weight:700}
 .flux-badge.reception{background:#e8f5e9;color:#2e7d32}
 .flux-badge.distribution{background:#e3f2fd;color:#1565c0}
+.flux-badge.sortie{background:#fff3e0;color:#b45309}
 </style>
 
 <!-- KPIs -->
@@ -718,6 +774,9 @@ include __DIR__ . '/../templates/header.php';
   </div>
   <?php endif; ?>
 
+  <?php if ($is_coord && !$site_force): ?>
+  <div class="alert alert-warning" style="margin-bottom:14px">Votre compte n'est rattaché à aucun site : les sorties de stock ne sont pas possibles.</div>
+  <?php endif; ?>
   <div data-paginer="25" class="art-grid" id="artGrid">
   <?php foreach($articles_list as $a):
     // Un site est filtré : la carte montre sa quantité sur CE site plutôt
@@ -770,6 +829,14 @@ include __DIR__ . '/../templates/header.php';
       <span style="font-weight:700;color:var(--primary-d)"><?= fmt_number($a['prix_unitaire']) ?> FCFA/<?= $a['unite'] ?></span>
       <?php endif; ?>
     </div>
+    <?php if ($peut_sortir && $stock_affiche > 0): ?>
+    <div style="margin-top:8px;text-align:right">
+      <button type="button" class="btn btn-secondary btn-sm"
+        onclick="event.stopPropagation();ouvrirSortie(<?= (int)$a['id'] ?>, <?= h(json_encode($a['libelle'])) ?>, <?= $stock_affiche ?>, <?= h(json_encode($UNITES[$a['unite']]??$a['unite'])) ?>)">
+        <i class="ph ph-arrow-up-right" aria-hidden="true"></i> Sortie
+      </button>
+    </div>
+    <?php endif; ?>
     <?php if (can('achats_suivi', 'can_read') && !empty($a['prix_unitaire']) && $a['prix_unitaire']>0): ?>
     <div class="ac-footer" style="border-top:1px dashed var(--border);padding-top:6px;margin-top:2px">
       <span style="color:var(--muted)">Valorisation</span>
@@ -976,37 +1043,36 @@ include __DIR__ . '/../templates/header.php';
         </tr></thead>
         <tbody>
         <?php
+        // Journal des mouvements (réceptions, distributions, sorties) ; un
+        // coordinateur ne voit que son site.
         $historique = db_fetch_all(
-            "SELECT 'reception' AS type_op, r.date_reception AS date_op, a.code AS art_code,
-                    a.libelle AS art_lib, a.unite, r.quantite, NULL AS site_nom,
-                    r.fournisseur AS ref1, r.numero_bon AS ref2,
+            "SELECT CASE m.type_mouvement WHEN 'reception_fourn' THEN 'reception'
+                                          WHEN 'distribution'    THEN 'distribution'
+                                          ELSE 'sortie' END AS type_op,
+                    m.created_at AS date_op, a.code AS art_code, a.libelle AS art_lib, a.unite,
+                    m.quantite, s.nom AS site_nom, m.reference AS ref1, m.notes,
                     CONCAT(u.prenom,' ',u.nom) AS agent
-             FROM receptions_consommables r
-             JOIN articles a ON a.id=r.consommable_id
-             LEFT JOIN users u ON u.id=r.created_by
-             UNION ALL
-             SELECT 'distribution', lc.date_livraison, a.code, a.libelle, a.unite,
-                    lc.quantite, s.nom, lc.bon_livraison, NULL,
-                    CONCAT(u.prenom,' ',u.nom)
-             FROM livraisons_consommables lc
-             JOIN articles a ON a.id=lc.consommable_id
-             JOIN sites s ON s.id=lc.site_id
-             LEFT JOIN users u ON u.id=lc.created_by
-             WHERE lc.type_mouvement='distribution'
-             ORDER BY date_op DESC LIMIT 80"
+             FROM mouvements_stock m
+             JOIN articles a ON a.id=m.article_id
+             LEFT JOIN sites s ON s.id=m.site_id
+             LEFT JOIN users u ON u.id=m.created_by
+             WHERE m.type_mouvement IN ('reception_fourn','distribution','sortie')
+               AND (? = 0 OR m.site_id = ?)
+             ORDER BY m.created_at DESC, m.id DESC LIMIT 80",
+            [$site_force, $site_force]
         );
         if(empty($historique)): ?>
           <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--muted)">Aucun mouvement.</td></tr>
         <?php else: foreach($historique as $h): ?>
           <tr>
             <td style="font-size:12px;white-space:nowrap"><?= fmt_date($h['date_op']) ?></td>
-            <td><span class="flux-badge <?= $h['type_op'] ?>"><?= $h['type_op']==='reception'?'Réception':'Distribution' ?></span></td>
+            <td><span class="flux-badge <?= $h['type_op'] ?>"><?= ['reception'=>'Réception','distribution'=>'Distribution','sortie'=>'Sortie'][$h['type_op']] ?? $h['type_op'] ?></span></td>
             <td><strong style="font-size:11.5px;color:var(--navy)"><?= h($h['art_code']) ?></strong> <?= h($h['art_lib']) ?></td>
             <td style="text-align:right;font-weight:800;font-size:15px;color:<?= $h['type_op']==='reception'?'var(--success-d)':'var(--primary-d)' ?>">
               <?= $h['type_op']==='reception'?'+':'-' ?><?= fmt_number($h['quantite']) ?>
               <span style="font-size:12px;font-weight:400;color:var(--muted)"><?= $h['unite'] ?></span>
             </td>
-            <td style="font-size:12px"><?= $h['type_op']==='reception' ? h($h['ref1']??'—') : h($h['site_nom']??'—') ?></td>
+            <td style="font-size:12px"><?= $h['type_op']==='reception' ? h($h['ref1']??'—') : h($h['site_nom']??'—') ?><?= $h['type_op']==='sortie' && $h['notes'] ? '<div style="color:var(--muted)">' . h($h['notes']) . '</div>' : '' ?></td>
             <td style="font-size:12px"><?= h($h['agent']??'—') ?></td>
           </tr>
         <?php endforeach; endif; ?>
@@ -1287,5 +1353,72 @@ function ap(data){
 }
 ['mA','mAD'].forEach(id=>document.getElementById(id).addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.classList.remove('open');}));
 </script>
+
+<?php if ($peut_sortir): ?>
+<div id="modalSortie" style="display:none;position:fixed;inset:0;background:rgba(6,3,58,.55);z-index:1000;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto">
+  <div style="background:white;border-radius:18px;padding:24px;width:460px;max-width:96vw;box-shadow:0 20px 60px rgba(0,0,0,.25);margin:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3 style="font-family:'Plus Jakarta Sans',sans-serif;font-size:17px;font-weight:800;color:var(--navy)">Sortie de stock</h3>
+      <button type="button" aria-label="Fermer" onclick="fermerSortie()" style="background:none;border:none;font-size:22px;cursor:pointer"><i class="ph ph-x" aria-hidden="true"></i></button>
+    </div>
+    <div id="sortieArticle" style="font-size:13.5px;font-weight:700;color:var(--navy)"></div>
+    <div id="sortieDispo" style="font-size:12.5px;color:var(--muted);margin-bottom:14px"></div>
+    <div id="alertSortie"></div>
+    <div class="form-group">
+      <label for="sortieQte">Quantité sortie *</label>
+      <input type="number" class="form-control" id="sortieQte" min="1" step="1">
+    </div>
+    <div class="form-group">
+      <label for="sortieMotif">Motif *</label>
+      <select class="form-control" id="sortieMotif">
+        <option value="consommation">Consommation</option>
+        <option value="perte">Perte</option>
+        <option value="casse">Casse / détérioration</option>
+        <option value="autre">Autre</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="sortieNote">Précision <span style="font-weight:400;color:var(--muted)">(obligatoire pour « Autre »)</span></label>
+      <input type="text" class="form-control" id="sortieNote" maxlength="200" placeholder="Ex. : utilisé pour l'accueil">
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px">
+      <button type="button" class="btn btn-secondary" onclick="fermerSortie()">Annuler</button>
+      <button type="button" class="btn btn-primary" id="btnSortie" onclick="confirmerSortie(this)"><i class="ph ph-arrow-up-right" aria-hidden="true"></i> Enregistrer la sortie</button>
+    </div>
+  </div>
+</div>
+<script>
+let sortieArt = null;
+function ouvrirSortie(id, libelle, dispo, unite){
+  sortieArt = {id, dispo};
+  document.getElementById('sortieArticle').textContent = libelle;
+  document.getElementById('sortieDispo').textContent = 'Disponible sur le site : ' + dispo + ' ' + unite;
+  document.getElementById('alertSortie').innerHTML = '';
+  const q = document.getElementById('sortieQte'); q.value = ''; q.max = dispo;
+  document.getElementById('sortieMotif').value = 'consommation';
+  document.getElementById('sortieNote').value = '';
+  document.getElementById('modalSortie').style.display = 'flex';
+  q.focus();
+}
+function fermerSortie(){ document.getElementById('modalSortie').style.display = 'none'; }
+async function confirmerSortie(btn){
+  const alerte = document.getElementById('alertSortie');
+  const qte = parseInt(document.getElementById('sortieQte').value) || 0;
+  const motif = document.getElementById('sortieMotif').value;
+  const note = document.getElementById('sortieNote').value.trim();
+  const err = m => { alerte.innerHTML = '<div class="alert alert-danger">' + m + '</div>'; };
+  if (qte <= 0) return err('Saisissez une quantité supérieure à 0.');
+  if (qte > sortieArt.dispo) return err('Quantité supérieure au stock du site (' + sortieArt.dispo + ').');
+  if (motif === 'autre' && !note) return err('Précisez le motif.');
+  btn.disabled = true;
+  const d = await ap({action:'sortie_site', article_id:sortieArt.id, site_id:<?= (int)$f_site ?>, quantite:qte, motif, note});
+  btn.disabled = false;
+  if (!d.success) return err(d.message);
+  fermerSortie();
+  if (typeof toast === 'function') toast(d.message, 'success');
+  setTimeout(() => location.reload(), 700);
+}
+</script>
+<?php endif; ?>
 
 <?php include __DIR__ . '/../templates/footer.php'; ?>
