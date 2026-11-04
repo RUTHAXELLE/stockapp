@@ -50,6 +50,19 @@ $agents_list = $equip_agent
                     WHERE COALESCE(statut,'actif') = 'actif' ORDER BY nom, prenom")
     : [];
 $can_update  = can($perm_module,'can_update');
+// Cycle de vie sur le site (mise en utilisation, épuisé, HS) : le
+// coordinateur pour les équipements de SON site, ou qui peut modifier.
+$peut_cycle  = $can_update || $site_force;
+$STATUTS_STOCK = [
+    'en_stock'               => ['Stock',            'ph-package',      '#e8f4f9', 'var(--blue)'],
+    'affecte'                => ['Affecté',          'ph-check-circle', '#f0f0f0', '#666'],
+    'en_utilisation'         => ['En utilisation',   'ph-play-circle',  '#dcfce7', '#166534'],
+    'epuise'                 => ['Épuisé',           'ph-battery-empty','#f3f4f6', '#6b7280'],
+    'hs'                     => ['HS',               'ph-x-circle',     '#fee2e2', '#991b1b'],
+    'en_attente_affectation' => ['En attente',       'ph-hourglass',    '#fef3c7', '#92400e'],
+    'affectation_en_cours'   => ['Affectation en cours', 'ph-hourglass', '#fef3c7', '#92400e'],
+    'en_transit'             => ['En transit',       'ph-truck',        '#e0e7ff', '#3730a3'],
+];
 
 // ── Amortissements OHADA (durées standard en mois)
 $ohada_durees = [
@@ -393,6 +406,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if ($etat === 'hs')   $statut_stock = 'hs';
         elseif (!$site_id)    $statut_stock = 'en_stock';
         else                  $statut_stock = 'affecte';
+        // Un équipement en utilisation le reste tant qu'il ne passe pas HS
+        // ni ne quitte son site (le formulaire ne connaît pas ce statut).
+        if ($action === 'modifier' && $statut_stock === 'affecte') {
+            $avant = db_fetch_one("SELECT statut_stock, site_id FROM equipements WHERE id=?", [(int)($_POST['id'] ?? 0)]);
+            if ($avant && $avant['statut_stock'] === 'en_utilisation' && (int)$avant['site_id'] === (int)$site_id)
+                $statut_stock = 'en_utilisation';
+        }
 
         if (!$marque && !$nsi) json_response(false,'Marque ou N° série interne obligatoire.');
         // nomenclature_id est NOT NULL en base (equipements) : sans ce
@@ -439,6 +459,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         }
     }
 
+    // ── Cycle de vie sur le site : En stock / Affecté -> En utilisation ->
+    //    Épuisé (consommables) ou HS. Épuisé retire l'équipement des comptes
+    //    (actif=0) mais garde sa fiche et ses mouvements pour l'historique.
+    if ($action === 'changer_statut') {
+        if (!$peut_cycle) json_response(false, 'Accès refusé.');
+        $id     = (int)($_POST['id'] ?? 0);
+        $statut = trim($_POST['statut'] ?? '');
+        $note   = trim($_POST['note'] ?? '');
+        $libelles = ['en_utilisation' => 'Mise en utilisation', 'epuise' => 'Déclaré épuisé', 'hs' => 'Déclaré hors service'];
+        if (!isset($libelles[$statut])) json_response(false, 'Statut invalide.');
+        $eq = db_fetch_one("SELECT * FROM equipements WHERE id=? AND actif=1 AND categorie=?", [$id, $f_categorie]);
+        if (!$eq) json_response(false, 'Équipement introuvable.');
+        if ($site_force && (int)$eq['site_id'] !== $site_force)
+            json_response(false, "Cet équipement n'est pas sur votre site.");
+        $actuel = $eq['statut_stock'] ?? 'affecte';
+        if ($statut === 'en_utilisation' && !in_array($actuel, ['affecte', 'en_stock'], true))
+            json_response(false, "Seul un équipement en stock peut être mis en utilisation.");
+        if ($statut === 'en_utilisation' && empty($eq['site_id']))
+            json_response(false, "L'équipement doit être sur un site pour être mis en utilisation.");
+        if (in_array($statut, ['epuise', 'hs'], true) && !in_array($actuel, ['affecte', 'en_stock', 'en_utilisation'], true))
+            json_response(false, 'Statut actuel incompatible.');
+        if (in_array($statut, ['epuise', 'hs'], true) && $note === '')
+            json_response(false, 'Précisez le motif.');
+        $agent_id = (int)($_POST['agent_id'] ?? 0) ?: null;
+        if ($agent_id && (!$equip_agent || !db_fetch_value("SELECT id FROM agents WHERE id=?", [$agent_id])))
+            json_response(false, "Agent introuvable dans l'annuaire.");
+
+        db_begin();
+        try {
+            if ($statut === 'en_utilisation') {
+                db_query("UPDATE equipements SET statut_stock='en_utilisation', date_mise_en_service=COALESCE(date_mise_en_service, CURRENT_DATE) WHERE id=?", [$id]);
+                if ($agent_id) db_query("UPDATE equipements SET agent_id=? WHERE id=?", [$agent_id, $id]);
+            } elseif ($statut === 'epuise') {
+                db_query("UPDATE equipements SET statut_stock='epuise', actif=0 WHERE id=?", [$id]);
+            } else {
+                db_query("UPDATE equipements SET statut_stock='hs', etat='hs' WHERE id=?", [$id]);
+            }
+            db_query(
+                "INSERT INTO mouvements_equipements (equipement_id, type, site_source_id, notes, created_by)
+                 VALUES (?,?,?,?,?)",
+                [$id, $statut === 'en_utilisation' ? 'utilisation' : $statut, $eq['site_id'] ?: null,
+                 $libelles[$statut] . ($note !== '' ? " — $note" : ''), $user['id']]);
+            audit_log($user['id'], 'UPDATE', 'equipements', $id,
+                "{$libelles[$statut]} : {$eq['numero_serie_interne']}" . ($note !== '' ? " ($note)" : ''));
+            db_commit();
+        } catch (Exception $e) {
+            db_rollback();
+            json_response(false, 'Erreur : ' . $e->getMessage());
+        }
+        $confirmations = ['en_utilisation' => 'Équipement mis en utilisation.', 'epuise' => 'Équipement déclaré épuisé.', 'hs' => 'Équipement déclaré hors service.'];
+        json_response(true, $confirmations[$statut]);
+    }
+
     // Soft delete (actif=0), même effet que l'action 'delete' de
     // api/equipements.php mais contrôlé sur le module de la catégorie
     // (equipements / equipements_operationnel).
@@ -456,7 +529,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 }
 
 // ── DONNÉES
-$where = ["e.categorie=?","e.actif=1"]; $params = [$f_categorie];
+$where = ["e.categorie=?", $f_statut_stock === 'epuise' ? "e.actif=0" : "e.actif=1"]; $params = [$f_categorie];
 if ($f_site)   { $where[] = "e.site_id=?";          $params[] = $f_site; }
 if ($f_etat === 'ok') { $where[] = "e.etat IN ('neuf','bon')"; }
 elseif ($f_etat)      { $where[] = "e.etat=?";       $params[] = $f_etat; }
@@ -526,6 +599,7 @@ $kpi = db_fetch_one(
             SUM(CASE WHEN e.etat IN ('neuf','bon') THEN 1 ELSE 0 END) AS ok,
             SUM(CASE WHEN e.etat='hs' THEN 1 ELSE 0 END) AS hs,
             SUM(CASE WHEN e.statut_stock='en_stock' THEN 1 ELSE 0 END) AS stock,
+            SUM(CASE WHEN e.statut_stock='en_utilisation' THEN 1 ELSE 0 END) AS utilisation,
             SUM(CASE WHEN e.date_fin_cycle IS NOT NULL AND e.date_fin_cycle < (CURRENT_DATE + INTERVAL 30 DAY) THEN 1 ELSE 0 END) AS fin_cycle
      FROM equipements e
      WHERE ".implode(' AND ',$where_kpi),
@@ -536,6 +610,12 @@ $kpi_ok        = (int)($kpi['ok'] ?? 0);
 $kpi_hs        = (int)($kpi['hs'] ?? 0);
 $kpi_stock     = (int)($kpi['stock'] ?? 0);
 $kpi_fin_cycle = (int)($kpi['fin_cycle'] ?? 0);
+$kpi_utilisation = (int)($kpi['utilisation'] ?? 0);
+// Épuisés : hors des comptes actifs (actif=0), même périmètre.
+$where_epuise = $where_kpi; $where_epuise[1] = "e.actif=0";
+$kpi_epuise = (int)db_fetch_value(
+    "SELECT COUNT(*) FROM equipements e WHERE " . implode(' AND ', $where_epuise) . " AND e.statut_stock='epuise'",
+    $params_kpi);
 
 // URL de chaque tuile : conserve le perimetre (site/type/recherche), un seul
 // filtre de statut actif a la fois.
@@ -553,11 +633,15 @@ $kpi_url_ok       = $kpi_link(['etat' => 'ok']);
 $kpi_url_hs       = $kpi_link(['etat' => 'hs']);
 $kpi_url_stock    = $kpi_link(['statut_stock' => 'en_stock']);
 $kpi_url_fincycle = $kpi_link(['fin_cycle' => '1']);
+$kpi_url_utilisation = $kpi_link(['statut_stock' => 'en_utilisation']);
+$kpi_url_epuise      = $kpi_link(['statut_stock' => 'epuise']);
 $kpi_active_ok    = $f_etat === 'ok';
 $kpi_active_hs    = $f_etat === 'hs';
 $kpi_active_stock = $f_statut_stock === 'en_stock';
 $kpi_active_fin   = $f_fin_cycle;
-$kpi_active_total = !$kpi_active_ok && !$kpi_active_hs && !$kpi_active_stock && !$kpi_active_fin;
+$kpi_active_util   = $f_statut_stock === 'en_utilisation';
+$kpi_active_epuise = $f_statut_stock === 'epuise';
+$kpi_active_total = !$kpi_active_ok && !$kpi_active_hs && !$kpi_active_stock && !$kpi_active_fin && !$kpi_active_util && !$kpi_active_epuise;
 
 // ── EXPORT EXCEL
 if (isset($_GET['export'])) {
@@ -616,7 +700,8 @@ if (isset($_GET['export'])) {
 include __DIR__ . '/../templates/header.php';
 ?>
 <style>
-.equip-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px}
+.equip-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px}
+.ek.teal{border-left-color:#16a34a} .ek.grey{border-left-color:#9ca3af}
 .ek{background:white;border-radius:13px;border:1px solid var(--border);padding:14px 16px;border-left:4px solid var(--blue);display:block;text-decoration:none;color:inherit;cursor:pointer;transition:box-shadow .15s,border-color .15s}
 .ek:hover{box-shadow:0 2px 10px rgba(0,0,0,.08)}
 .ek-active{border-color:var(--navy);box-shadow:0 0 0 2px var(--navy) inset}
@@ -700,6 +785,8 @@ include __DIR__ . '/../templates/header.php';
   <a href="<?= h($kpi_url_hs) ?>" class="ek red<?= $kpi_active_hs?' ek-active':'' ?>" title="Filtrer sur les équipements hors service">      <div class="ek-val" style="color:var(--danger-d)"><?= $kpi_hs ?></div>                 <div class="ek-lbl"><i class="ph ph-x-circle" aria-hidden="true"></i> Hors service</div></a>
   <a href="<?= h($kpi_url_stock) ?>" class="ek purple<?= $kpi_active_stock?' ek-active':'' ?>" title="Filtrer sur les équipements en stock">   <div class="ek-val" style="color:#8e44ad"><?= $kpi_stock ?></div>                    <div class="ek-lbl"><i class="ph ph-package" aria-hidden="true"></i> En stock</div></a>
   <a href="<?= h($kpi_url_fincycle) ?>" class="ek orange<?= $kpi_active_fin?' ek-active':'' ?>" title="Filtrer sur les équipements en fin de cycle sous 30 jours">   <div class="ek-val" style="color:#f39c12"><?= $kpi_fin_cycle ?></div>               <div class="ek-lbl"><i class="ph ph-warning" aria-hidden="true"></i> Fin cycle &lt;30j</div></a>
+  <a href="<?= h($kpi_url_utilisation) ?>" class="ek teal<?= $kpi_active_util?' ek-active':'' ?>" title="Filtrer sur les équipements en utilisation"><div class="ek-val" style="color:#166534"><?= $kpi_utilisation ?></div><div class="ek-lbl"><i class="ph ph-play-circle" aria-hidden="true"></i> En utilisation</div></a>
+  <a href="<?= h($kpi_url_epuise) ?>" class="ek grey<?= $kpi_active_epuise?' ek-active':'' ?>" title="Voir les équipements épuisés (hors des comptes)"><div class="ek-val" style="color:#6b7280"><?= $kpi_epuise ?></div><div class="ek-lbl"><i class="ph ph-battery-empty" aria-hidden="true"></i> Épuisés</div></a>
 </div>
 
 <!-- ── LIGNE 2 : Filtres (remplace les blocs résumé) ── -->
@@ -839,7 +926,7 @@ include __DIR__ . '/../templates/header.php';
         <th style="text-align:center">Valeur résid. (FCFA)</th>
         <th style="text-align:center">Fin cycle</th>
         <th style="text-align:center">Statut stock</th>
-        <?php if($can_update || $can_delete): ?><th style="text-align:center">Actions</th><?php endif; ?>
+        <?php if($can_update || $can_delete || $peut_cycle): ?><th style="text-align:center">Actions</th><?php endif; ?>
       </tr></thead>
       <tbody>
       <?php if(empty($equipements)): ?>
@@ -877,12 +964,23 @@ include __DIR__ . '/../templates/header.php';
             <?php else: ?><span style="color:var(--muted)">—</span><?php endif; ?>
           </td>
           <td style="text-align:center">
-            <span style="padding:2px 8px;border-radius:10px;font-size:12px;font-weight:700;background:<?= ($e['statut_stock']??'')==='en_stock'?'#e8f4f9':'#f0f0f0' ?>;color:<?= ($e['statut_stock']??'')==='en_stock'?'var(--blue)':'#666' ?>">
-              <?= ($e['statut_stock']??'affecte')==='en_stock'?'<i class="ph ph-package" aria-hidden="true"></i> Stock':'<i class="ph ph-check-circle" aria-hidden="true"></i> Affecté' ?>
+            <?php [$st_lib, $st_ico, $st_bg, $st_fg] = $STATUTS_STOCK[$e['statut_stock'] ?? 'affecte'] ?? $STATUTS_STOCK['affecte']; ?>
+            <span style="padding:2px 8px;border-radius:10px;font-size:12px;font-weight:700;background:<?= $st_bg ?>;color:<?= $st_fg ?>">
+              <i class="ph <?= $st_ico ?>" aria-hidden="true"></i> <?= $st_lib ?>
             </span>
           </td>
-          <?php if($can_update || $can_delete): ?>
+          <?php if($can_update || $can_delete || $peut_cycle): ?>
           <td style="text-align:center;white-space:nowrap">
+            <?php $st_cur = $e['statut_stock'] ?? 'affecte';
+                  if ($peut_cycle && (int)$e['actif'] === 1 && (!$site_force || (int)$e['site_id'] === $site_force)): ?>
+              <?php if (in_array($st_cur, ['affecte','en_stock'], true) && !empty($e['site_id'])): ?>
+              <button class="btn btn-secondary btn-sm" title="Mettre en utilisation" onclick="ouvrirCycle(<?= (int)$e['id'] ?>, 'en_utilisation', <?= htmlspecialchars(json_encode($e['numero_serie_interne']),ENT_QUOTES) ?>)"><i class="ph ph-play-circle" aria-hidden="true"></i></button>
+              <?php endif; ?>
+              <?php if (in_array($st_cur, ['affecte','en_stock','en_utilisation'], true)): ?>
+              <button class="btn btn-secondary btn-sm" title="Déclarer épuisé" onclick="ouvrirCycle(<?= (int)$e['id'] ?>, 'epuise', <?= htmlspecialchars(json_encode($e['numero_serie_interne']),ENT_QUOTES) ?>)"><i class="ph ph-battery-empty" aria-hidden="true"></i></button>
+              <button class="btn btn-secondary btn-sm" title="Déclarer hors service" onclick="ouvrirCycle(<?= (int)$e['id'] ?>, 'hs', <?= htmlspecialchars(json_encode($e['numero_serie_interne']),ENT_QUOTES) ?>)"><i class="ph ph-x-circle" aria-hidden="true"></i></button>
+              <?php endif; ?>
+            <?php endif; ?>
             <?php if($can_update): ?>
             <button class="btn btn-secondary btn-sm" onclick="modifierEquip(<?= htmlspecialchars(json_encode($e),ENT_QUOTES) ?>)"><i class="ph ph-pencil-simple" aria-hidden="true"></i></button>
             <?php endif; ?>
@@ -897,6 +995,73 @@ include __DIR__ . '/../templates/header.php';
     </table>
   </div>
 </div>
+
+<?php if ($peut_cycle): ?>
+<div id="modalCycle" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:white;border-radius:18px;padding:24px;width:440px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3 style="font-family:'Plus Jakarta Sans',sans-serif;font-size:16px;font-weight:800;color:var(--navy)" id="cycleTitre"></h3>
+      <button type="button" aria-label="Fermer" onclick="fermerCycle()" style="background:none;border:none;font-size:22px;cursor:pointer"><i class="ph ph-x" aria-hidden="true"></i></button>
+    </div>
+    <div id="cycleEquip" style="font-family:monospace;font-size:13px;color:var(--muted);margin-bottom:12px"></div>
+    <div id="cycleAlert"></div>
+    <?php if ($equip_agent): ?>
+    <div class="form-group" id="cycleAgentGrp">
+      <label for="cycleAgent">Utilisé par <span style="font-weight:400;color:var(--muted)">(facultatif)</span></label>
+      <select class="form-control" id="cycleAgent">
+        <option value="">— Aucun agent précis —</option>
+        <?php foreach ($agents_list as $ag): ?>
+        <option value="<?= (int)$ag['id'] ?>"><?= h(trim($ag['nom'].' '.$ag['prenom'])) ?><?= !empty($ag['matricule']) ? ' ('.h($ag['matricule']).')' : '' ?></option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+    <?php endif; ?>
+    <div class="form-group">
+      <label for="cycleNote" id="cycleNoteLbl">Note</label>
+      <input type="text" class="form-control" id="cycleNote" maxlength="200">
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px">
+      <button type="button" class="btn btn-secondary" onclick="fermerCycle()">Annuler</button>
+      <button type="button" class="btn btn-primary" id="cycleBtn" onclick="confirmerCycle(this)"></button>
+    </div>
+  </div>
+</div>
+<script>
+let cycleCible = null;
+const CYCLE_TXT = {
+  en_utilisation: {titre:'Mettre en utilisation', btn:'Mettre en utilisation', note:'Note (facultatif)'},
+  epuise:         {titre:'Déclarer épuisé',       btn:'Déclarer épuisé',       note:'Motif *'},
+  hs:             {titre:'Déclarer hors service', btn:'Déclarer HS',           note:'Motif *'}
+};
+function ouvrirCycle(id, statut, numero){
+  cycleCible = {id, statut};
+  const t = CYCLE_TXT[statut];
+  document.getElementById('cycleTitre').textContent = t.titre;
+  document.getElementById('cycleBtn').textContent = t.btn;
+  document.getElementById('cycleNoteLbl').textContent = t.note;
+  document.getElementById('cycleEquip').textContent = numero || '';
+  document.getElementById('cycleNote').value = '';
+  document.getElementById('cycleAlert').innerHTML = '';
+  const ag = document.getElementById('cycleAgentGrp');
+  if (ag) { ag.style.display = statut === 'en_utilisation' ? '' : 'none'; document.getElementById('cycleAgent').value = ''; }
+  document.getElementById('modalCycle').style.display = 'flex';
+}
+function fermerCycle(){ document.getElementById('modalCycle').style.display = 'none'; }
+async function confirmerCycle(btn){
+  const note = document.getElementById('cycleNote').value.trim();
+  const alerte = document.getElementById('cycleAlert');
+  if (cycleCible.statut !== 'en_utilisation' && !note) { alerte.innerHTML = '<div class="alert alert-danger">Précisez le motif.</div>'; return; }
+  const ag = document.getElementById('cycleAgent');
+  btn.disabled = true;
+  const d = await ap({action:'changer_statut', id:cycleCible.id, statut:cycleCible.statut, note, agent_id: ag && cycleCible.statut === 'en_utilisation' ? ag.value : ''});
+  btn.disabled = false;
+  if (!d.success) { alerte.innerHTML = '<div class="alert alert-danger">' + (d.message || 'Erreur') + '</div>'; return; }
+  fermerCycle();
+  if (typeof toast === 'function') toast(d.message, 'success');
+  setTimeout(() => location.reload(), 700);
+}
+</script>
+<?php endif; ?>
 
 <!-- MODAL CRÉATION/MODIFICATION -->
 <?php if($can_create || $can_update): ?>
