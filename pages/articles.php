@@ -11,6 +11,7 @@ require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/upload.php';
 require_once __DIR__ . '/../includes/achats.php';
+require_once __DIR__ . '/../includes/articles_equipements.php';
 
 require_auth();
 require_permission('consommables', 'can_read');
@@ -384,9 +385,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             // que l'expédition d'une commande, pages/commandes.php). Un
             // manque n'est pas bloquant : il est signalé dans l'audit.
             $deb = ach_debiter_stock_magasin($article_id, $qte);
-            // Stock site +
-            db_query("INSERT INTO stock_site (article_id,site_id,quantite) VALUES (?,?,?) ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)",
-                [$article_id,$site_id,$qte]);
+            // Stock site + — sauf le matériel et outillage industriel et les
+            // consommables informatiques, qui deviennent des équipements
+            // (opérationnels / informatiques) du site, une fiche par unité.
+            $equip_op = art_categorie_equipement($article_id) !== null;
+            if ($equip_op) {
+                $nums_op = art_creer_equipements($article_id, $site_id, $qte, (int)$user['id'], "Distribution depuis la page Articles");
+            } else {
+                db_query("INSERT INTO stock_site (article_id,site_id,quantite) VALUES (?,?,?) ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)",
+                    [$article_id,$site_id,$qte]);
+            }
 
             // Réception site en_attente
             db_query(
@@ -415,7 +423,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 "Distribution $qte {$article['unite']}(s) → site:$site_id (BL:{$upload_bl['filename']})"
                 . ($deb['manquant'] > 0 ? " — {$deb['manquant']} non couvert(s) par le stock magasin" : ''));
             db_commit();
-            json_response(true, "Distribution de $qte {$article['unite']}(s) enregistrée. Stock restant : $new_stock.");
+            json_response(true, "Distribution de $qte {$article['unite']}(s) enregistrée. Stock restant : $new_stock."
+                . ($equip_op ? " Équipements créés sur le site : " . count($nums_op) . '.' : ''));
         } catch (Exception $e) {
             db_rollback();
             json_response(false, 'Erreur : ' . $e->getMessage());
