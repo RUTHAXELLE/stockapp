@@ -72,6 +72,28 @@ function capacite_bobine_serie(string $serie, int $defaut = 500): int {
 }
 
 /**
+ * Série d'un type de bobine/vignette, lue au catalogue (A, B, C, D, TL, WSL).
+ * Les imports prenaient le premier caractère du format : 'T' et 'W' pour
+ * les vignettes, invisibles des écrans qui filtrent sur 'TL' / 'WSL'.
+ */
+function serie_de_type_bobine(string $type_code): string {
+    static $cache = [];
+    $k = strtoupper(trim($type_code));
+    if (!array_key_exists($k, $cache)) {
+        $s = null;
+        try { $s = db_fetch_value("SELECT TRIM(serie) FROM op_types_bobines WHERE UPPER(code) = ?", [$k]); }
+        catch (Throwable $e) { $s = null; }
+        if (!$s) {
+            if (str_starts_with($k, 'WSL'))     $s = 'WSL';
+            elseif (str_starts_with($k, 'TL'))  $s = 'TL';
+            else                                $s = substr($k, 0, 1);
+        }
+        $cache[$k] = (string)$s;
+    }
+    return $cache[$k];
+}
+
+/**
  * Unités de PMMA contenues dans un carton du type donné.
  *
  * Le stock et la saisie restent comptés en unités : cette valeur sert à

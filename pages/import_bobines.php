@@ -162,8 +162,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     elseif ($quantity == 0) $statut = 'epuisee';
                     elseif ($site_id) $statut = 'en_cours';
 
-                    // Série = premier char du format
-                    $serie = substr($format, 0, 1);
+                    // Série lue au catalogue (TL/WSL font plus d'un caractère).
+                    $serie = serie_de_type_bobine($format);
                     // qte_initiale : lue au catalogue des types de bobines.
                     // L'ancienne règle « WSL/TL = 2000, sinon 500 » sert de
                     // repli pour un code absent du catalogue, afin qu'un
@@ -181,8 +181,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($existant) {
                         // Mettre à jour le stock système
                         db_query(
-                            "UPDATE op_bobines SET stock_systeme=?,films_restants=?,statut=?,site_id=?,format=?,qte_initiale=? WHERE id=?",
-                            [$quantity,$quantity,$statut,$site_id,$format,$qte_initiale,$existant['id']]
+                            "UPDATE op_bobines SET stock_systeme=?,films_restants=?,statut=?,site_id=?,format=?,qte_initiale=?,serie=? WHERE id=?",
+                            [$quantity,$quantity,$statut,$site_id,$format,$qte_initiale,$serie,$existant['id']]
                         );
                         // Tracer le mouvement si changement
                         if ($existant['stock_systeme'] != $quantity) {

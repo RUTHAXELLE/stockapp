@@ -587,9 +587,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
 
                         if (!$bobine) {
                             // ── Bobine inconnue → CRÉATION automatique
-                            $serie_bobine = strtoupper(substr($format ?: '', 0, 1));
-                            if (str_starts_with(strtoupper($format), 'WSL')) $serie_bobine = 'W';
-                            elseif (str_starts_with(strtoupper($format), 'TL')) $serie_bobine = 'T';
+                            // Série lue au catalogue : 'TL' / 'WSL' pour les
+                            // vignettes (l'ancien 'T' / 'W' les cachait de la
+                            // page Vignettes).
+                            $serie_bobine = serie_de_type_bobine($format ?: '');
 
                             // Capacité lue au catalogue ; l'ancienne règle
                             // « WSL/TL = 2000, sinon 500 » reste le repli des
