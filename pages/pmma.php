@@ -25,6 +25,15 @@ $active_page= 'pmma';
 $is_coord   = $role_slug === 'coordinateur_site';
 $site_force = ($is_coord && $user['site_id']) ? (int)$user['site_id'] : 0;
 $sites_list = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
+
+// Le gestionnaire de stock n'approvisionne que les dépôts centraux (entrepôt,
+// magasin) ; les sites sont ensuite servis par commande / transfert, pour que
+// chaque arrivée sur site garde sa trace.
+$appro_restreint = ($user['role_slug'] ?? '') === 'gestionnaire_stock';
+$sites_appro = $appro_restreint
+    ? db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 AND type IN ('entrepot','magasin') ORDER BY nom")
+    : $sites_list;
+$site_appro_ok = fn(int $id): bool => in_array($id, array_map('intval', array_column($sites_appro, 'id')), true);
 require_permission('pmma', 'can_read');
 // Saisie (entrée, sortie, import, modèle) : pas pour le coordinateur, qui
 // consulte le stock de son site. Ce stock arrive par la réception des
@@ -114,6 +123,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
                         $site_nom = $get($row, 'Site');
                         $site_id  = $site_nom !== '' ? import_resoudre_site($site_nom, $sites_list) : null;
                         if (!$site_id) { $erreurs[] = "Ligne $ln : site \"$site_nom\" introuvable."; continue; }
+                        if (!$site_appro_ok($site_id)) { $erreurs[] = "Ligne $ln : site \"$site_nom\" non autorisé (entrepôt ou magasin uniquement)."; continue; }
 
                         $type_raw = $get($row, 'Type PMMA');
                         $type = $types_lookup[mb_strtolower(trim($type_raw))] ?? null;
@@ -184,6 +194,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $type     = trim($_POST['type_pmma'] ?? '');
         $notes    = trim($_POST['notes'] ?? '');
         if (!$site_id || $quantite <= 0) json_response(false, 'Site et quantité obligatoires.');
+        if (!$site_appro_ok($site_id)) json_response(false, "Le gestionnaire de stock n'approvisionne que l'entrepôt et le magasin.");
         // Le contrôle serveur ne se contente pas de la liste affichée : la
         // requête AJAX peut être forgée, et un type inventé recréerait
         // exactement le désordre que le catalogue supprime.
@@ -956,7 +967,7 @@ include __DIR__ . '/../templates/header.php';
         <div class="form-group"><label>Site *</label>
           <select class="form-control" id="eSiteId">
             <option value="">— Sélectionner —</option>
-            <?php foreach ($sites_list as $s): ?><option value="<?= $s['id'] ?>"><?= h($s['nom']) ?></option><?php endforeach; ?>
+            <?php foreach ($sites_appro as $s): ?><option value="<?= $s['id'] ?>"><?= h($s['nom']) ?></option><?php endforeach; ?>
           </select>
         </div>
         <?php else: ?><input type="hidden" id="eSiteId" value="<?= $site_force ?>"><?php endif; ?>

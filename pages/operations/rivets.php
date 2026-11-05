@@ -25,6 +25,15 @@ $role_slug_r = $user['role_slug'] ?? '';
 $site_force_r = ($role_slug_r === 'coordinateur_site' && $user['site_id']) ? (int)$user['site_id'] : 0;
 $sites_list  = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
 
+// Le gestionnaire de stock n'approvisionne que les dépôts centraux (entrepôt,
+// magasin) ; les sites sont ensuite servis par commande / transfert, pour que
+// chaque arrivée sur site garde sa trace.
+$appro_restreint = ($user['role_slug'] ?? '') === 'gestionnaire_stock';
+$sites_appro = $appro_restreint
+    ? db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 AND type IN ('entrepot','magasin') ORDER BY nom")
+    : $sites_list;
+$site_appro_ok = fn(int $id): bool => in_array($id, array_map('intval', array_column($sites_appro, 'id')), true);
+
 // ── IMPORT EN MASSE (Excel/CSV) — remplace le stock (photo exacte), pas
 // une addition. Form classique (pas AJAX), même principe que
 // pages/equipements.php et pages/pmma.php.
@@ -70,6 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
                         $site_nom = $get($row, 'Site');
                         $site_id  = $site_nom !== '' ? import_resoudre_site($site_nom, $sites_list) : null;
                         if (!$site_id) { $erreurs[] = "Ligne $ln : site \"$site_nom\" introuvable."; continue; }
+                        if (!$site_appro_ok($site_id)) { $erreurs[] = "Ligne $ln : site \"$site_nom\" non autorisé (entrepôt ou magasin uniquement)."; continue; }
 
                         // Normaliser accents (éclaté → eclat), même règle que
                         // pages/commandes.php pour rester cohérent.
@@ -125,6 +135,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $qte     = (int)($_POST['quantite'] ?? 0);
         $notes   = trim($_POST['notes'] ?? '');
         if (!$site_id || $qte <= 0) json_response(false,'Site et quantité obligatoires.');
+        if (!$site_appro_ok($site_id)) json_response(false,"Le gestionnaire de stock n'approvisionne que l'entrepôt et le magasin.");
         if (!isset($types_ok[$type])) json_response(false,'Type de rivet obligatoire (gonflables ou éclatés).');
         $site = db_fetch_one("SELECT nom FROM sites WHERE id=?",[$site_id]);
         db_query("INSERT INTO op_stock_rivets (site_id,type_rivet,quantite) VALUES (?,?,?)
@@ -694,7 +705,7 @@ foreach ($stocks as $r) {
       <div class="form-group"><label>Site *</label>
         <select class="form-control" id="ap-site">
           <option value="">— Sélectionner —</option>
-          <?php foreach($sites_list as $s): ?><option value="<?= $s['id'] ?>"><?= h($s['nom']) ?></option><?php endforeach; ?>
+          <?php foreach($sites_appro as $s): ?><option value="<?= $s['id'] ?>"><?= h($s['nom']) ?></option><?php endforeach; ?>
         </select>
       </div>
       <div class="form-group"><label>Type de rivet *</label>
