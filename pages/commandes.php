@@ -796,6 +796,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     // ── Annuler commande en_attente
     if ($action === 'annuler') {
         $cmd_id = (int)($_POST['cmd_id'] ?? 0);
+        // Le GSB peut aussi annuler une commande validée dont les bobines
+        // restent à choisir (rien n'a encore quitté le dépôt) : motif
+        // obligatoire, réservations libérées, demandeur prévenu.
+        $cmd_prepa = db_fetch_one("SELECT * FROM commandes WHERE id=? AND statut='en_attente_livraison'", [$cmd_id]);
+        if ($cmd_prepa && $is_gsb) {
+            if (!cmdbob_actif() || cmdbob_lignes_a_choisir($cmd_id) === 0)
+                json_response(false, "Les bobines de cette commande sont déjà choisies : elle ne peut plus être annulée ici.");
+            $motif = trim($_POST['motif'] ?? '');
+            if ($motif === '') json_response(false, "Le motif de l'annulation est obligatoire.");
+            db_begin();
+            try {
+                db_query("DELETE FROM commande_ligne_bobines WHERE commande_id=? AND statut='assigne'", [$cmd_id]);
+                db_query("UPDATE commandes SET statut='annule' WHERE id=? AND statut='en_attente_livraison'", [$cmd_id]);
+                if ($cmd_prepa['created_by'])
+                    db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
+                        [$cmd_prepa['created_by'], 'info', "Commande {$cmd_prepa['numero_commande']} annulée",
+                         "Annulée par le gestionnaire de stock bobines : $motif", '/pages/commandes.php']);
+                audit_log($user['id'],'UPDATE','commandes',$cmd_id,"Commande annulée en préparation (bobines non choisies) — motif : $motif");
+                db_commit();
+            } catch (Exception $e) { db_rollback(); json_response(false, 'Erreur : ' . $e->getMessage()); }
+            json_response(true, 'Commande annulée. Le demandeur est prévenu.');
+        }
         $cmd    = db_fetch_one("SELECT * FROM commandes WHERE id=? AND statut='en_attente'",[$cmd_id]);
         if (!$cmd) json_response(false,'Seules les commandes en attente peuvent être annulées.');
         if ($is_coord && $cmd['site_id'] != $site_force) json_response(false,'Accès refusé.');
@@ -1650,7 +1672,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
         <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--muted)">Aucune commande.</td></tr>
       <?php else: foreach($commandes as $cmd): ?>
         <tr>
-          <td style="font-family:monospace;font-weight:700;color:var(--primary-d)"><?= h($cmd['numero_commande']) ?></td>
+          <td style="font-family:monospace;font-weight:700;color:var(--primary-d);white-space:nowrap"><?= h($cmd['numero_commande']) ?></td>
           <td style="font-size:13px"><?= h($cmd['site_nom']??'—') ?></td>
           <td style="font-size:12px;white-space:nowrap"><?= fmt_date($cmd['created_at'],'d/m/Y') ?></td>
           <td style="text-align:center;font-weight:700">
@@ -1670,26 +1692,29 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
             <?php if($cmd['statut']==='en_attente_livraison' && (int)$cmd['nb_lignes_bobine'] > 0 && cmdbob_actif()): ?>
             <!-- Le statut reste « À préparer » jusqu'à l'expédition : on montre où en sont les bobines. -->
             <div style="font-size:11.5px;margin-top:4px;color:<?= $bob_a_choisir ? '#b45309' : '#15803d' ?>">
-              <?= $bob_a_choisir ? "🎞️ Bobines à choisir ($bob_a_choisir ligne(s))" : '🎞️ Bobines choisies · prête à expédier' ?>
+              <?= $bob_a_choisir ? "Bobines à choisir : $bob_a_choisir ligne" . ($bob_a_choisir > 1 ? 's' : '') : 'Bobines choisies, prête à expédier' ?>
             </div>
             <?php endif; ?>
           </td>
           <td style="font-size:12px"><?= h($cmd['agent']??'—') ?></td>
-          <td style="text-align:center;white-space:nowrap">
-            <div style="display:flex;gap:4px;justify-content:center">
-            <button class="btn btn-secondary btn-sm" title="Voir détails"
+          <td style="min-width:120px">
+            <!-- Les actions passent à la ligne plutôt que de déborder du tableau :
+                 icônes d'abord, puis l'action principale du profil. -->
+            <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-secondary btn-sm" title="Voir détails" aria-label="Voir le détail de la commande"
                     onclick="voirDetail(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')">
               <i class="ph-duotone ph-eye"></i>
             </button>
-            <a href="?id=<?= $cmd['id'] ?>&export=1&format=pdf" target="_blank" class="btn btn-secondary btn-sm" title="Imprimer PDF"><i class="ph ph-printer" aria-hidden="true"></i></a>
+            <a href="?id=<?= $cmd['id'] ?>&export=1&format=pdf" target="_blank" class="btn btn-secondary btn-sm" title="Imprimer PDF" aria-label="Imprimer le bon de commande en PDF"><i class="ph ph-printer" aria-hidden="true"></i></a>
             <?php if(($is_gsb || ($is_gestionnaire && !$bob_a_choisir)) && $cmd['statut']==='en_attente_livraison' && (int)$cmd['nb_lignes_bobine'] > 0 && cmdbob_actif()): ?>
-              <button class="btn btn-sm" style="background:#E0F2FE;color:#075985;border:1.5px solid #7DD3FC" onclick="ouvrirBobines(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>',<?= $bob_a_choisir ? 'false' : 'true' ?>)"><i class="ph ph-film-strip" aria-hidden="true"></i> <?= $bob_a_choisir ? 'Choisir les bobines' : 'Bobines choisies' ?></button>
+              <button class="btn btn-sm" style="background:#E0F2FE;color:#075985;border:1.5px solid #7DD3FC;white-space:nowrap" onclick="ouvrirBobines(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>',<?= $bob_a_choisir ? 'false' : 'true' ?>)"><i class="ph ph-film-strip" aria-hidden="true"></i> <?= $bob_a_choisir ? 'Choisir les bobines' : 'Bobines choisies' ?></button>
             <?php endif; ?>
             <?php if($is_gestionnaire && $cmd['statut']==='en_attente_livraison'): ?>
-              <?php if($bob_a_choisir): ?>
-              <span class="btn btn-sm" style="background:#F1F5F9;color:#475569;border:1.5px dashed #CBD5E1;cursor:default" title="Le GSB doit d'abord choisir les bobines de cette commande"><i class="ph ph-hourglass" aria-hidden="true"></i> Bobines à choisir (GSB)</span>
+              <?php if($bob_a_choisir && $is_gsb): /* il choisit lui-même : bouton ci-dessus */ ?>
+              <?php elseif($bob_a_choisir): ?>
+              <span class="btn btn-sm" style="background:#F1F5F9;color:#475569;border:1.5px dashed #CBD5E1;cursor:default;white-space:nowrap" title="Le GSB doit d'abord choisir les bobines de cette commande"><i class="ph ph-hourglass" aria-hidden="true"></i> En attente du GSB</span>
               <?php else: ?>
-              <button class="btn btn-primary btn-sm" onclick="ouvrirLivraison(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')"><i class="ph ph-truck" aria-hidden="true"></i> Expédier</button>
+              <button class="btn btn-primary btn-sm" style="white-space:nowrap" onclick="ouvrirLivraison(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')"><i class="ph ph-truck" aria-hidden="true"></i> Expédier</button>
               <?php endif; ?>
             <?php endif; ?>
             <?php if($cmd['statut']==='en_cours_livraison' && $is_coord): ?>
@@ -1698,8 +1723,11 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
             <?php if($cmd['statut']==='modification_demandee' && $is_coord): ?>
               <button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6;border:1.5px solid #ddd6fe" onclick="ouvrirCorrection(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')"><i class="ph ph-pencil-simple" aria-hidden="true"></i> Corriger</button>
             <?php endif; ?>
+            <?php if($is_gsb && $bob_a_choisir): ?>
+              <button class="btn btn-sm" style="background:#FEE2E2;color:#991B1B;border:1.5px solid #FCA5A5" title="Annuler la commande (bobines non choisies)" aria-label="Annuler la commande" onclick="annulerPrepa(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')"><i class="ph ph-x" aria-hidden="true"></i></button>
+            <?php endif; ?>
             <?php if($cmd['statut']==='en_attente' && ($is_coord || $is_superviseur || $is_gestionnaire)): ?>
-              <button class="btn btn-sm" style="background:#FEE2E2;color:#991B1B;border:1.5px solid #FCA5A5" onclick="annuler(<?= $cmd['id'] ?>)"><i class="ph ph-x" aria-hidden="true"></i></button>
+              <button class="btn btn-sm" style="background:#FEE2E2;color:#991B1B;border:1.5px solid #FCA5A5" title="Annuler la commande" aria-label="Annuler la commande" onclick="annuler(<?= $cmd['id'] ?>)"><i class="ph ph-x" aria-hidden="true"></i></button>
             <?php endif; ?>
             </div>
           </td>
@@ -2806,6 +2834,10 @@ async function confirmerReception(btn){
   fermer('Reception');
   setTimeout(() => location.reload(), 800);
 }
+async function annulerPrepa(id,num){const motif=(prompt('Annuler la commande '+num+' ?
+
+Les bobines déjà réservées seront libérées et le demandeur prévenu.
+Motif (obligatoire) :')||'').trim();if(!motif)return;const d=await ap({action:'annuler',cmd_id:id,motif});if(d.success){toast(d.message,'success');setTimeout(()=>location.reload(),800);}else toast(d.message,'danger');}
 async function annuler(id){if(!confirm('Annuler cette commande ?'))return;const d=await ap({action:'annuler',cmd_id:id});if(d.success){toast(d.message,'success');setTimeout(()=>location.reload(),800);}else toast(d.message,'danger');}
 </script>
 
