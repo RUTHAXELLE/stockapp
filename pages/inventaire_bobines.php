@@ -102,11 +102,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $bobines = db_fetch_all(
             "SELECT b.id, b.numero, b.type_code, b.serie, b.films_restants
              FROM op_bobines b
-             WHERE b.site_id=? AND b.statut NOT IN ('retiree','epuisee')
+             WHERE b.site_id=? AND " . INV_BOBINES_A_COMPTER . "
              ORDER BY b.serie, b.type_code, b.numero",
             [$site_id]
         );
-        if (empty($bobines)) json_response(false,'Aucune bobine active sur ce site.');
+        if (empty($bobines)) json_response(false,'Aucune bobine à compter sur ce site.');
 
         db_begin();
         try {
