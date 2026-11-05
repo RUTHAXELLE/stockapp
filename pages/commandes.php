@@ -1065,7 +1065,9 @@ if (isset($_GET['export'], $_GET['id'])) {
     }
 
     if ($format === 'excel') _bdc_excel($cmd, $lignes, $ctx);
-    else _bdc_pdf($cmd, $lignes, $voir_prix, $ctx);
+    // Bon de commande sans prix : P.U., total et total HT n'y servent pas
+    // (dotations internes, bobines et rivets non valorisés).
+    else _bdc_pdf($cmd, $lignes, false, $ctx);
     exit;
 }
 
