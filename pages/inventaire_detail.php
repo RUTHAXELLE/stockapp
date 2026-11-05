@@ -340,19 +340,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 
-    // ── AJOUTER UNE BOBINE du site absente de la liste (une épuisée
-    //    retrouvée avec des films, cf. inv_ajouter_bobine()).
-    if ($action==='ajouter_bobine') {
-        if (!$can_edit) json_response(false,'Inventaire non modifiable.');
-        db_begin();
-        try {
-            $b = inv_ajouter_bobine($inv, (string)($_POST['numero'] ?? ''));
-            audit_log($user['id'],'UPDATE','inventaire_bobines',$inv_id,"Ajout bobine {$b['numero']} (statut {$b['statut']}) à l'inventaire #$inv_id");
-            db_commit();
-            json_response(true,"Bobine {$b['numero']} ajoutée à l'inventaire.");
-        } catch(Exception $e){ db_rollback(); json_response(false,$e->getMessage()); }
-    }
-
     // ── VALIDER L'INVENTAIRE
     if ($action==='valider') {
         if (!$can_validate) json_response(false,'Seul le GSB ou un administrateur peut valider l\'inventaire.');
@@ -695,7 +682,6 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
     </a>
     <?php endif; ?>
     <?php if($can_edit): ?>
-    <button class="btn btn-secondary" onclick="ouvrirAjoutBobine()" title="Ajouter une bobine du site absente de la liste (par exemple une bobine épuisée qui contient encore des films)"><i class="ph ph-plus-circle" aria-hidden="true"></i> Ajouter une bobine</button>
     <button class="btn btn-secondary" id="btnSauverTout" onclick="sauverTout()"><i class="ph ph-floppy-disk" aria-hidden="true"></i> Tout sauver</button>
     <?php endif; ?>
     <?php if($can_validate): ?>
@@ -761,29 +747,6 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
     </div>
   </div>
 </div>
-
-<?php if($can_edit): ?>
-<!-- MODAL AJOUTER UNE BOBINE -->
-<div id="modalAjoutBobine" style="display:none;position:fixed;inset:0;background:rgba(13,31,53,.5);z-index:800;align-items:center;justify-content:center"
-     onclick="if(event.target===this)this.style.display='none'">
-  <div style="background:white;border-radius:16px;padding:22px 24px;width:100%;max-width:440px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
-    <h3 style="font-family:'Montserrat',sans-serif;font-size:16px;font-weight:800;color:var(--navy);margin:0 0 6px">Ajouter une bobine</h3>
-    <p style="font-size:12.5px;color:var(--muted);margin:0 0 14px">
-      Pour une bobine de <?= h($inv['site_nom'] ?? 'ce site') ?> absente de la liste, par exemple une bobine marquée épuisée qui contient encore des films. Elle se compte ensuite comme les autres.
-    </p>
-    <div id="ajoutBobineAlert"></div>
-    <div class="form-group" style="margin-bottom:6px">
-      <label for="ajoutBobineNumero" style="font-size:12.5px;font-weight:700">Numéro de la bobine *</label>
-      <input type="text" id="ajoutBobineNumero" class="form-control" placeholder="Ex. H001461-5-1-17" autocomplete="off"
-             onkeydown="if(event.key==='Enter')ajouterBobine()">
-    </div>
-    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
-      <button class="btn btn-secondary" onclick="document.getElementById('modalAjoutBobine').style.display='none'">Annuler</button>
-      <button class="btn btn-primary" id="btnAjoutBobine" onclick="ajouterBobine()">Ajouter la bobine</button>
-    </div>
-  </div>
-</div>
-<?php endif; ?>
 
 <!-- MODAL RÉPONDRE À UNE DEMANDE -->
 <div id="modalRepondreModif" style="display:none;position:fixed;inset:0;background:rgba(13,31,53,.5);z-index:800;align-items:center;justify-content:center"
@@ -1172,22 +1135,6 @@ function onPhyInput(id, stockSys, consoMoy){
   updateStats();
 }
 
-function ouvrirAjoutBobine(){
-  document.getElementById('ajoutBobineAlert').innerHTML='';
-  document.getElementById('ajoutBobineNumero').value='';
-  document.getElementById('modalAjoutBobine').style.display='flex';
-  document.getElementById('ajoutBobineNumero').focus();
-}
-async function ajouterBobine(){
-  const numero=document.getElementById('ajoutBobineNumero').value.trim();
-  const zone=document.getElementById('ajoutBobineAlert');
-  if(!numero){zone.innerHTML='<div class="alert alert-danger">Saisissez le numéro de la bobine.</div>';return;}
-  const btn=document.getElementById('btnAjoutBobine');btn.disabled=true;
-  const d=await ap({action:'ajouter_bobine',numero});
-  btn.disabled=false;
-  if(!d.success){zone.innerHTML='<div class="alert alert-danger"></div>';zone.firstChild.textContent=d.message;return;}
-  toast(d.message);setTimeout(()=>location.reload(),900);
-}
 async function sauverLigne(id){
   const phyEl = document.getElementById('phy-'+id);
   const phy   = phyEl ? phyEl.value : '';

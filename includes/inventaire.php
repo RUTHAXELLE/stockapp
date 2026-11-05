@@ -45,39 +45,9 @@ function inv_libelle_auto(string $debut, string $typePeriode): string {
 //    passée à 0 à tort (saisie trop forte dans un point), elle sortait du
 //    point journalier et l'inventaire, qui l'ignorait, ne pouvait plus la
 //    rattraper. Recomptée avec des films, elle repasse « En cours » à la
-//    validation (cf. inv_valider_bobines()). Une épuisée qu'OptoTrace voit
-//    aussi à 0 s'ajoute à la main (inv_ajouter_bobine()), sans encombrer
-//    chaque inventaire de toutes les bobines vides du site.
+//    validation (cf. inv_valider_bobines()).
 const INV_BOBINES_A_COMPTER =
     "(b.statut NOT IN ('retiree','epuisee') OR (b.statut='epuisee' AND b.stock_systeme > 0))";
-
-// ── Ajoute une bobine du site à un inventaire en cours (brouillon) : une
-//    épuisée qui ne figure pas dans la liste, retrouvée avec des films lors
-//    du comptage. Lève une Exception si impossible. À appeler dans la
-//    transaction de l'appelant.
-function inv_ajouter_bobine(array $inv, string $numero): array {
-    if (($inv['statut'] ?? '') !== 'brouillon') throw new Exception('Inventaire non modifiable.');
-    $numero = trim($numero);
-    if ($numero === '') throw new Exception('Numéro de bobine obligatoire.');
-    $b = db_fetch_one("SELECT id, numero, site_id, statut, films_restants FROM op_bobines WHERE numero=?", [$numero]);
-    if (!$b) throw new Exception("Bobine $numero introuvable.");
-    if ((int)$b['site_id'] !== (int)$inv['site_id']) throw new Exception("La bobine $numero n'est pas affectée à ce site.");
-    if ($b['statut'] === 'retiree') throw new Exception("La bobine $numero est retirée : elle ne se compte plus.");
-    if (db_fetch_value("SELECT COUNT(*) FROM inventaire_details_bobines WHERE inventaire_id=? AND bobine_id=?", [$inv['id'], $b['id']]))
-        throw new Exception("La bobine $numero figure déjà dans cet inventaire.");
-
-    $ecart_connu = (int)db_fetch_value("SELECT COALESCE(SUM(ecart),0) FROM ecarts_bobines WHERE bobine_id=? AND statut='ouvert'", [$b['id']]);
-    db_query(
-        "INSERT INTO inventaire_details_bobines (inventaire_id,bobine_id,stock_systeme,qte_temps_reel,stock_physique,ecart,ecart_connu_avant,conso_quotidienne_moy)
-         VALUES (?,?,?,?,0,0,?,?)",
-        [$inv['id'], $b['id'], (int)$b['films_restants'], (int)$b['films_restants'], $ecart_connu, round(conso_moy_bobine((int)$b['id']), 2)]
-    );
-    db_query(
-        "UPDATE inventaires_bobines SET nb_bobines=nb_bobines+1, total_films_systeme=total_films_systeme+? WHERE id=?",
-        [(int)$b['films_restants'], $inv['id']]
-    );
-    return $b;
-}
 
 // ── Crée l'inventaire mensuel d'un site (+ ses lignes détail) et le
 //    rattache à une session. Lève une Exception si impossible (déjà
