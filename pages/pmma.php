@@ -26,7 +26,11 @@ $is_coord   = $role_slug === 'coordinateur_site';
 $site_force = ($is_coord && $user['site_id']) ? (int)$user['site_id'] : 0;
 $sites_list = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
 require_permission('pmma', 'can_read');
-$can_saisie = can('pmma', 'can_create');
+// Saisie (entrée, sortie, import, modèle) : pas pour le coordinateur, qui
+// consulte le stock de son site. Ce stock arrive par la réception des
+// commandes et sort par le point journalier ; une saisie libre le
+// fausserait sans contrepartie au dépôt.
+$can_saisie = can('pmma', 'can_create') && !$is_coord;
 
 // ── Catalogue des types de PMMA
 // Le type était saisi en texte libre, ce qui créait un type nouveau à
@@ -54,7 +58,7 @@ foreach ($types_connus as $t) $type_capacites[$t] = capacite_carton_pmma($t);
 // Form classique (pas AJAX), même principe que pages/equipements.php.
 require_once __DIR__ . '/../includes/import_helpers.php';
 
-if (($_GET['modele'] ?? '') === '1') {
+if (($_GET['modele'] ?? '') === '1' && $can_saisie) {
     import_generer_modele(
         ['Site', 'Type PMMA', 'Cartons', 'Unités en vrac'],
         [$sites_list[0]['nom'] ?? '', $types_connus[0] ?? 'Type D', 10, 0],
