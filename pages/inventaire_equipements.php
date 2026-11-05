@@ -12,6 +12,7 @@ require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/inventaire.php';
+require_once __DIR__ . '/../includes/equipements_trouves.php';
 
 require_auth();
 
@@ -27,7 +28,8 @@ require_permission('inventaire_equipements', 'can_read');
 $page_title   = 'Inventaire Équipements';
 $active_page  = 'inventaire_equipements';
 $sites_list   = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
-$can_validate = in_array($role_slug, ['admin','superadmin','superviseur_operation','gestionnaire_stock_bobines','gestionnaire_stock']);
+// Validation : pas le GSB (gestionnaire_stock_bobines), cf. inventaire_detail_equipements.php.
+$can_validate = in_array($role_slug, ['admin','superadmin','superviseur_operation','gestionnaire_stock']);
 $can_create   = can('inventaire_equipements','can_create');
 
 // ============================================================
@@ -116,6 +118,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $inv_id = (int)($_POST['inv_id'] ?? 0);
         $inv = db_fetch_one("SELECT * FROM inventaires_equipements WHERE id=?",[$inv_id]);
         if (!$inv || $inv['statut'] !== 'brouillon') json_response(false,'Inventaire introuvable ou déjà validé.');
+        // Même garde que la fiche détail : les équipements trouvés hors
+        // système doivent être traités avant (includes/equipements_trouves.php).
+        if (eqt_disponible() && ($n_att = eqt_nb_en_attente($inv_id)) > 0)
+            json_response(false, "$n_att équipement(s) trouvé(s) attendent la décision du gestionnaire de stock (créer, transférer ou refuser) avant la validation.");
 
         $lignes = db_fetch_all("SELECT * FROM inventaire_details_equipements WHERE inventaire_id=?",[$inv_id]);
         $nb_ecarts = 0; $nb_trouves = 0;

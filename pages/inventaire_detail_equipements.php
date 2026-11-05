@@ -10,6 +10,8 @@ require_once __DIR__ . '/../includes/session.php';
 require_once __DIR__ . '/../includes/audit.php';
 require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
+require_once __DIR__ . '/../includes/upload.php';
+require_once __DIR__ . '/../includes/equipements_trouves.php';
 
 require_auth();
 // Gate pilotée par la permission DB — cf. pages/inventaire_equipements.php.
@@ -31,9 +33,19 @@ if (!$inv) { header('Location: inventaire_equipements.php'); exit; }
 $role_slug    = $user['role_slug'] ?? '';
 $is_coord     = ($role_slug === 'coordinateur_site');
 $can_edit     = $inv['statut'] === 'brouillon' && can('inventaire_equipements','can_update');
+// Validation : pas le GSB (gestionnaire_stock_bobines), qui n'a pas la
+// charge des équipements.
 $can_validate = $inv['statut'] === 'brouillon'
-    && in_array($role_slug, ['admin','superadmin','superviseur_operation','gestionnaire_stock_bobines','gestionnaire_stock']);
+    && in_array($role_slug, ['admin','superadmin','superviseur_operation','gestionnaire_stock']);
 $can_demander_site  = can('inventaire_sessions','can_read');
+// Équipements trouvés hors système (includes/equipements_trouves.php) :
+// seul le coordinateur du site déclare ; le gestionnaire de stock (ou un
+// administrateur) décide, avant la validation de l'inventaire.
+$eqt_actif     = eqt_disponible();
+$peut_declarer = $eqt_actif && $can_edit && $is_coord && $inv['site_id']
+              && (int)($user['site_id'] ?? 0) === (int)$inv['site_id'];
+$peut_trancher = $eqt_actif && $inv['statut'] === 'brouillon'
+              && in_array($role_slug, ['gestionnaire_stock','admin','superadmin'], true);
 $page_title  = 'Inventaire équipements du ' . fmt_date($inv['date_inventaire']);
 $active_page = 'inventaire_equipements';
 
@@ -248,8 +260,59 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 
+    // ── ÉQUIPEMENT TROUVÉ HORS SYSTÈME : déclaration (coordinateur)
+    if ($action==='declarer_trouve') {
+        if (!$peut_declarer) json_response(false,"Seul le coordinateur du site peut déclarer un équipement trouvé.");
+        $photo = null;
+        if (!empty($_FILES['photo']) && $_FILES['photo']['error'] !== UPLOAD_ERR_NO_FILE) {
+            $up = upload_document('photo', 'fiche', 'inv_equip_trouve_' . $inv_id, false);
+            if (!$up['success']) json_response(false, $up['message']);
+            if ($up['filename'] && str_ends_with(strtolower($up['filename']), '.pdf')) {
+                upload_delete($up['filename'], 'fiche');
+                json_response(false, 'La photo doit être une image (JPG, PNG ou WEBP).');
+            }
+            $photo = $up['filename'];
+        }
+        try {
+            $tid = eqt_declarer($inv, $_POST, $photo, (int)$user['id']);
+        } catch (Exception $e) {
+            if ($photo) upload_delete($photo, 'fiche');
+            json_response(false, $e->getMessage());
+        }
+        audit_log($user['id'],'CREATE','inventaire_equipements',$inv_id,"Équipement trouvé déclaré #$tid (inventaire #$inv_id)");
+        json_response(true,'Équipement déclaré. Le gestionnaire de stock le confirmera à la validation.');
+    }
+
+    // ── Retrait d'une déclaration encore en attente (coordinateur)
+    if ($action==='retirer_trouve') {
+        if (!$peut_declarer) json_response(false,'Action non autorisée.');
+        $tid = (int)($_POST['trouve_id'] ?? 0);
+        $t = db_fetch_one("SELECT * FROM inventaire_equipements_trouves WHERE id=? AND inventaire_id=? AND statut='en_attente'", [$tid, $inv_id]);
+        if (!$t) json_response(false,'Déclaration introuvable ou déjà traitée.');
+        db_query("DELETE FROM inventaire_equipements_trouves WHERE id=?", [$tid]);
+        if ($t['photo']) upload_delete($t['photo'], 'fiche');
+        audit_log($user['id'],'DELETE','inventaire_equipements',$inv_id,"Déclaration d'équipement trouvé #$tid retirée");
+        json_response(true,'Déclaration retirée.');
+    }
+
+    // ── Décision du gestionnaire de stock : accepte | transfere | refuse
+    if ($action==='traiter_trouve') {
+        if (!$peut_trancher) json_response(false,'Seul le gestionnaire de stock ou un administrateur peut traiter cette déclaration.');
+        $tid = (int)($_POST['trouve_id'] ?? 0);
+        $decision = (string)($_POST['decision'] ?? '');
+        db_begin();
+        try {
+            $msg = eqt_traiter($inv, $tid, $decision, $_POST, (int)$user['id']);
+            audit_log($user['id'],'UPDATE','inventaire_equipements',$inv_id,"Équipement trouvé #$tid : $decision — $msg");
+            db_commit();
+            json_response(true, $msg);
+        } catch(Exception $e){ db_rollback(); json_response(false, $e->getMessage()); }
+    }
+
     if ($action==='valider') {
-        if (!$can_validate) json_response(false,'Seul le GSB ou un administrateur peut valider l\'inventaire.');
+        if (!$can_validate) json_response(false,'Seul le gestionnaire de stock ou un administrateur peut valider l\'inventaire.');
+        if ($eqt_actif && ($n_att = eqt_nb_en_attente($inv_id)) > 0)
+            json_response(false, "$n_att équipement(s) trouvé(s) attendent la décision du gestionnaire de stock (créer, transférer ou refuser) avant la validation.");
         $lignes = db_fetch_all("SELECT * FROM inventaire_details_equipements WHERE inventaire_id=?",[$inv_id]);
         $nb_ecarts = 0; $nb_trouves = 0;
         db_begin();
@@ -338,6 +401,11 @@ foreach ($corrections_rows as $c) {
     }
 }
 
+$trouves      = $eqt_actif ? eqt_lister($inv_id) : [];
+$nb_trouves_att = count(array_filter($trouves, fn($t)=>$t['statut']==='en_attente'));
+$nomenclatures_eqt = $peut_declarer
+    ? db_fetch_all("SELECT id, code, libelle, categorie FROM nomenclatures ORDER BY categorie, libelle")
+    : [];
 $nb_saisis    = count(array_filter($lignes, fn($l)=>$l['trouve']!==null));
 $nb_manquants = count(array_filter($lignes, fn($l)=>(int)$l['trouve']===0));
 $nb_non_saisi = count($lignes) - $nb_saisis;
@@ -386,6 +454,9 @@ include __DIR__ . '/../templates/header.php';
     </div>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <?php if($peut_declarer): ?>
+    <button class="btn btn-secondary" onclick="ouvrirDeclaration()" title="Équipement présent sur le site mais absent de la liste"><i class="ph ph-plus-circle" aria-hidden="true"></i> Déclarer un équipement trouvé</button>
+    <?php endif; ?>
     <?php if($can_edit): ?>
     <button class="btn btn-secondary" id="btnSauverTout" onclick="sauverTout()"><i class="ph ph-floppy-disk" aria-hidden="true"></i> Tout sauver</button>
     <?php endif; ?>
@@ -641,6 +712,152 @@ include __DIR__ . '/../templates/header.php';
   </div>
 </div>
 
+<?php if($eqt_actif && ($trouves || $peut_declarer)): ?>
+<!-- ÉQUIPEMENTS TROUVÉS HORS SYSTÈME -->
+<div class="card" style="margin-top:18px;padding:18px 20px" id="sectionTrouves">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+    <h3 style="font-family:'Montserrat',sans-serif;font-size:15px;font-weight:800;color:var(--navy);margin:0">
+      Équipements trouvés hors système
+      <?php if($nb_trouves_att): ?><span class="chip orange" style="margin-left:6px"><?= $nb_trouves_att ?> en attente</span><?php endif; ?>
+    </h3>
+    <?php if($peut_declarer): ?>
+    <button class="btn btn-secondary" style="font-size:13px" onclick="ouvrirDeclaration()"><i class="ph ph-plus-circle" aria-hidden="true"></i> Déclarer un équipement trouvé</button>
+    <?php endif; ?>
+  </div>
+  <?php if(!$trouves): ?>
+  <p style="font-size:13px;color:var(--muted);margin:0">Un équipement présent sur le site mais absent de la liste ci-dessus se déclare ici. Le gestionnaire de stock le confirme à la validation.</p>
+  <?php else: ?>
+  <div class="table-wrap" style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="background:#f1f5f9;color:var(--navy)">
+      <th style="padding:8px 10px;text-align:left">Type</th>
+      <th style="padding:8px 10px;text-align:left">Marque / Modèle</th>
+      <th style="padding:8px 10px;text-align:left">N° série fabricant</th>
+      <th style="padding:8px 10px;text-align:left">État · Emplacement</th>
+      <th style="padding:8px 10px;text-align:center">Photo</th>
+      <th style="padding:8px 10px;text-align:left">Décision</th>
+    </tr></thead>
+    <tbody>
+    <?php foreach($trouves as $t):
+      $autre_site = $t['existant_numero'] && (int)$t['existant_site_id'] !== (int)$inv['site_id']; ?>
+    <tr style="border-top:1px solid #e2e8f0;vertical-align:top" id="trouve-<?= (int)$t['id'] ?>">
+      <td style="padding:8px 10px"><?= h($t['type_libelle']) ?></td>
+      <td style="padding:8px 10px"><?= h(trim(($t['marque']??'').' '.($t['modele']??'')) ?: '—') ?>
+        <?php if($t['notes']): ?><div style="font-size:12px;color:var(--muted)"><?= h($t['notes']) ?></div><?php endif; ?></td>
+      <td style="padding:8px 10px;font-family:monospace"><?= h($t['numero_serie_origine'] ?: '—') ?>
+        <?php if($t['statut']==='en_attente' && $t['existant_numero']): ?>
+        <div style="font-family:inherit;font-size:12px;color:#b7791f;margin-top:3px">Déjà connu : <?= h($t['existant_numero']) ?><?= $t['existant_site_nom'] ? ' · '.h($t['existant_site_nom']) : '' ?></div>
+        <?php endif; ?></td>
+      <td style="padding:8px 10px"><?= h(EQT_ETATS[$t['etat']] ?? $t['etat']) ?><?= $t['emplacement'] ? ' · '.h($t['emplacement']) : '' ?></td>
+      <td style="padding:8px 10px;text-align:center"><?= $t['photo'] ? upload_link($t['photo'], 'fiche', 'Voir') : '<span style="color:var(--muted)">—</span>' ?></td>
+      <td style="padding:8px 10px">
+        <?php if($t['statut']==='accepte'): ?>
+          <span style="color:#1e8449;font-weight:600">Fiche créée : <?= h($t['equipement_numero'] ?? '') ?></span>
+        <?php elseif($t['statut']==='transfere'): ?>
+          <span style="color:#1565c0;font-weight:600">Transféré sur le site : <?= h($t['equipement_numero'] ?? '') ?></span>
+        <?php elseif($t['statut']==='refuse'): ?>
+          <span style="color:#c0392b;font-weight:600">Refusé</span><div style="font-size:12px;color:var(--muted)"><?= h($t['motif_refus'] ?? '') ?></div>
+        <?php elseif($peut_trancher): ?>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <?php if($autre_site): ?>
+            <button class="btn btn-primary" style="font-size:12px;padding:5px 10px" onclick="trancherTrouve(<?= (int)$t['id'] ?>,'transfere')">Transférer sur ce site</button>
+            <?php elseif(!$t['existant_numero']): ?>
+            <button class="btn btn-success" style="font-size:12px;padding:5px 10px" onclick="ouvrirAcceptation(<?= (int)$t['id'] ?>)">Créer la fiche</button>
+            <?php endif; ?>
+            <button class="btn btn-secondary" style="font-size:12px;padding:5px 10px" onclick="trancherTrouve(<?= (int)$t['id'] ?>,'refuse')">Refuser</button>
+          </div>
+        <?php else: ?>
+          <span style="color:#b7791f">En attente du gestionnaire de stock</span>
+          <?php if($peut_declarer): ?>
+          <button class="btn btn-secondary" style="font-size:12px;padding:3px 8px;margin-left:6px" onclick="retirerTrouve(<?= (int)$t['id'] ?>)">Retirer</button>
+          <?php endif; ?>
+        <?php endif; ?>
+      </td>
+    </tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table>
+  </div>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
+
+<?php if($peut_declarer): ?>
+<!-- MODAL DÉCLARER UN ÉQUIPEMENT TROUVÉ -->
+<div id="modalDeclaration" style="display:none;position:fixed;inset:0;background:rgba(13,31,53,.5);z-index:800;align-items:center;justify-content:center;padding:16px"
+     onclick="if(event.target===this)this.style.display='none'">
+  <form id="formDeclaration" onsubmit="event.preventDefault();envoyerDeclaration()"
+        style="background:white;border-radius:16px;padding:22px 24px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <h3 style="font-family:'Montserrat',sans-serif;font-size:16px;font-weight:800;color:var(--navy);margin:0 0 6px">Déclarer un équipement trouvé</h3>
+    <p style="font-size:12.5px;color:var(--muted);margin:0 0 14px">Équipement présent sur <?= h($inv['site_nom'] ?? 'le site') ?> mais absent de la liste. Le gestionnaire de stock le confirmera à la validation de l'inventaire.</p>
+    <div id="declAlert"></div>
+    <div class="form-group" style="margin-bottom:10px">
+      <label for="declType" style="font-size:12.5px;font-weight:700">Type d'équipement</label>
+      <select id="declType" name="nomenclature_id" class="form-control" required>
+        <option value="">— Choisir —</option>
+        <?php $cat_prec = null; foreach($nomenclatures_eqt as $n):
+          if ($n['categorie'] !== $cat_prec) { if ($cat_prec !== null) echo '</optgroup>'; echo '<optgroup label="'.h(ucfirst($n['categorie'] ?: 'Autre')).'">'; $cat_prec = $n['categorie']; } ?>
+        <option value="<?= (int)$n['id'] ?>"><?= h($n['libelle']) ?> (<?= h($n['code']) ?>)</option>
+        <?php endforeach; if ($cat_prec !== null) echo '</optgroup>'; ?>
+      </select>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:10px">
+      <div class="form-group" style="margin:0"><label for="declMarque" style="font-size:12.5px;font-weight:700">Marque</label>
+        <input type="text" id="declMarque" name="marque" class="form-control" maxlength="100"></div>
+      <div class="form-group" style="margin:0"><label for="declModele" style="font-size:12.5px;font-weight:700">Modèle</label>
+        <input type="text" id="declModele" name="modele" class="form-control" maxlength="100"></div>
+    </div>
+    <div class="form-group" style="margin-bottom:10px">
+      <label for="declNs" style="font-size:12.5px;font-weight:700">N° de série du fabricant <span style="font-weight:400;color:var(--muted)">(si lisible)</span></label>
+      <input type="text" id="declNs" name="numero_serie_origine" class="form-control" maxlength="100" autocomplete="off">
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:10px">
+      <div class="form-group" style="margin:0"><label for="declEtat" style="font-size:12.5px;font-weight:700">État *</label>
+        <select id="declEtat" name="etat" class="form-control">
+          <?php foreach(EQT_ETATS as $k=>$v): ?><option value="<?= $k ?>" <?= $k==='bon'?'selected':'' ?>><?= $v ?></option><?php endforeach; ?>
+        </select></div>
+      <div class="form-group" style="margin:0"><label for="declEmpl" style="font-size:12.5px;font-weight:700">Emplacement</label>
+        <input type="text" id="declEmpl" name="emplacement" class="form-control" maxlength="150" placeholder="Ex. bureau 2, guichet"></div>
+    </div>
+    <div class="form-group" style="margin-bottom:10px">
+      <label for="declPhoto" style="font-size:12.5px;font-weight:700">Photo <span style="font-weight:400;color:var(--muted)">(facultative)</span></label>
+      <input type="file" id="declPhoto" name="photo" class="form-control" accept="image/jpeg,image/png,image/webp" capture="environment">
+    </div>
+    <div class="form-group" style="margin-bottom:6px">
+      <label for="declNotes" style="font-size:12.5px;font-weight:700">Commentaire</label>
+      <textarea id="declNotes" name="notes" rows="2" class="form-control" placeholder="Où il a été trouvé, d'où il vient…"></textarea>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
+      <button type="button" class="btn btn-secondary" onclick="document.getElementById('modalDeclaration').style.display='none'">Annuler</button>
+      <button type="submit" class="btn btn-primary" id="btnDeclaration">Déclarer l'équipement</button>
+    </div>
+  </form>
+</div>
+<?php endif; ?>
+
+<?php if($peut_trancher): ?>
+<!-- MODAL CRÉER LA FICHE -->
+<div id="modalAcceptation" style="display:none;position:fixed;inset:0;background:rgba(13,31,53,.5);z-index:800;align-items:center;justify-content:center;padding:16px"
+     onclick="if(event.target===this)this.style.display='none'">
+  <div style="background:white;border-radius:16px;padding:22px 24px;width:100%;max-width:440px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <h3 style="font-family:'Montserrat',sans-serif;font-size:16px;font-weight:800;color:var(--navy);margin:0 0 6px">Créer la fiche équipement</h3>
+    <p style="font-size:12.5px;color:var(--muted);margin:0 0 14px">Le numéro interne est attribué automatiquement. Le prix et la date d'acquisition sont facultatifs et se complètent plus tard dans la fiche.</p>
+    <div id="accAlert"></div>
+    <input type="hidden" id="accId">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px">
+      <div class="form-group" style="margin:0"><label for="accPrix" style="font-size:12.5px;font-weight:700">Prix d'achat (FCFA)</label>
+        <input type="number" min="0" step="1" id="accPrix" class="form-control"></div>
+      <div class="form-group" style="margin:0"><label for="accDate" style="font-size:12.5px;font-weight:700">Date d'acquisition</label>
+        <input type="date" id="accDate" class="form-control"></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+      <button class="btn btn-secondary" onclick="document.getElementById('modalAcceptation').style.display='none'">Annuler</button>
+      <button class="btn btn-success" id="btnAcceptation" onclick="confirmerAcceptation()">Créer la fiche</button>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
+
 <?php if($can_edit || $can_validate): ?>
 <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
   <?php if($can_edit): ?>
@@ -877,6 +1094,63 @@ async function confirmerValidation(){
   if(d.success){toast(d.message);setTimeout(()=>location.href='inventaire_equipements.php',1500);}
   else{document.getElementById('alertZone').innerHTML=`<div style="background:#fdf0ef;padding:10px 16px;border-radius:8px;font-size:13px;color:#c0392b;margin-bottom:12px"><i class="ph ph-x-circle" aria-hidden="true"></i> ${d.message}</div>`;}
 }
+
+function msgErreur(zoneId, msg){
+  const z=document.getElementById(zoneId); z.innerHTML='<div style="background:#fdf0ef;padding:10px 14px;border-radius:8px;font-size:13px;color:#c0392b;margin-bottom:12px"></div>';
+  z.firstChild.textContent=msg;
+}
+<?php if($peut_declarer): ?>
+function ouvrirDeclaration(){
+  document.getElementById('formDeclaration').reset();
+  document.getElementById('declAlert').innerHTML='';
+  document.getElementById('modalDeclaration').style.display='flex';
+}
+async function envoyerDeclaration(){
+  const f=document.getElementById('formDeclaration');
+  if(!f.nomenclature_id.value){msgErreur('declAlert',"Choisissez le type d'équipement.");return;}
+  if(!f.marque.value.trim() && !f.modele.value.trim() && !f.numero_serie_origine.value.trim()){
+    msgErreur('declAlert','Renseignez au moins la marque, le modèle ou le numéro de série.');return;}
+  const fd=new FormData(f); fd.append('action','declarer_trouve');
+  const btn=document.getElementById('btnDeclaration'); btn.disabled=true; btn.textContent='Envoi…';
+  let d;
+  try{ d=await fetch(window.location.href,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},body:fd}).then(r=>r.json()); }
+  catch(e){ d={success:false,message:"Envoi impossible. Vérifiez la connexion et la taille de la photo (10 Mo au plus)."}; }
+  btn.disabled=false; btn.textContent="Déclarer l'équipement";
+  if(!d.success){msgErreur('declAlert',d.message);return;}
+  toast(d.message); setTimeout(()=>location.reload(),1200);
+}
+async function retirerTrouve(id){
+  if(!confirm('Retirer cette déclaration ?')) return;
+  const d=await ap({action:'retirer_trouve',trouve_id:id});
+  if(d.success){toast(d.message);setTimeout(()=>location.reload(),900);} else msgErreur('alertZone',d.message);
+}
+<?php endif; ?>
+<?php if($peut_trancher): ?>
+function ouvrirAcceptation(id){
+  document.getElementById('accId').value=id;
+  document.getElementById('accPrix').value=''; document.getElementById('accDate').value='';
+  document.getElementById('accAlert').innerHTML='';
+  document.getElementById('modalAcceptation').style.display='flex';
+}
+async function confirmerAcceptation(){
+  const btn=document.getElementById('btnAcceptation'); btn.disabled=true;
+  const d=await ap({action:'traiter_trouve',trouve_id:document.getElementById('accId').value,decision:'accepte',
+    prix_achat:document.getElementById('accPrix').value,date_acquisition:document.getElementById('accDate').value});
+  btn.disabled=false;
+  if(!d.success){msgErreur('accAlert',d.message);return;}
+  toast(d.message); setTimeout(()=>location.reload(),1200);
+}
+async function trancherTrouve(id, decision){
+  const data={action:'traiter_trouve',trouve_id:id,decision};
+  if(decision==='refuse'){
+    const motif=(prompt('Motif du refus (obligatoire) :')||'').trim();
+    if(!motif) return;
+    data.motif=motif;
+  } else if(!confirm("Rattacher cet équipement au site de l'inventaire ? Un mouvement de transfert sera enregistré.")) return;
+  const d=await ap(data);
+  if(d.success){toast(d.message);setTimeout(()=>location.reload(),1200);} else msgErreur('alertZone',d.message);
+}
+<?php endif; ?>
 
 function updateStats(){
   const rows=document.querySelectorAll('tr[id^="row-"]');
