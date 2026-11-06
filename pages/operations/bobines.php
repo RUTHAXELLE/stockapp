@@ -4,6 +4,7 @@
 //  Stock 500 unités fixe · Consommation tracée · Inventaire
 // ============================================================
 require_once __DIR__ . '/../../includes/db.php';
+require_once __DIR__ . '/../../includes/bobines_absentes.php';
 require_once __DIR__ . '/../../includes/session.php';
 require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/helpers.php';
@@ -236,7 +237,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         if (!$motif) json_response(false,'Le motif est obligatoire pour déclarer une perte.');
         $bob = db_fetch_one("SELECT * FROM op_bobines WHERE id=?",[$id]);
         if (!$bob) json_response(false,'Bobine introuvable.');
-        if (!in_array($bob['statut'],['en_cours','en_stock'])) json_response(false,'Cette bobine ne peut pas être déclarée perdue.');
+        if (!in_array($bob['statut'],['en_cours','en_stock','absente'])) json_response(false,'Cette bobine ne peut pas être déclarée perdue.');
+        if ($bob['statut'] === 'absente' && $is_coord) json_response(false,'Une bobine absente est déclarée perdue par le gestionnaire de stock bobines.');
         db_query("UPDATE op_bobines SET statut='perdue', notes_perte=? WHERE id=?",[$motif,$id]);
         // Tracer mouvement de perte
         db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
@@ -607,7 +609,7 @@ $coord_types = db_fetch_all(
         </td>
         <td style="text-align:center">
           <span class="bstat bstat-<?= $b['statut'] ?>">
-            <?= ['en_cours'=>'▶️ En utilisation','en_stock'=>'<i class="ph ph-package" aria-hidden="true"></i> En stock','epuisee'=>'<i class="ph ph-x-circle" aria-hidden="true"></i> Épuisée','retiree'=>'<i class="ph ph-arrow-clockwise" aria-hidden="true"></i> Retirée','perdue'=>'<i class="ph ph-warning" aria-hidden="true"></i> Perdue'][$b['statut']] ?? h($b['statut']) ?>
+            <?= ['en_cours'=>'▶️ En utilisation','en_stock'=>'<i class="ph ph-package" aria-hidden="true"></i> En stock','epuisee'=>'<i class="ph ph-x-circle" aria-hidden="true"></i> Épuisée','retiree'=>'<i class="ph ph-arrow-clockwise" aria-hidden="true"></i> Retirée','perdue'=>'<i class="ph ph-warning" aria-hidden="true"></i> Perdue','absente'=>'<i class="ph ph-question" aria-hidden="true"></i> Absente'][$b['statut']] ?? h($b['statut']) ?>
           </span>
         </td>
         <td style="text-align:center">
@@ -655,6 +657,7 @@ endif;
 .bobine-status.epuisee{background:#fce4ec;color:#b71c1c}
 .bobine-status.retiree{background:#f5f5f5;color:#9e9e9e}
 .bobine-status.perdue{background:#fff3e0;color:#e65100}
+.bobine-status.absente{background:#fdf0ef;color:#c0392b}
 .bobine-status.terminee{background:#e8f5e9;color:#2e7d32}
 .bob-kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
 .bk{background:white;border:1px solid var(--border);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px}
@@ -696,6 +699,10 @@ endif;
   <button class="tab-btn" onclick="showTab('en_stock',this)"><i class="ph ph-package" aria-hidden="true"></i> En stock <span style="background:var(--success);color:white;border-radius:10px;padding:1px 7px;font-size:12px;margin-left:4px"><?= $stats_map['en_stock']['n']??0 ?></span></button>
   <button class="tab-btn" onclick="showTab('retiree',this)"><i class="ph ph-arrow-clockwise" aria-hidden="true"></i> Retirées</button>
   <button class="tab-btn" onclick="showTab('perdue',this)"><i class="ph ph-x-circle" aria-hidden="true"></i> Perdues <?= ($stats_map['perdue']['n']??0)>0?"<span style='background:#e65100;color:white;border-radius:10px;padding:1px 7px;font-size:12px;margin-left:4px'>".($stats_map['perdue']['n']??0)."</span>":'' ?></button>
+  <?php $bobines_absentes = bab_lister($site_force); ?>
+  <?php if(bab_actif()): ?>
+  <button class="tab-btn" onclick="showTab('absente',this)"><i class="ph ph-question" aria-hidden="true"></i> Absentes <?= $bobines_absentes?"<span style='background:#c0392b;color:white;border-radius:10px;padding:1px 7px;font-size:12px;margin-left:4px'>".count($bobines_absentes)."</span>":'' ?></button>
+  <?php endif; ?>
   <button class="tab-btn" onclick="showTab('ecarts',this)" id="tabEcartsBtn">
     <i class="ph ph-warning" aria-hidden="true"></i> Écarts <?= $nb_ecarts_ouverts>0?"<span style='background:var(--danger);color:white;border-radius:10px;padding:1px 7px;font-size:12px;margin-left:4px'>$nb_ecarts_ouverts</span>":'' ?>
   </button>
@@ -735,6 +742,7 @@ endif;
       <option value="epuisee"  <?= $f_statut==='epuisee'?'selected':'' ?>>❌ Épuisées</option>
       <option value="retiree"  <?= $f_statut==='retiree'?'selected':'' ?>>✅ Retirées</option>
       <option value="perdue"   <?= $f_statut==='perdue'?'selected':'' ?>>⚠️ Perdues</option>
+      <option value="absente"  <?= $f_statut==='absente'?'selected':'' ?>>❓ Absentes</option>
     </select>
 
     <select name="format" class="fsel" aria-label="Filtrer par format" onchange="bobFiltrer(this.form)">
@@ -1115,6 +1123,46 @@ endif;
     </div>
   </div>
 </div>
+
+<!-- TAB ABSENTES : déclarées absentes à l'inventaire, en attente d'être
+     retrouvées (cf. includes/bobines_absentes.php) -->
+<?php if(bab_actif()): ?>
+<div id="tab-absente" style="display:none">
+  <div class="card">
+    <div class="card-header"><h3><i class="ph ph-question" aria-hidden="true"></i> Bobines absentes <span style="font-size:13px;font-weight:400;color:var(--muted)">(<?= count($bobines_absentes) ?>)</span></h3></div>
+    <p style="font-size:12.5px;color:var(--muted);margin:0 0 10px;padding:0 16px">
+      Déclarées absentes à l'inventaire de leur site, elles attendent à l'entrepôt principal, hors stock disponible.
+      Un site qui en retrouve une l'ajoute à son inventaire. Jamais retrouvée : déclarez-la perdue, et signalez-la à EMUCI si OptoTrace la voit encore.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Numéro</th><th>Type</th><th>Absente de</th><th>Depuis</th><th style="text-align:center">Dernière qté ERP</th><th style="text-align:center">Qté OptoTrace</th><th></th></tr></thead>
+        <tbody>
+        <?php if(empty($bobines_absentes)): ?>
+          <tr><td colspan="7" style="text-align:center;padding:30px;color:var(--muted)">Aucune bobine absente.</td></tr>
+        <?php else: foreach($bobines_absentes as $b):
+          $jours_abs = $b['absente_le'] ? (int)floor((time() - strtotime($b['absente_le'])) / 86400) : null; ?>
+          <tr>
+            <td style="font-family:monospace;font-weight:700"><?= h($b['numero']) ?></td>
+            <td><?= h($b['type_code']) ?></td>
+            <td><?= h($b['absente_site_nom'] ?? '—') ?></td>
+            <td style="font-size:12px"><?= $b['absente_le'] ? fmt_date($b['absente_le'],'d/m/Y') . ' <span style="color:var(--muted)">(' . $jours_abs . ' j)</span>' : '—' ?></td>
+            <td style="text-align:center;font-weight:700"><?= fmt_number($b['films_restants'] ?? 0) ?></td>
+            <td style="text-align:center"><?= fmt_number($b['stock_systeme'] ?? 0) ?></td>
+            <td style="text-align:center;white-space:nowrap">
+              <?php if(can($perm_module_bob,'can_update') && !$is_coord): ?>
+              <button class="btn btn-sm" style="background:#fff3e0;color:#e65100;border:1px solid #ffcc80"
+                      onclick="declararerPerdue(<?= (int)$b['id'] ?>, '<?= h($b['numero']) ?>')" title="Jamais retrouvée : déclarer perdue"><i class="ph ph-x-circle" aria-hidden="true"></i> Perdue</button>
+              <?php endif; ?>
+            </td>
+          </tr>
+        <?php endforeach; endif; ?>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
 
 <!-- TAB DEMANDES -->
 <div id="tab-demandes" style="display:none">

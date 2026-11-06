@@ -198,7 +198,7 @@ if ($site_force) {
         "SELECT se.id, se.libelle, se.date_debut, se.date_fin, se.type_periode,
                 ib.id AS inv_id, ib.statut AS inv_statut, ib.nb_bobines,
                 (SELECT COUNT(*) FROM inventaire_details_bobines d
-                 WHERE d.inventaire_id = ib.id AND (d.stock_physique > 0 OR d.ecart != 0)) AS nb_saisis
+                 WHERE d.inventaire_id = ib.id AND (d.stock_physique > 0 OR d.ecart != 0" . (bab_actif() ? " OR d.absente = 1" : "") . ")) AS nb_saisis
          FROM inventaire_sessions se
          JOIN inventaire_session_sites iss ON iss.session_id = se.id
          LEFT JOIN inventaires_bobines ib ON ib.session_id = se.id AND ib.site_id = iss.site_id AND ib.statut != 'annule'

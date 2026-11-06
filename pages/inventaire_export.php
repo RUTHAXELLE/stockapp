@@ -115,7 +115,7 @@ function inv_export_details(string $type, array $ids): array {
 // écart stocké distingue « compté à zéro » de « pas compté » (même critère
 // que la validation, cf. inv_valider_bobines()).
 function inv_export_compte(array $l): bool {
-    return (int)$l['stock_physique'] > 0 || (int)$l['ecart'] !== 0;
+    return (int)$l['stock_physique'] > 0 || (int)$l['ecart'] !== 0 || !empty($l['absente']);
 }
 
 // ── Données : par type, chaque inventaire avec ses lignes et sa synthèse
@@ -238,7 +238,7 @@ if ($export === 'xlsx') {
             if ($c) { $tot[0] += (int)$l['stock_systeme']; $tot[1] += (int)$l['stock_physique']; $tot[2] += (int)$l['ecart']; }
             $base = [$inv['site_nom'] ?? '—', fmt_date($inv['date_inventaire']), $statut_lbl($inv['statut']), $l['article']];
             if ($t === 'bobines') $base[] = $l['sous_type'] ?? '';
-            $rows[] = array_merge($base, [(int)$l['stock_systeme'], $c ? (int)$l['stock_physique'] : 'Non compté', $c ? (int)$l['ecart'] : '', $l['notes'] ?? '']);
+            $rows[] = array_merge($base, [(int)$l['stock_systeme'], $c ? (!empty($l['absente']) ? 'Absente' : (int)$l['stock_physique']) : 'Non compté', $c ? (int)$l['ecart'] : '', $l['notes'] ?? '']);
         }
         $entetes = ['Site', 'Date', 'Statut', $t === 'bobines' ? 'Bobine' : 'Format'];
         if ($t === 'bobines') $entetes[] = 'Type';

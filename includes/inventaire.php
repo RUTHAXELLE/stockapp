@@ -7,6 +7,7 @@
 // ============================================================
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/consommation.php';
+require_once __DIR__ . '/bobines_absentes.php';
 
 // ── Durée (en mois) de chaque type de période standard
 const INV_PERIODES = ['mensuel' => 1, 'trimestriel' => 3, 'semestriel' => 6, 'annuel' => 12];
@@ -46,8 +47,12 @@ function inv_libelle_auto(string $debut, string $typePeriode): string {
 //    point journalier et l'inventaire, qui l'ignorait, ne pouvait plus la
 //    rattraper. Recomptée avec des films, elle repasse « En cours » à la
 //    validation (cf. inv_valider_bobines()).
+//    Ni les perdues, ni les absentes (renvoyées à l'entrepôt principal par un
+//    inventaire, cf. includes/bobines_absentes.php) : elles ne sont plus
+//    physiquement nulle part où les compter — un site qui en retrouve une
+//    l'ajoute à son inventaire.
 const INV_BOBINES_A_COMPTER =
-    "(b.statut NOT IN ('retiree','epuisee') OR (b.statut='epuisee' AND b.stock_systeme > 0))";
+    "(b.statut NOT IN ('retiree','epuisee','perdue','absente') OR (b.statut='epuisee' AND b.stock_systeme > 0))";
 
 // ── Crée l'inventaire mensuel d'un site (+ ses lignes détail) et le
 //    rattache à une session. Lève une Exception si impossible (déjà
@@ -126,20 +131,60 @@ function inv_valider_bobines(array $inv, int $user_id): array {
     $conso  = inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films');
     $nb_ecarts = 0;
     $total_physique = 0;
+    $bab = bab_actif();
+    $site_inv = (int)$inv['site_id'];
+    $lien = '/pages/inventaire_detail.php?id=' . $inv_id;
+    $absentes = []; $retrouvees = []; $ignorees = []; $conflits = [];
     foreach ($lignes as $l) {
         // Ligne jamais saisie : stock_physique est NOT NULL (0 à la
-        // création), seul un écart stocké distingue « compté à zéro » de
-        // « pas compté » — une bobine non comptée garde son stock.
-        if ((int)$l['stock_physique'] <= 0 && (int)$l['ecart'] == 0) continue;
-        $bob = db_fetch_one("SELECT films_restants FROM op_bobines WHERE id=?", [$l['bobine_id']]);
+        // création), seul un écart stocké (ou la mention « absente »)
+        // distingue « compté à zéro » de « pas compté » — une bobine non
+        // comptée garde son stock.
+        if (!bab_ligne_saisie($l)) {
+            if (!empty($l['ajoutee'])) {
+                $num = db_fetch_value("SELECT numero FROM op_bobines WHERE id=?", [$l['bobine_id']]);
+                throw new Exception("La bobine retrouvée $num n'a pas été comptée : saisissez sa quantité ou retirez-la de l'inventaire.");
+            }
+            continue;
+        }
+        $bob = db_fetch_one(
+            "SELECT b.films_restants, b.site_id, b.statut, b.numero, s.nom AS site_nom
+             FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id WHERE b.id=? FOR UPDATE OF b", [$l['bobine_id']]);
         if (!$bob) continue;
         $phy       = (int)$l['stock_physique'];
         $deja      = $conso[(int)$l['bobine_id']] ?? 0;
+        $ailleurs  = $bab && (int)$bob['site_id'] !== $site_inv;
+
+        if ($bab && !empty($l['absente'])) {
+            // Déjà partie du site (retrouvée ailleurs entre-temps) : rien à faire.
+            if ($ailleurs) { $ignorees[] = $bob['numero']; continue; }
+            if ($deja > 0) throw new Exception("La bobine {$bob['numero']} est déclarée absente mais un point validé daté d'après l'inventaire l'a utilisée : corrigez la ligne.");
+            bab_declarer_absente($l, $inv, $bob, $user_id);
+            $absentes[] = $bob['numero'];
+            continue;
+        }
+        if ($ailleurs) {
+            // Comptée présente ici alors qu'elle est sur un autre site. Si cet
+            // autre site l'a lui aussi comptée présente dans la même campagne
+            // (ligne ajoutée = retrouvée là-bas, ou ligne de son inventaire),
+            // la ligne n'est pas appliquée : le GSB tranche.
+            $autre = $bob['statut'] === 'absente' ? null
+                   : bab_comptee_ailleurs((int)$l['bobine_id'], $inv, empty($l['ajoutee']));
+            if ($autre !== null) {
+                $conflits[] = "{$bob['numero']} (aussi comptée sur $autre)";
+                continue;
+            }
+            // Ligne d'origine dont la bobine est partie depuis l'ouverture par
+            // un autre circuit (commande, transfert) : comportement inchangé,
+            // le comptage s'applique là où elle est.
+            if (empty($l['ajoutee'])) $ailleurs = false;
+        }
         // Comptage de fin de journée (cf. RÈGLE INVENTAIRE) : le chiffre
         // compté devient le stock. Seuls des points datés d'après, déjà
         // validés, ont retiré des films depuis le comptage : stock au
         // comptage = ERP actuel + ce retrait ; nouveau stock = physique -
         // ce retrait (0 dans le cas courant : stock = physique).
+        if ($ailleurs) $deja = 0;   // les points du site ne l'ont pas utilisée : elle n'y était pas
         $erp_actuel = (int)$bob['films_restants'];
         $erp_avant  = $erp_actuel + $deja;
         $nouveau    = max(0, $phy - $deja);
@@ -178,6 +223,19 @@ function inv_valider_bobines(array $inv, int $user_id): array {
                  $l['notes'] ?? '', $inv_id, $user_id, $user_id]
             );
         }
+        if ($ailleurs) {
+            bab_affecter_retrouvee($l, $inv, $bob, $nouveau, $user_id);
+            $retrouvees[] = $bob['numero'];
+        }
+    }
+    if ($absentes || $retrouvees || $conflits) {
+        $site_nom = (string)(db_fetch_value("SELECT nom FROM sites WHERE id=?", [$site_inv]) ?? '');
+        if ($absentes)
+            bab_notifier_gsb('Bobines absentes', count($absentes) . " bobine(s) déclarée(s) absente(s) à l'inventaire de $site_nom, renvoyée(s) à l'entrepôt principal : " . implode(', ', $absentes) . '.', $lien);
+        if ($retrouvees)
+            bab_notifier_gsb('Bobines retrouvées', count($retrouvees) . " bobine(s) retrouvée(s) et affectée(s) à $site_nom : " . implode(', ', $retrouvees) . '.', $lien);
+        if ($conflits)
+            bab_notifier_gsb('Bobines comptées sur deux sites', "Inventaire de $site_nom : lignes non appliquées, à arbitrer — " . implode(', ', $conflits) . '.', $lien);
     }
     if ($inv['type_inventaire'] === 'mensuel') {
         $mois = date('Y-m', strtotime($inv['date_inventaire']));
@@ -193,7 +251,8 @@ function inv_valider_bobines(array $inv, int $user_id): array {
         "UPDATE inventaires_bobines SET statut='valide',nb_ecarts=?,total_films_physique=?,valide_par=?,valide_at=NOW() WHERE id=?",
         [$nb_ecarts, $total_physique, $user_id, $inv_id]
     );
-    return ['nb_ecarts' => $nb_ecarts, 'total_physique' => $total_physique];
+    return ['nb_ecarts' => $nb_ecarts, 'total_physique' => $total_physique,
+            'absentes' => $absentes, 'retrouvees' => $retrouvees, 'ignorees' => $ignorees, 'conflits' => $conflits];
 }
 
 // ── RÈGLE INVENTAIRE (02/11/2026) : le comptage se fait en FIN de journée,

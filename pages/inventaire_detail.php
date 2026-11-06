@@ -50,6 +50,9 @@ $is_coord           = ($role_slug === 'coordinateur_site');
 // directement le site sur une ligne verrouillée, ou autoriser/refuser une
 // demande d'autorisation venue du coordinateur.
 $can_demander_site  = can('inventaire_sessions','can_read');
+// Bobines absentes / retrouvées (includes/bobines_absentes.php), actives
+// une fois la migration passée.
+$bab = bab_actif();
 $page_title  = 'Inventaire du ' . fmt_date($inv['date_inventaire']);
 $active_page = 'inventaire_bobines';
 
@@ -66,7 +69,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     if ($action==='sauver_ligne') {
         if (!$can_edit) json_response(false,'Inventaire non modifiable.');
         $detail_id      = (int)($_POST['detail_id']     ?? 0);
-        $stock_physique = $_POST['stock_physique'] !== '' ? (int)$_POST['stock_physique'] : null;
+        $absente        = $bab && ($_POST['absente'] ?? '') === '1';
+        $stock_physique = $absente ? 0 : (($_POST['stock_physique'] ?? '') !== '' ? (int)$_POST['stock_physique'] : null);
         $notes          = trim($_POST['notes'] ?? '');
 
         // Écart mesuré contre la quantité ERP actuelle — même référence que
@@ -80,6 +84,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
             [$detail_id, $inv_id]
         );
         if (!$det) json_response(false,'Ligne introuvable.');
+        if ($absente && !empty($det['ajoutee'])) json_response(false,"Une bobine ajoutée comme retrouvée ne peut pas être déclarée absente : retirez-la de l'inventaire.");
+        if ($absente && bab_ligne_saisie($det)) json_response(false,'Ligne déjà saisie : passez par une demande de modification.');
+        if (!$absente && !empty($det['absente'])) json_response(false,'Bobine déclarée absente : passez par une demande de modification.');
+        if ($stock_physique === null) json_response(false,'Saisissez le stock physique.');
 
         // Stock au comptage : ERP actuel + films retirés depuis par les
         // points datés d'après l'inventaire (cf. inv_conso_apres()).
@@ -93,17 +101,21 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         // Calcul projections
         $conso_moy = (float)$det['conso_quotidienne_moy'];
         $jours_sys  = $conso_moy > 0 ? (int)ceil($stock_sys / $conso_moy) : null;
-        $jours_phy  = $conso_moy > 0 ? (int)ceil($stock_phy / $conso_moy) : null;
+        $jours_phy  = $conso_moy > 0 && !$absente ? (int)ceil($stock_phy / $conso_moy) : null;
         $date_epuis = $jours_phy && $conso_moy > 0
             ? date('Y-m-d', strtotime("+{$jours_phy} days")) : null;
 
         db_query(
             "UPDATE inventaire_details_bobines
              SET stock_physique=?, ecart=?, jours_restants_systeme=?,
-                 jours_restants_physique=?, date_epuisement_estime=?, notes=?
+                 jours_restants_physique=?, date_epuisement_estime=?, notes=?"
+             . ($bab ? ", absente=" . ($absente ? 1 : 0) : "") . "
              WHERE id=?",
             [$stock_phy, $ecart_mesure, $jours_sys, $jours_phy, $date_epuis, $notes, $detail_id]
         );
+        if ($absente) {
+            audit_log($user['id'],'UPDATE','inventaire_bobines',$inv_id,"Bobine déclarée absente (ligne #$detail_id) — inventaire #$inv_id");
+        }
 
         json_response(true,'Sauvegardé.',['ecart_mesure'=>$ecart_mesure,'ecart_total'=>$ecart_total,'jours_phy'=>$jours_phy,'date_epuis'=>$date_epuis]);
     }
@@ -125,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
             [$detail_id, $inv_id]
         );
         if (!$det) json_response(false,'Ligne introuvable.');
-        if ((int)$det['stock_physique']===0 && (int)$det['ecart']===0) json_response(false,"Cette ligne n'a pas encore été saisie.");
+        if (!bab_ligne_saisie($det)) json_response(false,"Cette ligne n'a pas encore été saisie.");
         if (db_fetch_value("SELECT COUNT(*) FROM inventaire_corrections WHERE detail_id=? AND statut IN ('en_attente','autorise')", [$detail_id])) {
             json_response(false,'Une demande est déjà en cours pour cette ligne.');
         }
@@ -171,7 +183,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
             [$detail_id, $inv_id]
         );
         if (!$det) json_response(false,'Ligne introuvable.');
-        if ((int)$det['stock_physique']===0 && (int)$det['ecart']===0) json_response(false,"Cette ligne n'a pas encore été saisie.");
+        if (!bab_ligne_saisie($det)) json_response(false,"Cette ligne n'a pas encore été saisie.");
         if (db_fetch_value("SELECT COUNT(*) FROM inventaire_corrections WHERE detail_id=? AND statut IN ('en_attente','autorise')", [$detail_id])) {
             json_response(false,'Une demande est déjà en cours pour cette ligne.');
         }
@@ -277,7 +289,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         db_begin();
         try {
             db_query(
-                "UPDATE inventaire_details_bobines SET stock_physique=?,ecart=?,jours_restants_physique=?,date_epuisement_estime=? WHERE id=?",
+                "UPDATE inventaire_details_bobines SET stock_physique=?,ecart=?,jours_restants_physique=?,date_epuisement_estime=?"
+                . ($bab ? ",absente=0" : "") . " WHERE id=?",
                 [$valeur_finale, $ecart_mesure, $jours_phy, $date_epuis, $corr['detail_id']]
             );
             db_query(
@@ -320,6 +333,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
                     [$detail_id, $inv_id]
                 );
                 if (!$det) continue;
+                if (!empty($det['absente'])) continue;   // déclarée absente : verrouillée
 
                 // Référence ERP, cf. sauver_ligne (plus de repli sur OptoTrace
                 // quand l'ERP est à zéro : zéro est une quantité comme une autre)
@@ -340,16 +354,64 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 
+    // ── BOBINE RETROUVÉE : recherche (absentes d'abord, puis autres sites)
+    if ($action==='chercher_bobines') {
+        if (!$bab || !$can_edit) json_response(false,'Action non disponible.');
+        $res = array_map(fn($b) => [
+            'id'      => (int)$b['id'],
+            'numero'  => $b['numero'],
+            'type'    => $b['type_code'],
+            'statut'  => $b['statut'],
+            'lieu'    => $b['statut'] === 'absente'
+                ? 'Absente de ' . ($b['absente_site_nom'] ?? '—') . ($b['absente_le'] ? ' depuis le ' . fmt_date($b['absente_le']) : '')
+                : (($b['statut'] === 'perdue' ? 'Déclarée perdue — ' : 'Encore sur ') . ($b['site_nom'] ?? 'aucun site') . ($b['statut'] === 'perdue' ? '' : ', pas déclarée absente')),
+        ], bab_rechercher($inv, (string)($_POST['q'] ?? '')));
+        json_response(true,'',['bobines'=>$res]);
+    }
+
+    // ── BOBINE RETROUVÉE : ajout à l'inventaire (après confirmation de la
+    //    présence physique). Elle ne bouge qu'à la validation.
+    if ($action==='ajouter_bobine') {
+        if (!$bab || !$can_edit) json_response(false,'Action non disponible.');
+        $bobine_id = (int)($_POST['bobine_id'] ?? 0);
+        db_begin();
+        try {
+            $did = bab_ajouter($inv, $bobine_id);
+            $num = db_fetch_value("SELECT numero FROM op_bobines WHERE id=?", [$bobine_id]);
+            audit_log($user['id'],'CREATE','inventaire_bobines',$inv_id,"Bobine retrouvée $num ajoutée à l'inventaire #$inv_id");
+            db_commit();
+        } catch (Exception $e) { db_rollback(); json_response(false,$e->getMessage()); }
+        json_response(true,"Bobine $num ajoutée : saisissez maintenant sa quantité comptée.",['detail_id'=>$did]);
+    }
+
+    if ($action==='retirer_bobine') {
+        if (!$bab || !$can_edit) json_response(false,'Action non disponible.');
+        try {
+            bab_retirer($inv, (int)($_POST['detail_id'] ?? 0));
+        } catch (Exception $e) { json_response(false,$e->getMessage()); }
+        audit_log($user['id'],'DELETE','inventaire_bobines',$inv_id,"Bobine retrouvée retirée de l'inventaire #$inv_id");
+        json_response(true,"Bobine retirée de l'inventaire.");
+    }
+
     // ── VALIDER L'INVENTAIRE
     if ($action==='valider') {
         if (!$can_validate) json_response(false,'Seul le GSB ou un administrateur peut valider l\'inventaire.');
         db_begin();
         try {
             // Même validation que la liste des inventaires (includes/inventaire.php).
-            $nb_ecarts = inv_valider_bobines($inv, (int)$user['id'])['nb_ecarts'];
-            audit_log($user['id'],'UPDATE','inventaire_bobines',$inv_id,"Validation inventaire #$inv_id — $nb_ecarts écart(s)");
+            $r = inv_valider_bobines($inv, (int)$user['id']);
+            $nb_ecarts = $r['nb_ecarts'];
+            audit_log($user['id'],'UPDATE','inventaire_bobines',$inv_id,"Validation inventaire #$inv_id — $nb_ecarts écart(s)"
+                . ($r['absentes']   ? ' — absentes : ' . implode(', ', $r['absentes']) : '')
+                . ($r['retrouvees'] ? ' — retrouvées : ' . implode(', ', $r['retrouvees']) : '')
+                . ($r['conflits']   ? ' — non appliquées : ' . implode(', ', $r['conflits']) : ''));
             db_commit();
-            json_response(true,"Inventaire validé. $nb_ecarts écart(s) traité(s).");
+            $msg = "Inventaire validé. $nb_ecarts écart(s) traité(s).";
+            if ($r['absentes'])   $msg .= ' ' . count($r['absentes']) . " bobine(s) absente(s) renvoyée(s) à l'entrepôt.";
+            if ($r['retrouvees']) $msg .= ' ' . count($r['retrouvees']) . ' bobine(s) retrouvée(s) affectée(s) au site.';
+            if ($r['ignorees'])   $msg .= ' Déjà retrouvée(s) ailleurs, laissée(s) en place : ' . implode(', ', $r['ignorees']) . '.';
+            if ($r['conflits'])   $msg .= ' Non appliquée(s), signalée(s) au GSB : ' . implode(', ', $r['conflits']) . '.';
+            json_response(true,$msg);
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 
@@ -383,6 +445,7 @@ $lignes = db_fetch_all(
             b.numero, b.type_code, b.format, b.statut AS bob_statut,
             b.films_restants AS stock_realtime,  -- quantité ERP actuelle (temps réel)
             s.nom AS site_nom,
+            " . ($bab ? "so.nom AS site_origine_nom," : "NULL AS site_origine_nom,") . "
             -- Consommation moyenne 30j glissants (dynamique)
             COALESCE(
               (SELECT SUM(cb.quantite)/GREATEST(DATEDIFF(CURRENT_DATE, MIN(cb.date_conso)),1)
@@ -392,8 +455,9 @@ $lignes = db_fetch_all(
      FROM inventaire_details_bobines d
      JOIN op_bobines b ON b.id=d.bobine_id
      LEFT JOIN sites s ON s.id=b.site_id
+     " . ($bab ? "LEFT JOIN sites so ON so.id=d.site_origine_id" : "") . "
      WHERE d.inventaire_id=?
-     ORDER BY b.serie, b.type_code, b.numero",
+     ORDER BY " . ($bab ? "d.ajoutee DESC, " : "") . "b.serie, b.type_code, b.numero",
     [$inv_id]
 );
 
@@ -441,8 +505,10 @@ foreach ($corrections_rows as $c) {
 }
 
 // Stats
-$nb_saisis    = count(array_filter($lignes, fn($l)=>$l['stock_physique']>0||$l['ecart']!=0));
+$nb_saisis    = count(array_filter($lignes, 'bab_ligne_saisie'));
 $nb_ecarts    = count(array_filter($lignes, fn($l)=>$l['ecart']!=0));
+$nb_absentes  = count(array_filter($lignes, fn($l)=>!empty($l['absente'])));
+$nb_ajoutees  = count(array_filter($lignes, fn($l)=>!empty($l['ajoutee'])));
 $nb_non_saisi = count($lignes) - $nb_saisis;
 
 // ============================================================
@@ -493,13 +559,13 @@ if ($export === 'xlsx') {
         $sh->setCellValue("B$row", $l['type_code']);
         $sh->setCellValue("C$row", $l['site_nom'] ?? '—');
         $sh->setCellValue("D$row", (int)$l['stock_systeme']);
-        $sh->setCellValue("E$row", $l['stock_physique'] !== null ? (int)$l['stock_physique'] : '');
+        $sh->setCellValue("E$row", !empty($l['absente']) ? 'Absente' : ($l['stock_physique'] !== null ? (int)$l['stock_physique'] : ''));
         $sh->setCellValue("F$row", $ecart);
         $sh->setCellValue("G$row", $l['conso_moy_realtime'] ? round((float)$l['conso_moy_realtime'], 1) : '');
         $sh->setCellValue("H$row", $l['jours_restants_physique'] ?? '');
         $sh->setCellValue("I$row", $l['date_epuisement_estime'] ? fmt_date($l['date_epuisement_estime']) : '');
         $sh->setCellValue("J$row", $l['bob_statut'] ?? '');
-        $sh->setCellValue("K$row", $l['notes'] ?? '');
+        $sh->setCellValue("K$row", trim((!empty($l['ajoutee']) ? 'Retrouvée (venant de ' . ($l['site_origine_nom'] ?? '—') . ') ' : '') . ($l['notes'] ?? '')));
 
         if ($ecart < 0) {
             $sh->getStyle("F$row")->getFont()->getColor()->setARGB('FFDC2626');
@@ -557,11 +623,11 @@ if ($export === 'pdf') {
             <td>' . htmlspecialchars($l['type_code']) . '</td>
             <td>' . htmlspecialchars($l['site_nom'] ?? '—') . '</td>
             <td style="text-align:right">' . number_format((int)$l['stock_systeme']) . '</td>
-            <td style="text-align:right">' . ($l['stock_physique'] !== null ? number_format((int)$l['stock_physique']) : '—') . '</td>
+            <td style="text-align:right">' . (!empty($l['absente']) ? 'Absente' : ($l['stock_physique'] !== null ? number_format((int)$l['stock_physique']) : '—')) . '</td>
             <td style="text-align:right;font-weight:700;color:' . $ec . '">' . ($ecart != 0 ? ($ecart > 0 ? '+' : '') . $ecart : '—') . '</td>
             <td style="text-align:center">' . ($l['jours_restants_physique'] ?? '—') . '</td>
             <td style="text-align:center">' . ($l['date_epuisement_estime'] ? fmt_date($l['date_epuisement_estime'], 'd/m/Y') : '—') . '</td>
-            <td>' . htmlspecialchars($l['notes'] ?? '') . '</td>
+            <td>' . htmlspecialchars(trim((!empty($l['ajoutee']) ? 'Retrouvée (venant de ' . ($l['site_origine_nom'] ?? '—') . ') ' : '') . ($l['notes'] ?? ''))) . '</td>
         </tr>';
     }
     $statut_color = $inv['statut'] === 'valide' ? '#065f46' : '#92400e';
@@ -681,6 +747,9 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
       <i class="ph-duotone ph-file-pdf"></i> PDF
     </a>
     <?php endif; ?>
+    <?php if($can_edit && $bab): ?>
+    <button class="btn btn-secondary" onclick="ouvrirAjoutBobine()" title="Bobine présente sur le site mais absente de la liste"><i class="ph ph-plus-circle" aria-hidden="true"></i> Ajouter une bobine retrouvée</button>
+    <?php endif; ?>
     <?php if($can_edit): ?>
     <button class="btn btn-secondary" id="btnSauverTout" onclick="sauverTout()"><i class="ph ph-floppy-disk" aria-hidden="true"></i> Tout sauver</button>
     <?php endif; ?>
@@ -701,6 +770,8 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
   <span class="chip red"><i class="ph ph-warning" aria-hidden="true"></i> Écarts : <strong id="statEcarts"><?= $nb_ecarts ?></strong></span>
   <?php endif; ?>
   <span class="chip gray">⏳ Non saisis : <strong id="statNonSaisis"><?= $nb_non_saisi ?></strong></span>
+  <?php if($nb_absentes): ?><span class="chip red"><i class="ph ph-question" aria-hidden="true"></i> Absentes : <strong><?= $nb_absentes ?></strong></span><?php endif; ?>
+  <?php if($nb_ajoutees): ?><span class="chip blue"><i class="ph ph-magnifying-glass" aria-hidden="true"></i> Retrouvées : <strong><?= $nb_ajoutees ?></strong></span><?php endif; ?>
   <?php
   $nb_ecarts_connus = count(array_filter($bobine_ids, fn($id)=>isset($ecarts_connus_map[$id])));
   if($nb_ecarts_connus>0):
@@ -710,6 +781,37 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
 </div>
 
 <div id="alertZone"></div>
+
+<?php if($can_edit && $bab): ?>
+<!-- MODAL AJOUT D'UNE BOBINE RETROUVÉE -->
+<div id="modalAjoutBobine" style="display:none;position:fixed;inset:0;background:rgba(13,31,53,.5);z-index:800;align-items:center;justify-content:center"
+     onclick="if(event.target===this)this.style.display='none'">
+  <div style="background:white;border-radius:16px;padding:22px 24px;width:100%;max-width:520px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <h3 style="font-family:'Montserrat',sans-serif;font-size:16px;font-weight:800;color:var(--navy);margin:0 0 4px">Ajouter une bobine retrouvée</h3>
+    <p style="font-size:12.5px;color:var(--muted);margin:0 0 12px">Bobine présente sur votre site mais absente de la liste. Les bobines déclarées absentes apparaissent en premier.</p>
+    <input type="search" id="ajoutBobQ" class="form-control" placeholder="Tapez le numéro de la bobine…" autocomplete="off"
+           oninput="chercherBobines()" aria-label="Numéro de la bobine">
+    <div id="ajoutBobListe" role="listbox" aria-label="Bobines proposées" style="margin-top:10px;overflow-y:auto;overflow-x:hidden;min-height:60px;max-height:50vh;border:1px solid var(--border);border-radius:8px"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-secondary" onclick="document.getElementById('modalAjoutBobine').style.display='none'">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL CONFIRMATION DE PRÉSENCE PHYSIQUE -->
+<div id="modalConfirmBobine" style="display:none;position:fixed;inset:0;background:rgba(13,31,53,.55);z-index:810;align-items:center;justify-content:center">
+  <div role="alertdialog" aria-labelledby="confBobTitre" style="background:white;border-radius:16px;padding:22px 24px;width:100%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <h3 id="confBobTitre" style="font-family:'Montserrat',sans-serif;font-size:16px;font-weight:800;color:var(--navy);margin:0 0 10px">Bobine physiquement présente ?</h3>
+    <p style="font-size:13.5px;margin:0 0 6px">Confirmez-vous que la bobine <strong id="confBobNum" style="font-family:monospace"></strong> est <strong>physiquement présente</strong> sur votre site ?</p>
+    <p id="confBobLieu" style="font-size:12.5px;color:var(--muted);margin:0 0 6px"></p>
+    <p style="font-size:12.5px;color:var(--muted);margin:0">Elle sera ajoutée à l'inventaire ; elle ne sera affectée à votre site qu'à la validation.</p>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+      <button class="btn btn-secondary" onclick="fermerConfirmBobine()">Non, annuler</button>
+      <button class="btn btn-success" id="btnConfBob" onclick="confirmerAjoutBobine()">Oui, elle est sur mon site</button>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
 
 <!-- MODAL RÉCAP VALIDATION (n° 18 réunion ERP) -->
 <div id="modalRecapValidation" style="display:none;position:fixed;inset:0;background:rgba(13,31,53,.5);z-index:800;align-items:center;justify-content:center"
@@ -820,7 +922,9 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
         // ── Données figées (photo inventaire)
         $stock_phy  = (int)$l['stock_physique'];   // figé
         $ecart_mes  = (int)$l['ecart'];            // figé
-        $saisi      = $l['stock_physique'] > 0 || $ecart_mes != 0;
+        $saisi      = bab_ligne_saisie($l);
+        $absente    = !empty($l['absente']);
+        $ajoutee    = !empty($l['ajoutee']);
         $ec_connu   = $ecarts_connus_map[$l['bobine_id']] ?? null;
         $demande_active = $corrections_map[$l['id']]['active'] ?? null;
         $demande_close  = $corrections_map[$l['id']]['close']  ?? null;
@@ -850,12 +954,16 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
                 :                        'white')));
       ?>
       <tr id="row-<?= $l['id'] ?>" style="border-bottom:1px solid #e2e8f0;background:<?= $row_bg ?>"
-          data-numero="<?= h($l['numero']) ?>" data-connu="<?= (int)($l['ecart_connu_avant'] ?? 0) ?>">
+          data-numero="<?= h($l['numero']) ?>" data-connu="<?= (int)($l['ecart_connu_avant'] ?? 0) ?>"<?= $absente ? ' data-absente="1"' : '' ?>>
 
         <!-- Numéro -->
         <td style="padding:9px 14px;font-family:monospace;font-weight:700;color:var(--navy);font-size:13px"><?= h($l['numero']) ?>
           <?php if(!$is_coord && $l['bob_statut'] === 'epuisee'): /* le coordinateur ne voit pas l'état système */ ?>
           <br><span style="font-family:inherit;font-size:11px;font-weight:600;color:#991B1B;background:#FEE2E2;padding:1px 6px;border-radius:4px" title="Marquée épuisée dans l'ERP alors qu'OptoTrace lui voit des films">Épuisée</span>
+          <?php endif; ?>
+          <?php if($ajoutee): ?>
+          <br><span style="font-family:inherit;font-size:11px;font-weight:600;color:#1565c0;background:#e3f2fd;padding:1px 6px;border-radius:4px"
+                    title="Ajoutée par le site : affectée au site à la validation">Retrouvée<?= $l['site_origine_nom'] ? ' · venant de ' . h($l['site_origine_nom']) : '' ?></span>
           <?php endif; ?>
         </td>
 
@@ -879,7 +987,10 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
 
         <!-- Qté comptée (figée) -->
         <td style="padding:9px 14px;text-align:right;border-right:1px solid #e2e8f0">
-          <?php if($can_edit): ?>
+          <?php if($absente && !($can_edit && $deverrouille)): ?>
+          <span style="font-size:12px;font-weight:700;color:#c0392b;background:#fdf0ef;padding:3px 10px;border-radius:6px"
+                title="Renvoyée à l'entrepôt principal à la validation">Absente</span>
+          <?php elseif($can_edit): ?>
           <?php /* n° 2.3 CR PDG — pour le coordinateur, ni data-sys ni
              data-conso ni classe ok/nok : la valeur système ne doit
              apparaître nulle part dans la page, même en attribut. */ ?>
@@ -916,7 +1027,9 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
 
         <!-- Écart mesuré (figé — calculé au moment de l'inventaire) -->
         <td style="padding:9px 14px;text-align:center" id="ecart-<?= $l['id'] ?>">
-          <?php if($saisi): ?>
+          <?php if($absente): ?>
+          <span style="font-size:12px;font-weight:700;color:#c0392b">Absente</span>
+          <?php elseif($saisi): ?>
           <span class="ecart-val <?= $ecart_mes<0?'ecart-neg':($ecart_mes>0?'ecart-pos':'ecart-zero') ?>">
             <?= $ecart_mes!=0?(($ecart_mes>0?'+':'').$ecart_mes.' films'):'<i class="ph ph-check-circle" aria-hidden="true"></i> OK' ?>
           </span>
@@ -972,6 +1085,17 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
           <button id="btn-<?= $l['id'] ?>"
                   style="display:<?= $saisi ? 'none' : 'inline-block' ?>;background:#e3f2fd;color:#1565c0;border:1px solid #90caf9;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700"
                   onclick="sauverLigne(<?= $l['id'] ?>)"><i class="ph ph-floppy-disk" aria-hidden="true"></i> Enregistrer</button>
+          <?php if($bab && !$saisi && !$ajoutee): ?>
+          <button id="abs-<?= $l['id'] ?>"
+                  style="background:#fdf0ef;color:#c0392b;border:1px solid #f6c9c4;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;margin-left:4px"
+                  title="La bobine n'est pas physiquement sur le site"
+                  onclick="declarerAbsente(<?= $l['id'] ?>)">Absente</button>
+          <?php endif; ?>
+          <?php if($ajoutee): ?>
+          <button style="background:#f8f9fb;color:#5a6480;border:1px solid #e2e8f0;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;margin-left:4px"
+                  title="Ajoutée par erreur : la retirer de l'inventaire"
+                  onclick="retirerBobine(<?= $l['id'] ?>)"><i class="ph ph-trash" aria-hidden="true"></i> Retirer</button>
+          <?php endif; ?>
         </td>
 
         <!-- Demande de modification -->
@@ -1135,6 +1259,90 @@ function onPhyInput(id, stockSys, consoMoy){
   updateStats();
 }
 
+const BOB_ABSENTES = <?= $bab ? 'true' : 'false' ?>;
+
+// Bobine introuvable sur le site : mention « Absente », appliquée (renvoi
+// à l'entrepôt principal) seulement à la validation de l'inventaire.
+async function declarerAbsente(id){
+  const row = document.getElementById('row-'+id);
+  const num = row ? row.dataset.numero : '';
+  if(!confirm('Déclarer la bobine '+num+' ABSENTE de votre site ?\n\nÀ la validation de l\'inventaire, elle sera renvoyée à l\'entrepôt principal comme bobine absente.')) return;
+  const d = await ap({action:'sauver_ligne',detail_id:id,absente:'1',stock_physique:'',notes:''});
+  if(d.success){ toast('Bobine '+num+' déclarée absente.'); setTimeout(()=>location.reload(),700); }
+  else toast('Erreur : '+d.message,'error');
+}
+
+// ── Bobine retrouvée : recherche dynamique, confirmation de présence, ajout
+let ajoutBobTimer = null, ajoutBobSeq = 0, ajoutBobChoix = null;
+function ouvrirAjoutBobine(){
+  const q = document.getElementById('ajoutBobQ');
+  q.value = '';
+  document.getElementById('modalAjoutBobine').style.display='flex';
+  chercherBobines(true);
+  setTimeout(()=>q.focus(), 50);
+}
+function chercherBobines(immediat){
+  clearTimeout(ajoutBobTimer);
+  ajoutBobTimer = setTimeout(async ()=>{
+    const seq = ++ajoutBobSeq;
+    const liste = document.getElementById('ajoutBobListe');
+    const d = await ap({action:'chercher_bobines', q:document.getElementById('ajoutBobQ').value});
+    if(seq !== ajoutBobSeq) return;   // réponse dépassée par une frappe plus récente
+    liste.innerHTML = '';
+    if(!d.success){ liste.innerHTML = '<div style="padding:14px;color:#c0392b;font-size:13px"></div>'; liste.firstChild.textContent = d.message; return; }
+    const bobs = (d.data && d.data.bobines) || [];
+    if(!bobs.length){ liste.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:13px">Aucune bobine ne correspond.</div>'; return; }
+    bobs.forEach(b=>{
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.setAttribute('role','option');
+      el.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 12px;border:0;border-bottom:1px solid var(--border);background:white;cursor:pointer;font-size:13px';
+      el.onmouseenter = ()=>{ el.style.background='#f1f5f9'; };
+      el.onmouseleave = ()=>{ el.style.background='white'; };
+      const g = document.createElement('span'); g.style.cssText='flex:0 0 auto;white-space:nowrap';
+      const n = document.createElement('strong'); n.style.fontFamily='monospace'; n.textContent = b.numero;
+      const t = document.createElement('span'); t.style.cssText='color:var(--muted);margin-left:8px;font-size:12px'; t.textContent = b.type || '';
+      g.append(n, t);
+      const lieu = document.createElement('span');
+      lieu.style.cssText = 'font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:4px;text-align:right;' + (b.statut==='absente' ? 'background:#fdf0ef;color:#c0392b' : 'background:#f1f5f9;color:#64748b');
+      lieu.textContent = b.lieu;
+      el.append(g, lieu);
+      el.onclick = ()=>demanderConfirmBobine(b);
+      liste.appendChild(el);
+    });
+  }, immediat ? 0 : 220);
+}
+function demanderConfirmBobine(b){
+  ajoutBobChoix = b;
+  document.getElementById('confBobNum').textContent = b.numero;
+  document.getElementById('confBobLieu').textContent = b.lieu;
+  document.getElementById('modalConfirmBobine').style.display='flex';
+  document.getElementById('btnConfBob').focus();
+}
+function fermerConfirmBobine(){
+  ajoutBobChoix = null;
+  document.getElementById('modalConfirmBobine').style.display='none';
+}
+async function confirmerAjoutBobine(){
+  if(!ajoutBobChoix) return;
+  const btn = document.getElementById('btnConfBob');
+  btn.disabled = true;
+  const d = await ap({action:'ajouter_bobine', bobine_id:ajoutBobChoix.id});
+  btn.disabled = false;
+  fermerConfirmBobine();
+  if(d.success){
+    document.getElementById('modalAjoutBobine').style.display='none';
+    toast(d.message); setTimeout(()=>location.reload(),900);
+  } else toast('Erreur : '+d.message,'error');
+}
+async function retirerBobine(id){
+  const row = document.getElementById('row-'+id);
+  if(!confirm('Retirer la bobine '+(row?row.dataset.numero:'')+' de cet inventaire ?')) return;
+  const d = await ap({action:'retirer_bobine', detail_id:id});
+  if(d.success){ toast(d.message); setTimeout(()=>location.reload(),700); }
+  else toast('Erreur : '+d.message,'error');
+}
+
 async function sauverLigne(id){
   const phyEl = document.getElementById('phy-'+id);
   const phy   = phyEl ? phyEl.value : '';
@@ -1243,12 +1451,13 @@ async function sauverTout(){
 function ouvrirRecapValidation(){
   const rows = document.querySelectorAll('tr[id^="row-"]');
   let total = rows.length, saisis = 0, nonSaisis = 0;
-  const lignesEcart = [];
+  const lignesEcart = [], absentes = [];
   rows.forEach(row=>{
     const id     = row.id.replace('row-','');
     const phyEl  = document.getElementById('phy-'+id);
     const connu  = parseInt(row.dataset.connu||'0');
     const numero = row.dataset.numero||'';
+    if(row.dataset.absente==='1'){ saisis++; absentes.push(numero); return; }
     if(!phyEl || phyEl.value===''){
       nonSaisis++;
       if(connu!==0) lignesEcart.push({numero, mesure:null, connu});
@@ -1285,6 +1494,10 @@ function ouvrirRecapValidation(){
   } else nonSaisiEl.style.display='none';
 
   const recapEl = document.getElementById('recapEcarts');
+  let absHtml = '';
+  if(absentes.length){
+    absHtml = '<div style="background:#fdf0ef;color:#c0392b;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:12px"></div>';
+  }
   if(lignesEcart.length){
     recapEl.innerHTML = `<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:8px">Lignes avec écart</div>
       <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:220px;overflow-y:auto">
@@ -1301,6 +1514,10 @@ function ouvrirRecapValidation(){
       </div>`;
   } else {
     recapEl.innerHTML = `<div style="background:#eafaf1;color:#1e8449;border-radius:8px;padding:10px 14px;font-size:13px"><i class="ph ph-check-circle" aria-hidden="true"></i> Aucun écart, tous les stocks concordent.</div>`;
+  }
+  if(absHtml){
+    recapEl.insertAdjacentHTML('afterbegin', absHtml);
+    recapEl.firstChild.textContent = absentes.length+' bobine(s) déclarée(s) absente(s), renvoyée(s) à l\'entrepôt principal à la validation : '+absentes.join(', ')+'.';
   }
 
   document.getElementById('modalRecapValidation').style.display='flex';
@@ -1331,7 +1548,8 @@ function updateStats(){
     const id=row.id.replace('row-','');
     const phyEl=document.getElementById('phy-'+id);
     const ecEl=document.getElementById('ecart-'+id);
-    if(!phyEl||phyEl.value===''){nonSaisis++;}
+    if(row.dataset.absente==='1'){ /* saisie : absente */ }
+    else if(!phyEl||phyEl.value===''){nonSaisis++;}
     else if(!MASQUE_SYSTEME){
       const phy=parseInt(phyEl.value);
       const sys=parseInt(phyEl.dataset.sys||0);

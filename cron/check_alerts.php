@@ -26,7 +26,7 @@ if ($mode === 'all' || $mode === 'bobines') {
          FROM op_bobines b
          WHERE b.films_restants = 0
            AND b.stock_systeme  = 0
-           AND b.statut NOT IN ('epuisee', 'retiree', 'perdue')"
+           AND b.statut NOT IN ('epuisee', 'retiree', 'perdue', 'absente')"
     );
 
     $nb_terminees = 0;
