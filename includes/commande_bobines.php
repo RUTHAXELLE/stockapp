@@ -53,7 +53,8 @@ function cmdbob_type_code(int $article_id): ?string {
 /**
  * Condition SQL : la bobine (alias $a) n'est réservée par aucune commande en
  * cours — ni une ligne bobine des Commandes, ni une ancienne « Commande
- * bobines » expédiée et pas encore réceptionnée.
+ * bobines » expédiée et pas encore réceptionnée. Un rouleau déclaré non reçu
+ * ('non_recu') reste bloqué tant que son écart de réception est ouvert.
  */
 function cmdbob_sql_libre(string $a = 'b'): string {
     $sql = "NOT EXISTS (SELECT 1 FROM commandes_bobines_lignes cbl
@@ -61,7 +62,7 @@ function cmdbob_sql_libre(string $a = 'b'): string {
                         WHERE cbl.bobine_id = $a.id AND cbl.statut = 'assigne' AND cb.statut = 'expedie')";
     if (cmdbob_actif())
         $sql .= " AND NOT EXISTS (SELECT 1 FROM commande_ligne_bobines clb
-                                  WHERE clb.bobine_id = $a.id AND clb.statut = 'assigne')";
+                                  WHERE clb.bobine_id = $a.id AND clb.statut IN ('assigne','non_recu'))";
     return $sql;
 }
 

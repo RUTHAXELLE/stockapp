@@ -98,7 +98,8 @@ FICHIERS="stockapp.sql demandes_internes_mysql.sql agents_mysql.sql achats_mysql
  migration_articles_stock_central_magasin_mysql.sql
  migration_commande_lignes_depot_source_mysql.sql
  migration_articles_nomenclature_mysql.sql
- migration_inventaire_equipements_trouves_mysql.sql"
+ migration_inventaire_equipements_trouves_mysql.sql
+ migration_reception_par_ligne_mysql.sql"
 
 echo "==> Installation du schéma dans $DB_NAME@$DB_HOST"
 for f in $FICHIERS; do

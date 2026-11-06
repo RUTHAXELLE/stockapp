@@ -18,6 +18,7 @@ require_once __DIR__ . '/../includes/achats.php';
 require_once __DIR__ . '/../includes/referentiels.php';
 // Lignes « bobine » : choix des bobines par le GSB, affectation à la réception.
 require_once __DIR__ . '/../includes/commande_bobines.php';
+require_once __DIR__ . '/../includes/reception_commande.php';
 require_once __DIR__ . '/../includes/articles_equipements.php';
 // Bon de livraison joint par le coordinateur à la réception.
 require_once __DIR__ . '/../includes/upload.php';
@@ -660,6 +661,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if ($cmd['site_id'] != $site_force) json_response(false,'Accès refusé.');
         if (!db_colonne_existe('commandes', 'bl_reception'))
             json_response(false, "Migration commandes_bl_reception non jouée sur cette base.");
+        // Déclaration ligne par ligne (includes/reception_commande.php) :
+        // contrôlée avant l'envoi du fichier, pour ne pas garder un bon de
+        // livraison d'une réception refusée. Sans la migration, tout le livré
+        // est réputé reçu, comme avant.
+        $plan_rec = [];
+        if (rcp_disponible()) {
+            $saisie = [];
+            foreach ((array)json_decode($_POST['reception'] ?? '[]', true) as $s)
+                if (isset($s['ligne_id'])) $saisie[(int)$s['ligne_id']] = $s;
+            try { $plan_rec = rcp_preparer($cmd_id, $saisie); }
+            catch (Exception $e) { json_response(false, $e->getMessage()); }
+        }
         // Bon de livraison signé, en PDF, obligatoire pour réceptionner.
         $up = upload_document('bl_reception', 'bl', 'bl_reception_cmd_' . $cmd_id, true);
         if (!$up['success']) json_response(false, $up['message']);
@@ -670,6 +683,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         db_begin();
         try {
             db_query("UPDATE commandes SET statut='recu',recu_par=?,recu_at=NOW(),bl_reception=? WHERE id=?",[$user['id'],$up['filename'],$cmd_id]);
+            // Quantités reçues et écarts d'abord : les rouleaux non reçus
+            // sortent de la liste 'assigne' et ne passent donc pas au site.
+            $nb_ecarts_rec = $plan_rec ? rcp_appliquer($cmd_id, $plan_rec, (int)$user['id']) : 0;
+            // Le site est crédité du reçu déclaré (à défaut, du livré).
+            $q_rec = rcp_disponible() ? 'COALESCE(cl.quantite_recue, cl.quantite_livree)' : 'cl.quantite_livree';
             // Bobines des lignes « bobine » : elles passent au site maintenant,
             // EN STOCK (passage en utilisation par une demande d'utilisation).
             $site_nom_rec = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$cmd['site_id']]) ?? "site #{$cmd['site_id']}";
@@ -702,10 +720,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             // plus bas ; bobine et équipement sont gérés ailleurs (ou pas
             // encore automatisés à la réception).
             $lignes_rec = db_fetch_all(
-                "SELECT cl.article_id, cl.quantite_livree AS qte
+                "SELECT cl.article_id, {$q_rec} AS qte
                  FROM commande_lignes cl
                  WHERE cl.commande_id=? AND cl.type_article='article'
-                   AND cl.article_id IS NOT NULL AND cl.quantite_livree > 0",
+                   AND cl.article_id IS NOT NULL AND {$q_rec} > 0",
                 [$cmd_id]
             );
             $nb_equip_op = 0;
@@ -734,9 +752,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
             // Mettre à jour stock rivets (+)
             $lignes_rivets = db_fetch_all(
-                "SELECT cl.libelle, cl.quantite_livree AS qte
+                "SELECT cl.libelle, {$q_rec} AS qte
                  FROM commande_lignes cl
-                 WHERE cl.commande_id=? AND cl.type_article='rivet' AND cl.quantite_livree > 0",
+                 WHERE cl.commande_id=? AND cl.type_article='rivet' AND {$q_rec} > 0",
                 [$cmd_id]
             );
             foreach ($lignes_rivets as $lr) {
@@ -757,9 +775,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
             // Mettre à jour stock PMMA (+)
             $lignes_pmma = db_fetch_all(
-                "SELECT cl.libelle, cl.unite, cl.quantite_livree AS qte
+                "SELECT cl.libelle, cl.unite, {$q_rec} AS qte
                  FROM commande_lignes cl
-                 WHERE cl.commande_id=? AND cl.type_article='pmma' AND cl.quantite_livree > 0",
+                 WHERE cl.commande_id=? AND cl.type_article='pmma' AND {$q_rec} > 0",
                 [$cmd_id]
             );
             foreach ($lignes_pmma as $lr) {
@@ -779,7 +797,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     );
                 }
             }
-            audit_log($user['id'],'UPDATE','commandes',$cmd_id,"Réception confirmée par coordinateur");
+            audit_log($user['id'],'UPDATE','commandes',$cmd_id,"Réception confirmée par coordinateur"
+                . ($nb_ecarts_rec ? " — $nb_ecarts_rec manque(s) déclaré(s)" : ''));
+            if ($nb_ecarts_rec)
+                rcp_notifier_ecarts($cmd, $nb_ecarts_rec,
+                    (bool)array_filter($plan_rec, fn($p) => !empty($p['bobines_manquantes'])));
             db_commit();
             $msg = sprintf(
                 'Réception confirmée ✅ | Articles: %d | Rivets: %d | PMMA: %d',
@@ -789,8 +811,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 $msg .= " | Bobines : $nb_bob_rec, en stock sur le site (demande d'utilisation pour les utiliser)";
             if ($nb_equip_op > 0)
                 $msg .= " | Équipements créés : $nb_equip_op";
+            if ($nb_ecarts_rec > 0)
+                $msg .= " | ⚠️ $nb_ecarts_rec manque(s) signalé(s) au gestionnaire de stock";
             json_response(true, $msg);
         } catch(Exception $e){ db_rollback(); json_response(false,$e->getMessage()); }
+    }
+
+    // ── Lignes à déclarer dans la fenêtre de réception (coordinateur)
+    if ($action === 'get_reception') {
+        $cmd_id = (int)($_POST['cmd_id'] ?? 0);
+        $cmd    = db_fetch_one("SELECT * FROM commandes WHERE id=? AND statut='en_cours_livraison'", [$cmd_id]);
+        if (!$cmd) json_response(false, 'Commande introuvable ou statut incorrect.');
+        if (!$is_coord || $cmd['site_id'] != $site_force) json_response(false, 'Accès refusé.');
+        json_response(true, '', ['par_ligne' => rcp_disponible(), 'lignes' => rcp_lignes_a_recevoir($cmd_id)]);
+    }
+
+    // ── Trancher les écarts de réception (gestionnaire de stock ; GSB pour les rouleaux)
+    if ($action === 'traiter_ecarts') {
+        $peut_art = $is_gestionnaire;
+        $peut_rlx = $is_gsb;
+        if (!$peut_art && !$peut_rlx) json_response(false, 'Accès refusé.');
+        $decisions = json_decode($_POST['decisions'] ?? '{}', true);
+        try {
+            $r = rcp_traiter((int)($_POST['cmd_id'] ?? 0), is_array($decisions) ? $decisions : [],
+                trim($_POST['notes'] ?? ''), $user, $peut_art, $peut_rlx);
+        } catch (Exception $e) { json_response(false, $e->getMessage()); }
+        json_response(true, 'Écarts traités : ' . $r['resume'] . '.', $r);
     }
 
     // ── Annuler commande en_attente
@@ -849,7 +895,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         foreach ($lgns as &$_l) $_l['bobines'] = cmdbob_est_rouleau($_l['type_article'])
             ? ($bob[(int)$_l['id']] ?? $bob_recu[(int)$_l['id']] ?? []) : [];
         unset($_l);
-        json_response(true, '', ['cmd' => $det, 'lignes' => $lgns]);
+        $ecarts = rcp_ecarts($cmd_id);
+        foreach ($ecarts as &$_e) {
+            $_e['peut_traiter'] = $_e['statut'] === 'ouvert' && ($_e['bobine_id'] ? $is_gsb : $is_gestionnaire);
+            $_e['decision_label'] = RCP_DECISIONS[$_e['statut']] ?? null;
+        }
+        unset($_e);
+        json_response(true, '', ['cmd' => $det, 'lignes' => $lgns, 'ecarts' => $ecarts]);
     }
 
     // ── Charger lignes commande (pour modals)
@@ -1096,6 +1148,8 @@ $commandes = db_fetch_all(
      GROUP BY c.id, s.nom, u.prenom, u.nom ORDER BY c.created_at DESC LIMIT 100",
     $params
 );
+// Écarts de réception encore ouverts, par commande (badge + action du gestionnaire).
+$ecarts_ouverts = rcp_nb_ouverts(array_column($commandes, 'id'));
 
 // ── Articles avec données contextuelles intégrées (stock site, historique)
 // Pour coordinateur : site_force > 0 → données filtrées sur leur site
@@ -1287,6 +1341,8 @@ function _bdc_pdf($cmd, $lignes, $voir_prix, array $ctx = []) {
 
     $has_livraison = in_array($cmd['statut'], ['en_attente_livraison','en_cours_livraison','recu','livre']);
     $statut_label  = $sl[$cmd['statut']] ?? $cmd['statut'];
+    // Colonne « Qté reçue » dès qu'une ligne a été déclarée à la réception.
+    $has_recu = $has_livraison && (bool)array_filter($lignes, fn($l) => ($l['quantite_recue'] ?? null) !== null);
 
     // Totaux
     $total = array_sum(array_map(fn($l) => (int)$l['quantite'] * (float)($l['prix_unitaire'] ?? 0), $lignes));
@@ -1329,8 +1385,16 @@ function _bdc_pdf($cmd, $lignes, $voir_prix, array $ctx = []) {
 
         if ($has_livraison) {
             $ecart_s = $has_ecart ? 'color:#dc2626;font-weight:700' : 'color:#555';
-            $rows .= "<td style='background:$bg;padding:7px 9px;border:1px solid #d1d5db;text-align:center;$ecart_s'>$qte_liv</td>
-                      <td style='background:$bg;padding:7px 9px;border:1px solid #d1d5db;color:$st_col;font-size:9px;font-weight:700'>$st_txt"
+            $rows .= "<td style='background:$bg;padding:7px 9px;border:1px solid #d1d5db;text-align:center;$ecart_s'>$qte_liv</td>";
+            if ($has_recu) {
+                $q_rec   = ($l['quantite_recue'] ?? null) !== null ? (int)$l['quantite_recue'] : '-';
+                $manque  = is_int($q_rec) && $l['quantite_livree'] !== null && $q_rec < (int)$l['quantite_livree'];
+                $rows .= "<td style='background:$bg;padding:7px 9px;border:1px solid #d1d5db;text-align:center;"
+                       . ($manque ? 'color:#b45309;font-weight:700' : 'color:#555') . "'>$q_rec"
+                       . ($manque && !empty($l['motif_reception']) ? "<div style='font-size:8px;color:#666;font-weight:400;margin-top:2px'>" . htmlspecialchars($l['motif_reception']) . "</div>" : '')
+                       . "</td>";
+            }
+            $rows .= "<td style='background:$bg;padding:7px 9px;border:1px solid #d1d5db;color:$st_col;font-size:9px;font-weight:700'>$st_txt"
                       .($motif ? "<div style='color:#666;font-weight:400;margin-top:2px'>$motif</div>" : '')."</td>";
         }
         if ($voir_prix) {
@@ -1358,8 +1422,9 @@ function _bdc_pdf($cmd, $lignes, $voir_prix, array $ctx = []) {
 
     // En-têtes colonnes dynamiques
     $th_extra = '';
-    if ($has_livraison) $th_extra .= "<th style='background:#06033A;color:white;padding:8px 9px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;border:1px solid #1a1060;text-align:center'>Qte livree</th>
-                                      <th style='background:#06033A;color:white;padding:8px 9px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;border:1px solid #1a1060'>Statut</th>";
+    if ($has_livraison) $th_extra .= "<th style='background:#06033A;color:white;padding:8px 9px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;border:1px solid #1a1060;text-align:center'>Qte livree</th>"
+                                      . ($has_recu ? "<th style='background:#06033A;color:white;padding:8px 9px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;border:1px solid #1a1060;text-align:center'>Qte recue</th>" : '')
+                                      . "<th style='background:#06033A;color:white;padding:8px 9px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;border:1px solid #1a1060'>Statut</th>";
     if ($voir_prix)     $th_extra .= "<th style='background:#06033A;color:white;padding:8px 9px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;border:1px solid #1a1060;text-align:right'>P.U. (F)</th>
                                       <th style='background:#06033A;color:white;padding:8px 9px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;border:1px solid #1a1060;text-align:right'>Total (F)</th>";
 
@@ -1697,6 +1762,11 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
               <?= $bob_a_choisir ? "Bobines à choisir : $bob_a_choisir ligne" . ($bob_a_choisir > 1 ? 's' : '') : 'Bobines choisies, prête à expédier' ?>
             </div>
             <?php endif; ?>
+            <?php if($n_ec = (int)($ecarts_ouverts[$cmd['id']] ?? 0)): ?>
+            <div style="font-size:11.5px;margin-top:4px;color:#b45309;font-weight:700">
+              <i class="ph ph-warning" aria-hidden="true"></i> <?= $n_ec ?> manque<?= $n_ec > 1 ? 's' : '' ?> à la réception
+            </div>
+            <?php endif; ?>
           </td>
           <td style="font-size:12px"><?= h($cmd['agent']??'—') ?></td>
           <td style="min-width:120px">
@@ -1721,6 +1791,9 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
             <?php endif; ?>
             <?php if($cmd['statut']==='en_cours_livraison' && $is_coord): ?>
               <button class="btn btn-success btn-sm" onclick="receptionner(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')"><i class="ph ph-check-circle" aria-hidden="true"></i> Réceptionner</button>
+            <?php endif; ?>
+            <?php if(($ecarts_ouverts[$cmd['id']] ?? 0) && ($is_gestionnaire || $is_gsb)): ?>
+              <button class="btn btn-sm" style="background:#FFF7ED;color:#9A3412;border:1.5px solid #FDBA74;white-space:nowrap" onclick="voirDetail(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>',true)"><i class="ph ph-warning" aria-hidden="true"></i> Traiter l'écart</button>
             <?php endif; ?>
             <?php if($cmd['statut']==='modification_demandee' && $is_coord): ?>
               <button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6;border:1.5px solid #ddd6fe" onclick="ouvrirCorrection(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')"><i class="ph ph-pencil-simple" aria-hidden="true"></i> Corriger</button>
@@ -1900,10 +1973,14 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
 <!-- ═══ MODAL RÉCEPTION (coordinateur) : bon de livraison PDF obligatoire ═══ -->
 <?php if($is_coord): ?>
 <div id="modalReception" style="display:none;position:fixed;inset:0;background:rgba(6,3,58,.55);z-index:1000;align-items:center;justify-content:center">
-  <div style="background:white;border-radius:18px;padding:26px;width:480px;max-width:96vw;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+  <div style="background:white;border-radius:18px;padding:26px;width:720px;max-width:96vw;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.25)">
     <h3 style="font-family:'Plus Jakarta Sans',sans-serif;font-size:16px;font-weight:800;color:var(--navy);margin-bottom:12px" id="titleReception">Réceptionner la commande</h3>
     <div id="alertReception"></div>
-    <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Joignez le bon de livraison signé (PDF, 10 Mo maximum). La réception met à jour le stock du site.</p>
+    <div id="receptionLignesBox" style="display:none;margin-bottom:14px">
+      <p style="font-size:13px;color:var(--muted);margin:0 0 8px">Pour chaque article, indiquez ce que vous avez <strong>réellement reçu</strong>. Le stock du site n'est crédité que du reçu ; un manque est signalé au gestionnaire de stock.</p>
+      <div id="receptionLignes"></div>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Joignez le bon de livraison signé (PDF, 10 Mo maximum).</p>
     <div class="form-group">
       <label for="fichierBlReception">Bon de livraison (PDF) <span style="color:var(--danger-d)">*</span></label>
       <input type="file" class="form-control" id="fichierBlReception" accept="application/pdf,.pdf">
@@ -2056,6 +2133,25 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
           </table>
         </div>
 
+        <!-- Écarts de réception : manques déclarés par le site, tranchés par le gestionnaire -->
+        <div id="detail-ecarts" style="display:none;margin-top:16px;border:1.5px solid #FDBA74;border-radius:12px;padding:14px 16px;background:#FFFBF5">
+          <div style="font-size:13px;font-weight:800;color:#9A3412;margin-bottom:8px"><i class="ph ph-warning" aria-hidden="true"></i> Manques à la réception</div>
+          <div id="detail-ecarts-liste"></div>
+          <div id="detail-ecarts-action" style="display:none;margin-top:12px">
+            <p style="font-size:12.5px;color:#7C2D12;margin:0 0 8px">
+              <strong>Remettre en stock</strong> : la quantité revient au dépôt d'où elle est partie.
+              <strong>Renvoyer</strong> : idem, puis une nouvelle commande « À préparer » reprend les manquants.
+              <strong>Perte</strong> : rien ne revient (une bobine passe « Perdue »).
+            </p>
+            <label for="detail-ecarts-notes" style="font-size:12.5px;font-weight:700">Commentaire <span style="font-weight:400;color:var(--muted)">(obligatoire pour une perte)</span></label>
+            <textarea id="detail-ecarts-notes" class="form-control" rows="2" style="margin-top:4px"></textarea>
+            <div id="detail-ecarts-alert" style="margin-top:8px"></div>
+            <div style="display:flex;justify-content:flex-end;margin-top:8px">
+              <button class="btn btn-primary" id="btnTraiterEcarts" onclick="traiterEcarts()"><i class="ph ph-check" aria-hidden="true"></i> Enregistrer les décisions</button>
+            </div>
+          </div>
+        </div>
+
         <!-- Total HT -->
         <div id="detail-total-wrap" style="display:none;margin-top:10px;text-align:right">
           <span style="font-size:13px;font-weight:700;color:var(--muted);margin-right:8px">TOTAL HT</span>
@@ -2121,7 +2217,7 @@ const _SC = {'en_attente':'st-en_attente','modification_demandee':'st-modificati
 const _LS = {'valide':'✅ OK','rejete':'❌ Rejeté','modifie':'⚠️ Modifié','modification_demandee':'✏️ À corriger'};
 const _LC = {'valide':'#15803d','rejete':'#dc2626','modifie':'#d97706','modification_demandee':'#5b21b6'};
 
-async function voirDetail(id, numero) {
+async function voirDetail(id, numero, versEcarts) {
   const modal = document.getElementById('modalDetail');
   modal.style.display = 'flex';
   document.getElementById('detail-loading').style.display = '';
@@ -2194,7 +2290,9 @@ async function voirDetail(id, numero) {
   let thHtml = `<tr style="background:#06033A">
     <th style="color:white;padding:8px 10px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;text-align:left">Article</th>
     <th style="color:white;padding:8px 10px;font-size:12px;font-weight:700;text-transform:uppercase;text-align:center">Qté dem.</th>`;
-  if (hasLiv) thHtml += `<th style="color:white;padding:8px 10px;font-size:12px;font-weight:700;text-transform:uppercase;text-align:center">Qté livrée</th>
+  const hasRecu = lignes.some(l => l.quantite_recue !== null && l.quantite_recue !== undefined);
+  if (hasLiv) thHtml += `<th style="color:white;padding:8px 10px;font-size:12px;font-weight:700;text-transform:uppercase;text-align:center">Qté livrée</th>`
+    + (hasRecu ? `<th style="color:white;padding:8px 10px;font-size:12px;font-weight:700;text-transform:uppercase;text-align:center">Qté reçue</th>` : '') + `
     <th style="color:white;padding:8px 10px;font-size:12px;font-weight:700;text-transform:uppercase">Statut</th>`;
   if (voirPrix) thHtml += `<th style="color:white;padding:8px 10px;font-size:12px;font-weight:700;text-transform:uppercase;text-align:right">P.U.</th>
     <th style="color:white;padding:8px 10px;font-size:12px;font-weight:700;text-transform:uppercase;text-align:right">Total</th>`;
@@ -2224,7 +2322,14 @@ async function voirDetail(id, numero) {
 
     if (hasLiv) {
       const ecartStyle = hasEcart ? 'color:#dc2626;font-weight:700' : '';
-      row += `<td style="background:${bg};padding:8px 10px;border-bottom:1px solid var(--border);text-align:center;${ecartStyle}">${qLiv !== null ? qLiv : '—'}</td>
+      row += `<td style="background:${bg};padding:8px 10px;border-bottom:1px solid var(--border);text-align:center;${ecartStyle}">${qLiv !== null ? qLiv : '—'}</td>`;
+      if (hasRecu) {
+        const qRec = l.quantite_recue !== null ? parseInt(l.quantite_recue) : null;
+        const manque = qRec !== null && qLiv !== null && qRec < qLiv;
+        row += `<td style="background:${bg};padding:8px 10px;border-bottom:1px solid var(--border);text-align:center;${manque ? 'color:#b45309;font-weight:700' : ''}">${qRec !== null ? qRec : '—'}
+          ${manque && l.motif_reception ? `<div style="font-size:11.5px;font-weight:400;color:var(--muted)">${esc(l.motif_reception)}</div>` : ''}</td>`;
+      }
+      row += `
         <td style="background:${bg};padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px">
           <span style="font-weight:700;color:${_LC[stLigne]||'var(--muted)'}">${_LS[stLigne]||'—'}</span>
           ${motif ? `<div style="font-size:12px;color:var(--muted)">${esc(motif)}</div>` : ''}
@@ -2245,8 +2350,64 @@ async function voirDetail(id, numero) {
     tw.style.display = '';
   } else { tw.style.display = 'none'; }
 
+  afficherEcarts(d.data.ecarts || []);
+
   document.getElementById('detail-loading').style.display = 'none';
   document.getElementById('detail-content').style.display = '';
+  if (versEcarts) document.getElementById('detail-ecarts').scrollIntoView({block:'center'});
+}
+
+// ── Écarts de réception (détail) ───────────────────────────────
+const _EC_DEC = {restitue:'Remettre en stock', renvoye:'Renvoyer', perte:'Perte'};
+function afficherEcarts(ecarts) {
+  const box = document.getElementById('detail-ecarts');
+  if (!ecarts.length) { box.style.display = 'none'; return; }
+  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  let aTraiter = 0;
+  document.getElementById('detail-ecarts-liste').innerHTML = ecarts.map(e => {
+    const quoi = e.bobine_numero
+      ? `Rouleau <span style="font-family:monospace">${esc(e.bobine_numero)}</span>`
+      : `${esc(e.quantite)} ${esc(e.unite || '')}`;
+    let etat;
+    if (e.statut !== 'ouvert') {
+      etat = `<span style="color:#15803d;font-weight:700">${esc(e.decision_label || e.statut)}</span>`
+        + (e.renvoi_numero ? ` — <strong>${esc(e.renvoi_numero)}</strong>` : '')
+        + (e.traite_par_nom ? `<div style="font-size:11.5px;color:var(--muted)">par ${esc(e.traite_par_nom)}${e.notes_traitement ? ' : ' + esc(e.notes_traitement) : ''}</div>` : '');
+    } else if (e.peut_traiter) {
+      aTraiter++;
+      etat = `<select class="form-control ecart-decision" data-id="${e.id}" aria-label="Décision pour ${esc(e.libelle)}" style="min-width:170px">
+          <option value="">— Décision —</option>
+          ${Object.entries(_EC_DEC).map(([v,t]) => `<option value="${v}">${t}</option>`).join('')}
+        </select>`;
+    } else {
+      etat = `<span style="color:#b45309;font-weight:700">En attente du ${e.bobine_id ? 'GSB' : 'gestionnaire de stock'}</span>`;
+    }
+    return `<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;padding:8px 0;border-top:1px solid #FED7AA">
+        <div style="min-width:0">
+          <div style="font-weight:700;color:var(--navy)">${esc(e.libelle)} — ${quoi}</div>
+          <div style="font-size:12px;color:var(--muted)">Motif du site : ${esc(e.motif || '—')}${e.depot_nom ? ' · parti de ' + esc(e.depot_nom) : ''}</div>
+        </div>
+        <div>${etat}</div>
+      </div>`;
+  }).join('');
+  document.getElementById('detail-ecarts-action').style.display = aTraiter ? '' : 'none';
+  document.getElementById('detail-ecarts-notes').value = '';
+  document.getElementById('detail-ecarts-alert').innerHTML = '';
+  box.style.display = '';
+}
+async function traiterEcarts() {
+  const decisions = {};
+  document.querySelectorAll('.ecart-decision').forEach(s => { if (s.value) decisions[s.dataset.id] = s.value; });
+  const alerte = document.getElementById('detail-ecarts-alert');
+  if (!Object.keys(decisions).length) { alerte.innerHTML = '<div class="alert alert-danger">Choisissez une décision pour au moins un manque.</div>'; return; }
+  const btn = document.getElementById('btnTraiterEcarts');
+  btn.disabled = true;
+  const d = await ap({action:'traiter_ecarts', cmd_id: currentDetailId, decisions: JSON.stringify(decisions),
+                      notes: document.getElementById('detail-ecarts-notes').value});
+  btn.disabled = false;
+  if (!d.success) { alerte.innerHTML = '<div class="alert alert-danger"></div>'; alerte.firstChild.textContent = d.message; return; }
+  toast(d.message, 'success');
+  setTimeout(() => location.reload(), 900);
 }
 
 // Fermer modal détail en cliquant fond
@@ -2810,23 +2971,101 @@ async function confirmerLivraison(){
   if(d.success){toast(d.message,'success');fermer('Livraison');setTimeout(()=>location.reload(),800);}
   else document.getElementById('alertLivraison').innerHTML=`<div class="alert alert-danger">${d.message}</div>`;
 }
-let currentReceptionId = null;
-function receptionner(id, numero){
+let currentReceptionId = null, receptionLignes = [];
+async function receptionner(id, numero){
   currentReceptionId = id;
+  receptionLignes = [];
   document.getElementById('titleReception').textContent = '✅ Réceptionner — ' + (numero || '');
   document.getElementById('alertReception').innerHTML = '';
   document.getElementById('fichierBlReception').value = '';
+  document.getElementById('receptionLignesBox').style.display = 'none';
+  document.getElementById('receptionLignes').innerHTML = '';
   document.getElementById('modalReception').style.display = 'flex';
+  const d = await ap({action:'get_reception', cmd_id:id});
+  if (!d.success) { document.getElementById('alertReception').innerHTML = '<div class="alert alert-danger"></div>'; document.getElementById('alertReception').firstChild.textContent = d.message; return; }
+  if (!d.data.par_ligne || !d.data.lignes.length) return;   // base sans la migration : réception globale, comme avant
+  receptionLignes = d.data.lignes;
+  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  document.getElementById('receptionLignes').innerHTML = receptionLignes.map(l => {
+    const tete = `<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline">
+        <div style="font-weight:700;color:var(--navy)">${esc(l.libelle)}</div>
+        <div style="font-size:12.5px;color:var(--muted)">Expédié : <strong style="color:var(--navy)">${l.livre} ${esc(l.unite || '')}</strong></div>
+      </div>`;
+    let corps;
+    if (l.bobines.length) {
+      corps = `<div style="font-size:12.5px;color:var(--muted);margin:6px 0 4px">Décochez les rouleaux qui ne sont pas arrivés :</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px 14px">${l.bobines.map(b =>
+          `<label style="display:flex;align-items:center;gap:6px;font-family:monospace;font-size:13px;cursor:pointer">
+             <input type="checkbox" class="rec-bob" data-ligne="${l.id}" value="${b.id}" checked onchange="majReceptionLigne(${l.id})"> ${esc(b.numero)}</label>`).join('')}</div>`;
+    } else {
+      corps = `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:6px">
+          <select class="form-control" id="rec-etat-${l.id}" style="max-width:220px" onchange="majReceptionLigne(${l.id})" aria-label="Réception de ${esc(l.libelle)}">
+            <option value="tout">Reçu en totalité</option>
+            <option value="partiel">Reçu partiellement</option>
+            <option value="rien">Non reçu</option>
+          </select>
+          <span id="rec-qte-wrap-${l.id}" style="display:none;align-items:center;gap:6px;font-size:13px">
+            Quantité reçue <input type="number" class="form-control" id="rec-qte-${l.id}" min="0" max="${l.livre - 1}" style="width:110px">
+          </span>
+        </div>`;
+    }
+    return `<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">${tete}${corps}
+        <div id="rec-motif-wrap-${l.id}" style="display:none;margin-top:8px">
+          <input type="text" class="form-control" id="rec-motif-${l.id}" placeholder="Motif du manque (obligatoire)" maxlength="250" aria-label="Motif du manque pour ${esc(l.libelle)}">
+        </div></div>`;
+  }).join('');
+  document.getElementById('receptionLignesBox').style.display = '';
+}
+function majReceptionLigne(id){
+  const l = receptionLignes.find(x => x.id === id);
+  if (!l) return;
+  let manque;
+  if (l.bobines.length) {
+    manque = [...document.querySelectorAll(`.rec-bob[data-ligne="${id}"]`)].some(c => !c.checked);
+  } else {
+    const etat = document.getElementById('rec-etat-' + id).value;
+    document.getElementById('rec-qte-wrap-' + id).style.display = etat === 'partiel' ? 'inline-flex' : 'none';
+    manque = etat !== 'tout';
+  }
+  document.getElementById('rec-motif-wrap-' + id).style.display = manque ? '' : 'none';
+}
+function lireReception(){
+  const out = [];
+  for (const l of receptionLignes) {
+    const motif = (document.getElementById('rec-motif-' + l.id).value || '').trim();
+    if (l.bobines.length) {
+      const recus = [...document.querySelectorAll(`.rec-bob[data-ligne="${l.id}"]:checked`)].map(c => parseInt(c.value));
+      if (recus.length < l.bobines.length && !motif) throw new Error(`Indiquez le motif du manque pour « ${l.libelle} ».`);
+      out.push({ligne_id:l.id, bobines:recus, motif: recus.length < l.bobines.length ? motif : ''});
+      continue;
+    }
+    const etat = document.getElementById('rec-etat-' + l.id).value;
+    let q = l.livre;
+    if (etat === 'rien') q = 0;
+    if (etat === 'partiel') {
+      q = parseInt(document.getElementById('rec-qte-' + l.id).value, 10);
+      if (isNaN(q) || q < 0 || q >= l.livre) throw new Error(`Quantité reçue de « ${l.libelle} » : entre 0 et ${l.livre - 1} pour une réception partielle.`);
+    }
+    if (q < l.livre && !motif) throw new Error(`Indiquez le motif du manque pour « ${l.libelle} ».`);
+    out.push({ligne_id:l.id, quantite_recue:q, motif: q < l.livre ? motif : ''});
+  }
+  return out;
 }
 async function confirmerReception(btn){
   const alerte = document.getElementById('alertReception');
+  let saisie;
+  try { saisie = lireReception(); }
+  catch (e) { alerte.innerHTML = '<div class="alert alert-danger"></div>'; alerte.firstChild.textContent = e.message; return; }
   const f = document.getElementById('fichierBlReception').files[0];
   if (!f) { alerte.innerHTML = '<div class="alert alert-danger">Joignez le bon de livraison en PDF.</div>'; return; }
   if (!/\.pdf$/i.test(f.name)) { alerte.innerHTML = '<div class="alert alert-danger">Le bon de livraison doit être un fichier PDF.</div>'; return; }
   if (f.size > 10 * 1024 * 1024) { alerte.innerHTML = '<div class="alert alert-danger">Fichier trop volumineux (max 10 Mo).</div>'; return; }
+  const nbManques = saisie.filter(s => s.motif).length;
+  if (nbManques && !confirm(`${nbManques} article(s) avec un manque : il(s) sera(ont) signalé(s) au gestionnaire de stock. Confirmer la réception ?`)) return;
   const fd = new FormData();
   fd.append('action', 'receptionner');
   fd.append('cmd_id', String(currentReceptionId));
+  fd.append('reception', JSON.stringify(saisie));
   fd.append('bl_reception', f);
   btn.disabled = true;
   const d = await fetch(window.location.href, {method:'POST', headers:{'X-Requested-With':'XMLHttpRequest'}, body:fd}).then(r => r.json());
