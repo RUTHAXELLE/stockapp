@@ -585,6 +585,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                               VALUES (?,?,?,?,?,?,?)",
                         [$_b['id'], 'transfert', 0, $_st, $_st,
                          "Expédiée via commande {$cmd['numero_commande']} (en attente de réception)", $user['id']]);
+                    // Films du rouleau à l'expédition : base du livré, relue à
+                    // la réception pour chiffrer un rouleau manquant.
+                    if (db_colonne_existe('commande_ligne_bobines', 'films_expedies'))
+                        db_query("UPDATE commande_ligne_bobines SET films_expedies=?
+                                  WHERE commande_id=? AND bobine_id=? AND statut='assigne'", [$_st, $cmd_id, $_b['id']]);
                 }
             }
             db_query(

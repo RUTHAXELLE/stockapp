@@ -25,6 +25,13 @@ SET @sql := IF((SELECT COUNT(*) FROM information_schema.columns
     'SELECT ''motif_reception déjà présente'' AS info');
 PREPARE etape FROM @sql; EXECUTE etape; DEALLOCATE PREPARE etape;
 
+SET @sql := IF((SELECT COUNT(*) FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = 'commande_ligne_bobines'
+                   AND column_name = 'films_expedies') = 0,
+    'ALTER TABLE `commande_ligne_bobines` ADD COLUMN `films_expedies` int unsigned DEFAULT NULL COMMENT ''Films du rouleau à l''''expédition''',
+    'SELECT ''films_expedies déjà présente'' AS info');
+PREPARE etape FROM @sql; EXECUTE etape; DEALLOCATE PREPARE etape;
+
 CREATE TABLE IF NOT EXISTS commande_ecarts_reception (
     id INT UNSIGNED NOT NULL AUTO_INCREMENT,
     commande_id INT UNSIGNED NOT NULL,

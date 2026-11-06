@@ -125,17 +125,18 @@ function rcp_mouvement(array $l, int $site_id, int $q, bool $global = false): vo
  */
 function rcp_lignes_a_recevoir(int $cmd_id): array {
     $bob = cmdbob_par_ligne($cmd_id);
-    // Films de chaque rouleau au moment de l'expédition (mouvement tracé par
-    // emettre_livraison) : c'est sur eux que le livré a été calculé ; le
-    // stock_systeme actuel a pu bouger depuis (import OptoTrace).
-    $num = (string)db_fetch_value("SELECT numero_commande FROM commandes WHERE id=?", [$cmd_id]);
+    // Films de chaque rouleau au moment de l'expédition, figés par
+    // emettre_livraison (commande_ligne_bobines.films_expedies) : c'est sur
+    // eux que le livré a été calculé ; le stock_systeme actuel a pu bouger
+    // depuis (import OptoTrace). À défaut (expédiée avant la migration), le
+    // stock_systeme actuel.
+    $exp = $bob && db_colonne_existe('commande_ligne_bobines', 'films_expedies')
+        ? array_column(db_fetch_all("SELECT bobine_id, films_expedies FROM commande_ligne_bobines
+                                     WHERE commande_id=? AND statut='assigne'", [$cmd_id]), 'films_expedies', 'bobine_id')
+        : [];
     foreach ($bob as &$_rouleaux) {
-        foreach ($_rouleaux as &$_b) {
-            $exp = db_fetch_value(
-                "SELECT stock_avant FROM mouvements_bobines WHERE bobine_id=? AND motif LIKE ? ORDER BY id DESC LIMIT 1",
-                [$_b['id'], "Expédiée via commande $num %"]);
-            $_b['films_expedies'] = $exp !== null && $exp !== false ? (int)$exp : (int)$_b['stock_systeme'];
-        }
+        foreach ($_rouleaux as &$_b)
+            $_b['films_expedies'] = isset($exp[$_b['id']]) ? (int)$exp[$_b['id']] : (int)$_b['stock_systeme'];
         unset($_b);
     }
     unset($_rouleaux);
@@ -292,11 +293,43 @@ function rcp_restituable(array $e): bool {
     return !empty($e['bobine_id']) || (!empty($e['depot_source_id']) && rcp_cle_stock($e) !== null);
 }
 
-/** Un rouleau non reçu, qui ne réapparaîtra pas : « Perdue », réservation close. */
-function rcp_rouleau_perdu(array $e, string $note): void {
+/**
+ * Un rouleau non reçu, qui ne réapparaîtra pas : « Perdue », réservation
+ * close, et le même mouvement 'perte' que la déclaration de perte de
+ * pages/operations/bobines.php, pour que les pertes se comptent pareil.
+ */
+function rcp_rouleau_perdu(array $e, string $note, int $user_id): void {
     db_query("UPDATE commande_ligne_bobines SET statut='perdu'
               WHERE commande_id=? AND bobine_id=? AND statut='non_recu'", [$e['commande_id'], $e['bobine_id']]);
     db_query("UPDATE op_bobines SET statut='perdue', notes_perte=? WHERE id=?", [$note, $e['bobine_id']]);
+    $films = (int)db_fetch_value("SELECT films_restants FROM op_bobines WHERE id=?", [$e['bobine_id']]);
+    db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
+              VALUES (?,?,?,?,0,?,?)", [$e['bobine_id'], 'perte', $films, $films, "PERTE : $note", $user_id]);
+}
+
+/**
+ * Perte en transport d'une ligne (rivets, PMMA, article) : le dépôt a été
+ * débité à l'expédition et le site n'a rien reçu, le stock est donc juste ;
+ * la perte est tracée là où se lisent les pertes et écarts de chaque
+ * matière — écarts rivets / PMMA (source 'reception', résolus), mouvement
+ * 'perte' des articles.
+ */
+function rcp_tracer_perte(array $e, array $cmd, string $notes, int $user_id): void {
+    $c = rcp_cle_stock($e);
+    $q = (int)$e['quantite'];
+    if (!$c || $q <= 0) return;
+    $motif = "Perte en transport (commande {$cmd['numero_commande']})" . ($notes !== '' ? " : $notes" : '');
+    if ($c[0] === 'rivet' || $c[0] === 'pmma') {
+        $u = rcp_unites($e, $q);
+        $t = $c[0] === 'rivet' ? ['ecarts_rivets', 'type_rivet'] : ['ecarts_pmma', 'type_pmma'];
+        db_query("INSERT INTO {$t[0]} (site_id,{$t[1]},date_constat,stock_systeme,stock_physique,ecart,motif,source,statut,resolu_at,resolu_par,created_by)
+                  VALUES (?,?,CURRENT_DATE,?,0,?,?,'reception','resolu',NOW(),?,?)",
+            [$cmd['site_id'], $c[1], $u, -$u, $motif, $user_id, $user_id]);
+    } elseif (db_colonne_existe('mouvements_stock', 'type_mouvement')) {
+        db_query("INSERT INTO mouvements_stock (article_id,site_id,type_mouvement,quantite,solde_apres,reference,notes,created_by)
+                  VALUES (?,?,'perte',?,?,?,?,?)",
+            [$c[1], $cmd['site_id'], $q, rcp_stock($e, (int)$cmd['site_id']) ?? 0, $cmd['numero_commande'], $motif, $user_id]);
+    }
 }
 
 /** Remet au dépôt d'origine la quantité d'un écart (transaction de l'appelant). */
@@ -361,8 +394,11 @@ function rcp_traiter(int $cmd_id, array $decisions, string $notes, array $user, 
                 // sera choisi) ou non. Le remettre disponible laisserait
                 // rechoisir un rouleau introuvable.
                 rcp_rouleau_perdu($e, "Non reçue sur site (commande {$cmd['numero_commande']})"
-                    . ($dec === 'renvoye' ? ' : remplacée par une commande de renvoi' : '') . ($notes !== '' ? " — $notes" : ''));
-            } elseif ($dec !== 'perte') {
+                    . ($dec === 'renvoye' ? ' : remplacée par une commande de renvoi' : '') . ($notes !== '' ? " — $notes" : ''),
+                    (int)$user['id']);
+            } elseif ($dec === 'perte') {
+                rcp_tracer_perte($e, $cmd, $notes, (int)$user['id']);
+            } else {
                 rcp_remettre_en_stock($e, (int)$user['id'], $cmd['numero_commande']);
             }
             if ($dec === 'renvoye')

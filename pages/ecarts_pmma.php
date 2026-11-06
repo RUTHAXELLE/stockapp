@@ -67,6 +67,7 @@ $kpis = db_fetch_one(
 $source_labels = [
     'inventaire' => 'Inventaire',
     'manuel'     => 'Manuel',
+    'reception'  => 'Perte en transport',
 ];
 
 include __DIR__ . '/../templates/header.php';
@@ -181,6 +182,7 @@ include __DIR__ . '/../templates/header.php';
         <option value="">Toutes</option>
         <option value="inventaire" <?= $f_source === 'inventaire' ? 'selected' : '' ?>>Inventaire</option>
         <option value="manuel"     <?= $f_source === 'manuel'     ? 'selected' : '' ?>>Manuel</option>
+        <option value="reception"  <?= $f_source === 'reception'  ? 'selected' : '' ?>>Perte en transport</option>
       </select>
     </div>
     <button type="submit"><i class="ph ph-funnel"></i> Filtrer</button>
