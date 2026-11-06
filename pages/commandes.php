@@ -813,8 +813,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $lgns = db_fetch_all("SELECT * FROM commande_lignes WHERE commande_id=? ORDER BY id", [$cmd_id]);
         $bob = cmdbob_par_ligne($cmd_id);
         $bob_recu = cmdbob_par_ligne($cmd_id, 'recu');
-        foreach ($lgns as &$_l) $_l['bobines'] = cmdbob_est_rouleau($_l['type_article'])
-            ? ($bob[(int)$_l['id']] ?? $bob_recu[(int)$_l['id']] ?? []) : [];
+        foreach ($lgns as &$_l) {
+            $_l['bobines'] = cmdbob_est_rouleau($_l['type_article'])
+                ? ($bob[(int)$_l['id']] ?? $bob_recu[(int)$_l['id']] ?? []) : [];
+            // Libellé de statut calculé côté serveur, le même que sur le bon PDF.
+            [$_l['statut_libelle'], $_l['statut_couleur']] = rcp_statut_ligne($det['statut'], $_l);
+        }
         unset($_l);
         $ecarts = rcp_ecarts($cmd_id);
         foreach ($ecarts as &$_e) {
@@ -1265,22 +1269,9 @@ function _bdc_pdf($cmd, $lignes, $voir_prix, array $ctx = []) {
         $bg         = $odd ? '#ffffff' : '#f0f4ff';
         $odd        = !$odd;
 
-        // Une ligne validée n'est pas une ligne livrée : tant que la commande
-        // est en préparation, le bon imprimé annonçait « Livré » à tort.
-        // Le libellé suit donc l'état réel de la commande.
-        $lbl_valide = in_array($cmd['statut'], ['recu','livre'], true)   ? 'Livré'
-                    : ($cmd['statut'] === 'en_cours_livraison'           ? 'En livraison'
-                    : 'Validé');
-        $st_labels = ['valide'=>$lbl_valide,'rejete'=>'Rejeté','modifie'=>'Modifié','modification_demandee'=>'À corriger'];
-        $st_colors = ['valide'=>'#15803d','rejete'=>'#dc2626','modifie'=>'#d97706','modification_demandee'=>'#5b21b6'];
-        $st_txt    = $st_labels[$l['statut_ligne'] ?? ''] ?? '';
-        $st_col    = $st_colors[$l['statut_ligne'] ?? ''] ?? '#555';
-        // Ligne reçue avec un manque : ni « Livré » ni vert.
-        if (($l['quantite_recue'] ?? null) !== null && $l['quantite_livree'] !== null
-            && (int)$l['quantite_recue'] < (int)$l['quantite_livree']) {
-            $st_txt = (int)$l['quantite_recue'] === 0 ? 'Non reçu' : 'Reçu partiel';
-            $st_col = '#b45309';
-        }
+        // Même libellé que la fenêtre de détail (rcp_statut_ligne()) : une
+        // ligne non livrée ou livrée en partie n'est ni « OK » ni « Livré ».
+        [$st_txt, $st_col] = rcp_statut_ligne($cmd['statut'], $l);
 
         $rows .= "<tr>
             <td style='background:$bg;padding:7px 9px;border:1px solid #d1d5db;vertical-align:middle'>
@@ -2241,7 +2232,7 @@ async function voirDetail(id, numero, versEcarts) {
       }
       row += `
         <td style="background:${bg};padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px">
-          <span style="font-weight:700;color:${_LC[stLigne]||'var(--muted)'}">${_LS[stLigne]||'—'}</span>
+          <span style="font-weight:700;color:${l.statut_couleur||_LC[stLigne]||'var(--muted)'}">${esc(l.statut_libelle||_LS[stLigne]||'—')}</span>
           ${motif ? `<div style="font-size:12px;color:var(--muted)">${esc(motif)}</div>` : ''}
         </td>`;
     }

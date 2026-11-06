@@ -117,6 +117,33 @@ function rcp_mouvement(array $l, int $site_id, int $q, bool $global = false): vo
     }
 }
 
+// ── Libellé du statut d'une ligne ──────────────────────────────
+
+/**
+ * Statut affiché d'une ligne de commande, [libellé, couleur], pour le bon
+ * PDF comme pour la fenêtre de détail. Une ligne validée n'est « livrée »
+ * que si elle part (ou est arrivée) en totalité : livrée à 0 → « Non
+ * livré », livrée en partie → « Livré partiellement » ; à la réception, un
+ * manque donne « Non reçu » / « Reçu partiel ».
+ */
+function rcp_statut_ligne(string $cmd_statut, array $l): array {
+    $sl = $l['statut_ligne'] ?? '';
+    $fixes = ['rejete' => ['Rejeté', '#dc2626'], 'modifie' => ['Modifié', '#d97706'],
+              'modification_demandee' => ['À corriger', '#5b21b6']];
+    if (isset($fixes[$sl])) return $fixes[$sl];
+    if ($sl !== 'valide') return ['', '#555'];
+
+    $dem  = (int)($l['quantite'] ?? 0);
+    $liv  = ($l['quantite_livree'] ?? null) !== null ? (int)$l['quantite_livree'] : null;
+    $rec  = ($l['quantite_recue'] ?? null) !== null ? (int)$l['quantite_recue'] : null;
+    $part = in_array($cmd_statut, ['en_cours_livraison', 'recu', 'livre'], true);
+    if (!$part || $liv === null) return ['Validé', '#15803d'];
+    if ($liv === 0)              return ['Non livré', '#dc2626'];
+    if ($rec !== null && $rec < $liv) return [$rec === 0 ? 'Non reçu' : 'Reçu partiel', '#b45309'];
+    if ($liv < $dem)             return ['Livré partiellement', '#d97706'];
+    return $cmd_statut === 'en_cours_livraison' ? ['En livraison', '#1d4ed8'] : ['Livré', '#15803d'];
+}
+
 // ── Réception ligne par ligne ──────────────────────────────────
 
 /**
