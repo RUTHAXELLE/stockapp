@@ -938,13 +938,13 @@ if (isset($_GET['export'], $_GET['id'])) {
         $fn_conso = function() use ($sid, $type, $lib, $aid): int {
             if ($aid) {
                 return (int)(db_fetch_value(
-                    "SELECT COALESCE(ROUND(SUM(COALESCE(cl.quantite_livree,cl.quantite))/4),0)
+                    "SELECT COALESCE(ROUND(SUM(" . rcp_sql_qte_site('cl') . ")/4),0)
                      FROM commande_lignes cl JOIN commandes c ON c.id=cl.commande_id
                      WHERE cl.article_id=? AND c.site_id=? AND c.statut IN ('recu','livre')
                        AND c.recu_at >= (CURRENT_DATE - INTERVAL 4 WEEK)", [$aid,$sid]) ?? 0);
             }
             return (int)(db_fetch_value(
-                "SELECT COALESCE(ROUND(SUM(COALESCE(cl.quantite_livree,cl.quantite))/4),0)
+                "SELECT COALESCE(ROUND(SUM(" . rcp_sql_qte_site('cl') . ")/4),0)
                  FROM commande_lignes cl JOIN commandes c ON c.id=cl.commande_id
                  WHERE cl.type_article=? AND cl.libelle=? AND c.site_id=?
                    AND c.statut IN ('recu','livre')
@@ -1078,7 +1078,7 @@ $articles_dispo = db_fetch_all(
             ), 0) AS derniere,
             -- Consommation hebdo moyenne (4 dernières semaines, commandes reçues)
             COALESCE((
-                SELECT ROUND(SUM(COALESCE(cl3.quantite_livree, cl3.quantite)) / 4)
+                SELECT ROUND(SUM(" . rcp_sql_qte_site('cl3') . ") / 4)
                 FROM commande_lignes cl3
                 JOIN commandes c3 ON c3.id = cl3.commande_id
                 WHERE cl3.article_id = a.id
@@ -1109,7 +1109,7 @@ foreach (db_fetch_all("SELECT DISTINCT type_pmma FROM stock_pmma_site WHERE quan
              WHERE cl.type_article='pmma' AND cl.libelle=? AND c.site_id=? AND c.statut NOT IN ('annule','rejete')
              ORDER BY c.created_at DESC LIMIT 1", [$lib,$_sid]) ?? 0) : 0,
         'conso'        => $_sid ? (int)(db_fetch_value(
-            "SELECT COALESCE(ROUND(SUM(COALESCE(cl.quantite_livree,cl.quantite))/4),0)
+            "SELECT COALESCE(ROUND(SUM(" . rcp_sql_qte_site('cl') . ")/4),0)
              FROM commande_lignes cl JOIN commandes c ON c.id=cl.commande_id
              WHERE cl.type_article='pmma' AND cl.libelle=? AND c.site_id=? AND c.statut IN ('recu','livre')
                AND c.recu_at >= (CURRENT_DATE - INTERVAL 4 WEEK)", [$lib,$_sid]) ?? 0) : 0,
@@ -1165,7 +1165,7 @@ foreach ($rivet_types as $rt) {
              WHERE cl.type_article='rivet' AND cl.libelle=? AND c.site_id=? AND c.statut NOT IN ('annule','rejete')
              ORDER BY c.created_at DESC LIMIT 1", [$rt['libelle'], $_sid]) ?? 0) : 0,
         'conso'        => $_sid ? (int)(db_fetch_value(
-            "SELECT COALESCE(ROUND(SUM(COALESCE(cl.quantite_livree,cl.quantite))/4),0)
+            "SELECT COALESCE(ROUND(SUM(" . rcp_sql_qte_site('cl') . ")/4),0)
              FROM commande_lignes cl JOIN commandes c ON c.id=cl.commande_id
              WHERE cl.type_article='rivet' AND cl.libelle=? AND c.site_id=? AND c.statut IN ('recu','livre')
                AND c.recu_at >= (CURRENT_DATE - INTERVAL 4 WEEK)", [$rt['libelle'], $_sid]) ?? 0) : 0,
@@ -2115,7 +2115,7 @@ function fermer(m){document.getElementById('modal'+m).style.display='none';}
 // ── Voir détail commande ───────────────────────────────────────
 const _SL = {'en_attente':'⏳ <?= $lbl_attente ?>','modification_demandee':'✏️ À corriger','en_attente_livraison':'📋 <?= $lbl_prepa ?>','en_cours_livraison':'🚚 En livraison','recu':'✅ Reçu','livre':'✅ Livré','rejete':'❌ Rejeté','annule':'Annulé'};
 const _SC = {'en_attente':'st-en_attente','modification_demandee':'st-modification_demandee','en_attente_livraison':'st-en_attente_livraison','en_cours_livraison':'st-en_cours_livraison','recu':'st-recu','rejete':'st-rejete'};
-const _LS = {'valide':'✅ OK','rejete':'❌ Rejeté','modifie':'⚠️ Modifié','modification_demandee':'✏️ À corriger'};
+const _LS = {'valide':'Validé','rejete':'❌ Rejeté','modifie':'⚠️ Modifié','modification_demandee':'✏️ À corriger'};
 const _LC = {'valide':'#15803d','rejete':'#dc2626','modifie':'#d97706','modification_demandee':'#5b21b6'};
 
 async function voirDetail(id, numero, versEcarts) {

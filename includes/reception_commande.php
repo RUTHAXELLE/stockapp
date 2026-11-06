@@ -117,6 +117,17 @@ function rcp_mouvement(array $l, int $site_id, int $q, bool $global = false): vo
     }
 }
 
+/**
+ * Expression SQL de la quantité arrivée sur le site pour une ligne d'alias
+ * $a : le reçu déclaré, à défaut le livré, à défaut le commandé. Sert aux
+ * consommations et historiques : un manque à la réception n'est pas une
+ * consommation du site.
+ */
+function rcp_sql_qte_site(string $a = 'cl'): string {
+    return rcp_disponible() ? "COALESCE($a.quantite_recue, $a.quantite_livree, $a.quantite)"
+                            : "COALESCE($a.quantite_livree, $a.quantite)";
+}
+
 // ── Libellé du statut d'une ligne ──────────────────────────────
 
 /**
@@ -139,7 +150,8 @@ function rcp_statut_ligne(string $cmd_statut, array $l): array {
     $part = in_array($cmd_statut, ['en_cours_livraison', 'recu', 'livre'], true);
     if (!$part || $liv === null) return ['Validé', '#15803d'];
     if ($liv === 0)              return ['Non livré', '#dc2626'];
-    if ($rec !== null && $rec < $liv) return [$rec === 0 ? 'Non reçu' : 'Reçu partiel', '#b45309'];
+    if ($rec !== null && $rec < $liv)
+        return [($liv < $dem ? 'Livré partiellement · ' : '') . ($rec === 0 ? 'Non reçu' : 'Reçu partiel'), '#b45309'];
     if ($liv < $dem)             return ['Livré partiellement', '#d97706'];
     return $cmd_statut === 'en_cours_livraison' ? ['En livraison', '#1d4ed8'] : ['Livré', '#15803d'];
 }
@@ -339,23 +351,26 @@ function rcp_rouleau_perdu(array $e, string $note, int $user_id): void {
  * débité à l'expédition et le site n'a rien reçu, le stock est donc juste ;
  * la perte est tracée là où se lisent les pertes et écarts de chaque
  * matière — écarts rivets / PMMA (source 'reception', résolus), mouvement
- * 'perte' des articles.
+ * 'perte' des articles. Elle est imputée au dépôt d'origine, d'où la
+ * marchandise est partie, pas au site destinataire qui n'a rien perdu.
  */
 function rcp_tracer_perte(array $e, array $cmd, string $notes, int $user_id): void {
     $c = rcp_cle_stock($e);
     $q = (int)$e['quantite'];
     if (!$c || $q <= 0) return;
-    $motif = "Perte en transport (commande {$cmd['numero_commande']})" . ($notes !== '' ? " : $notes" : '');
+    $site_dest = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$cmd['site_id']]) ?? '';
+    $motif = "Perte en transport vers $site_dest (commande {$cmd['numero_commande']})" . ($notes !== '' ? " : $notes" : '');
+    $site  = (int)($e['depot_source_id'] ?: $cmd['site_id']);
     if ($c[0] === 'rivet' || $c[0] === 'pmma') {
         $u = rcp_unites($e, $q);
         $t = $c[0] === 'rivet' ? ['ecarts_rivets', 'type_rivet'] : ['ecarts_pmma', 'type_pmma'];
         db_query("INSERT INTO {$t[0]} (site_id,{$t[1]},date_constat,stock_systeme,stock_physique,ecart,motif,source,statut,resolu_at,resolu_par,created_by)
                   VALUES (?,?,CURRENT_DATE,?,0,?,?,'reception','resolu',NOW(),?,?)",
-            [$cmd['site_id'], $c[1], $u, -$u, $motif, $user_id, $user_id]);
+            [$site, $c[1], $u, -$u, $motif, $user_id, $user_id]);
     } elseif (db_colonne_existe('mouvements_stock', 'type_mouvement')) {
         db_query("INSERT INTO mouvements_stock (article_id,site_id,type_mouvement,quantite,solde_apres,reference,notes,created_by)
                   VALUES (?,?,'perte',?,?,?,?,?)",
-            [$c[1], $cmd['site_id'], $q, rcp_stock($e, (int)$cmd['site_id']) ?? 0, $cmd['numero_commande'], $motif, $user_id]);
+            [$c[1], $site, $q, rcp_stock($e, $site) ?? 0, $cmd['numero_commande'], $motif, $user_id]);
     }
 }
 
