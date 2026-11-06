@@ -477,12 +477,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // type_article vient de la base, pas du JSON envoyé par le client :
         // la vérité sur ce qui doit être débité d'un dépôt ne doit pas
         // dépendre de ce qu'un appel AJAX forgé prétendrait.
-        $type_article_map = array_column(
-            db_fetch_all("SELECT id, type_article FROM commande_lignes WHERE commande_id=?", [$cmd_id]),
-            'type_article', 'id'
-        );
         $lignes_db = array_column(
             db_fetch_all("SELECT * FROM commande_lignes WHERE commande_id=?", [$cmd_id]), null, 'id');
+        $type_article_map = array_column($lignes_db, 'type_article', 'id');
         // PMMA et rivets viennent d'un dépôt réel (Entrepôt ou Stock-Siège,
         // au choix du gestionnaire qui sait physiquement d'où il expédie) :
         // pas de débit silencieux d'un site au hasard, et pas de stock qui
@@ -504,6 +501,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         db_begin();
         try {
+            // La commande passe « En livraison » en premier, sous condition de
+            // son statut : de deux envois simultanés (double clic, renvoi
+            // après une erreur réseau), le second attend le verrou de la ligne
+            // puis échoue ici, avant d'avoir débité le dépôt.
+            $maj = db_query("UPDATE commandes SET statut='en_cours_livraison' WHERE id=? AND statut='en_attente_livraison'", [$cmd_id]);
+            if ($maj->rowCount() !== 1) throw new Exception('Cette commande vient déjà d\'être expédiée.');
             // Créer bon de distribution
             $num_dist = 'DS-'.date('Ymd').'-'.str_pad(rand(1,999),3,'0',STR_PAD_LEFT);
             db_query(
@@ -812,6 +815,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         foreach ($ecarts as &$_e) {
             $_e['peut_traiter'] = $_e['statut'] === 'ouvert' && ($_e['bobine_id'] ? $is_gsb : $is_gestionnaire);
             $_e['decision_label'] = RCP_DECISIONS[$_e['statut']] ?? null;
+            $_e['restituable']    = rcp_restituable($_e);
         }
         unset($_e);
         json_response(true, '', ['cmd' => $det, 'lignes' => $lgns, 'ecarts' => $ecarts]);
@@ -2278,7 +2282,7 @@ function afficherEcarts(ecarts) {
       aTraiter++;
       etat = `<select class="form-control ecart-decision" data-id="${e.id}" aria-label="Décision pour ${esc(e.libelle)}" style="min-width:170px">
           <option value="">— Décision —</option>
-          ${Object.entries(_EC_DEC).map(([v,t]) => `<option value="${v}">${t}</option>`).join('')}
+          ${Object.entries(_EC_DEC).filter(([v]) => v !== 'restitue' || e.restituable).map(([v,t]) => `<option value="${v}">${t}</option>`).join('')}
         </select>`;
     } else {
       etat = `<span style="color:#b45309;font-weight:700">En attente du ${e.bobine_id ? 'GSB' : 'gestionnaire de stock'}</span>`;
@@ -2889,6 +2893,7 @@ async function receptionner(id, numero){
   let d;
   try { d = await ap({action:'get_reception', cmd_id:id}); }
   catch (e) { d = {success:false, message:'Lignes de la commande non chargées (réseau) : fermez et rouvrez la réception.'}; }
+  if (currentReceptionId !== id) return;   // réponse d'une commande refermée entre-temps : ignorée
   if (!d.success) { document.getElementById('alertReception').innerHTML = '<div class="alert alert-danger"></div>'; document.getElementById('alertReception').firstChild.textContent = d.message; return; }
   btnOk.disabled = false;
   if (!d.data.par_ligne || !d.data.lignes.length) return;   // base sans la migration : réception globale, comme avant

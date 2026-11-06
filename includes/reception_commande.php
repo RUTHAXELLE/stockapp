@@ -125,6 +125,20 @@ function rcp_mouvement(array $l, int $site_id, int $q, bool $global = false): vo
  */
 function rcp_lignes_a_recevoir(int $cmd_id): array {
     $bob = cmdbob_par_ligne($cmd_id);
+    // Films de chaque rouleau au moment de l'expédition (mouvement tracé par
+    // emettre_livraison) : c'est sur eux que le livré a été calculé ; le
+    // stock_systeme actuel a pu bouger depuis (import OptoTrace).
+    $num = (string)db_fetch_value("SELECT numero_commande FROM commandes WHERE id=?", [$cmd_id]);
+    foreach ($bob as &$_rouleaux) {
+        foreach ($_rouleaux as &$_b) {
+            $exp = db_fetch_value(
+                "SELECT stock_avant FROM mouvements_bobines WHERE bobine_id=? AND motif LIKE ? ORDER BY id DESC LIMIT 1",
+                [$_b['id'], "Expédiée via commande $num %"]);
+            $_b['films_expedies'] = $exp !== null && $exp !== false ? (int)$exp : (int)$_b['stock_systeme'];
+        }
+        unset($_b);
+    }
+    unset($_rouleaux);
     $out = [];
     foreach (db_fetch_all("SELECT * FROM commande_lignes WHERE commande_id=? ORDER BY id", [$cmd_id]) as $l) {
         $lid = (int)$l['id'];
@@ -166,8 +180,17 @@ function rcp_preparer(int $cmd_id, array $saisie): array {
             // films (ligne en films). Compter les rouleaux cochés donnait plus
             // que le livré quand le GSB avait servi des rouleaux entamés.
             $en_bob = cmdbob_en_bobines($l);
-            $moins  = $en_bob ? count($manq) : array_sum(array_column($manq, 'stock_systeme'));
+            $moins  = $en_bob ? count($manq) : array_sum(array_column($manq, 'films_expedies'));
             $recu   = max(0, $l['livre'] - $moins);
+            // Part du manque portée par chaque rouleau absent, plafonnée au
+            // manque de la ligne : des rouleaux entamés servis en surnombre ne
+            // font pas renvoyer plus que la commande.
+            $reste = $l['livre'] - $recu;
+            foreach ($manq as &$_m) {
+                $_m['quantite_ecart'] = min($en_bob ? 1 : (int)$_m['films_expedies'], $reste);
+                $reste -= $_m['quantite_ecart'];
+            }
+            unset($_m);
             $plan[$lid] = ['recu' => $recu, 'motif' => $manq ? $motif : null, 'bobines_manquantes' => $manq,
                            'manque' => $l['livre'] - $recu, 'en_bobines' => $en_bob];
             continue;
@@ -203,7 +226,7 @@ function rcp_appliquer(int $cmd_id, array $plan, int $user_id): int {
                     [$cmd_id, $lid, (int)$b['id']]);
                 db_query("INSERT INTO commande_ecarts_reception (commande_id,commande_ligne_id,bobine_id,quantite,motif,declare_par)
                           VALUES (?,?,?,?,?,?)",
-                    [$cmd_id, $lid, (int)$b['id'], !empty($p['en_bobines']) ? 1 : (int)$b['stock_systeme'], $p['motif'], $user_id]);
+                    [$cmd_id, $lid, (int)$b['id'], (int)$b['quantite_ecart'], $p['motif'], $user_id]);
                 $n++;
             }
         } elseif ($p['manque'] > 0) {
@@ -219,7 +242,7 @@ function rcp_appliquer(int $cmd_id, array $plan, int $user_id): int {
 function rcp_ecarts(int $cmd_id): array {
     if (!rcp_disponible()) return [];
     return db_fetch_all(
-        "SELECT e.*, cl.libelle, cl.type_article, cl.unite, cl.depot_source_id, ds.nom AS depot_nom,
+        "SELECT e.*, cl.libelle, cl.type_article, cl.article_id, cl.unite, cl.depot_source_id, ds.nom AS depot_nom,
                 b.numero AS bobine_numero, cr.numero_commande AS renvoi_numero,
                 CONCAT(ut.prenom,' ',ut.nom) AS traite_par_nom
          FROM commande_ecarts_reception e
@@ -258,6 +281,15 @@ function rcp_notifier_ecarts(array $cmd, int $nb, bool $avec_rouleaux): void {
     $roles = ['gestionnaire_stock', 'admin', 'superadmin'];
     if ($avec_rouleaux) $roles[] = 'gestionnaire_stock_bobines';
     foreach ($roles as $r) rcp_notifier_role($r, $titre, $msg, '/pages/commandes.php');
+}
+
+/**
+ * L'écart peut-il être « remis en stock » ? Un rouleau, oui (retrouvé au
+ * dépôt) ; une ligne, seulement si elle a un stock suivi et un dépôt
+ * d'origine — sinon la décision annoncerait une remise qui n'a pas lieu.
+ */
+function rcp_restituable(array $e): bool {
+    return !empty($e['bobine_id']) || (!empty($e['depot_source_id']) && rcp_cle_stock($e) !== null);
 }
 
 /** Un rouleau non reçu, qui ne réapparaîtra pas : « Perdue », réservation close. */
@@ -305,6 +337,8 @@ function rcp_traiter(int $cmd_id, array $decisions, string $notes, array $user, 
         if ($rouleau && !$peut_rouleaux) throw new Exception("Les rouleaux non reçus sont traités par le GSB (« {$e['libelle']} »).");
         if (!$rouleau && !$peut_articles) throw new Exception("Cet écart est traité par le gestionnaire de stock (« {$e['libelle']} »).");
         if ($dec === 'perte' && $notes === '') throw new Exception('Précisez la raison de la perte dans le commentaire.');
+        if ($dec === 'restitue' && !rcp_restituable($e))
+            throw new Exception("« {$e['libelle']} » n'a pas de stock suivi au dépôt : rien à y remettre. Choisissez Renvoyer ou Perte.");
         $a_faire[(int)$eid] = $dec;
     }
     if (!$a_faire) throw new Exception('Choisissez une décision pour au moins un écart.');
@@ -335,6 +369,7 @@ function rcp_traiter(int $cmd_id, array $decisions, string $notes, array $user, 
                 $renvois[(int)$e['commande_ligne_id']] = ($renvois[(int)$e['commande_ligne_id']] ?? 0) + (int)$e['quantite'];
         }
 
+        $renvois = array_filter($renvois, fn($q) => $q > 0);
         if ($renvois) {
             $renvoi_num = ach_numero_commande();
             db_query("INSERT INTO commandes (numero_commande,site_id,statut,notes,created_by,valide_par,valide_at)
