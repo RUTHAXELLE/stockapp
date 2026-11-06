@@ -278,6 +278,24 @@ function dash_bloc_visible(array $bloc, ?array $user = null): bool {
     return can($module, $bloc['droit'] ?? 'can_read');
 }
 
+/**
+ * La page Tableau de bord affichera-t-elle au moins un bloc ? Même calcul que
+ * pages/dashboard.php : en v2, « Synthèse » est retirée (remplacée par la
+ * rangée d'indicateurs) et les blocs de tête v2 s'ajoutent. Sert à masquer
+ * le lien et la carte Dashboard d'un rôle qui n'y verrait que « Rien à
+ * afficher » (cf. get_groupe_nav_items()).
+ */
+function dash_page_a_des_blocs(array $user): bool {
+    $blocs = dash_blocs_visibles($user);
+    if (dash_role_v1($user)) return (bool)$blocs;
+    foreach ($blocs as $b) if (($b['id'] ?? '') !== 'synthese_kpi') return true;
+    $registre = dash_registre();
+    foreach (['v2_hero', 'v2_jauge'] as $id) {
+        if (isset($registre[$id]) && dash_bloc_visible($registre[$id] + ['id' => $id], $user)) return true;
+    }
+    return false;
+}
+
 /** Le rôle a-t-il au moins une permission déclarée ? Résultat mémorisé. */
 function dash_role_a_des_permissions(?array $user = null): bool {
     static $cache = [];

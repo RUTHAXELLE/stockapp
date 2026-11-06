@@ -25,7 +25,7 @@ function _groupes_def(): array {
                 // opérationnel ne lui sert pas.
                 ['label'=>'Tableau de bord','icon'=>'ph-squares-four',
                  'url'=>'pages/dashboard.php','active_keys'=>['dashboard'],
-                 'roles_exclude'=>['lecteur']],
+                 'roles_exclude'=>['lecteur'], 'si_blocs_dashboard'=>true],
                 // n° 07 réunion ERP : visible par tous les comptes, pas
                 // réservée au lecteur — second bouton menu vers la même vue
                 // que celle du PDG. Droit pdg_overview depuis le 14/10/2026,
@@ -602,6 +602,13 @@ function get_groupe_nav_items(string $slug): array {
         }
         // Filtre rôles exclus (blacklist)
         if (!empty($item['roles_exclude']) && in_array($role, $item['roles_exclude'])) continue;
+        // Tableau de bord sans aucun bloc pour ce rôle (ex. un rôle limité aux
+        // demandes internes) : la page n'affichait que « Rien à afficher ».
+        // L'item disparaît, et avec lui la carte Dashboard si le groupe se vide.
+        if (!empty($item['si_blocs_dashboard']) && $user) {
+            require_once __DIR__ . '/dashboard.php';
+            if (!dash_page_a_des_blocs($user)) continue;
+        }
         // Filtre rôles autorisés (whitelist) — si défini, seuls ces rôles voient l'item
         if (!empty($item['roles_include']) && !in_array($role, $item['roles_include'])) {
             // Bypass département IT — réplique di_user_can_traiter_it()
