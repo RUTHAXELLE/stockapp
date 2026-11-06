@@ -284,7 +284,7 @@ function vsm_evaluer_site(int $site_id, string $date, ?int $user_id, string $ori
         foreach ($coords as $uid) {
             notif_create('stock_valide', '✅ Stock validé',
                 "Votre stock bobines du $jour est validé automatiquement (point 18h validé, import EMUCI conforme). Vous pouvez saisir votre prochain point.",
-                $uid, '/pages/validation_stock_matin.php');
+                $uid, '/pages/validation_stock_matin.php?date=' . $date);
         }
         audit_log($user_id, 'CREATE', 'validations_stock_matin', 0,
             "Validation auto stock site:$site_id $date ($origine) — 0 écart");
@@ -297,7 +297,7 @@ function vsm_evaluer_site(int $site_id, string $date, ?int $user_id, string $ori
         foreach ($coords as $uid) {
             notif_create('info', '⚠️ Validation annulée',
                 "Votre stock bobines du $jour, validé automatiquement, présente désormais un écart après un nouvel import EMUCI. Il repasse en attente de traitement par le GSB.",
-                $uid, '/pages/validation_stock_matin.php');
+                $uid, '/pages/validation_stock_matin.php?date=' . $date);
         }
         audit_log($user_id, 'UPDATE', 'validations_stock_matin', 0,
             "Validation auto annulée site:$site_id $date ($origine) — {$calc['nb_ecarts']} écart(s)");

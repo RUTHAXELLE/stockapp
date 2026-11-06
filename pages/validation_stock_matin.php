@@ -194,6 +194,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     if ($action === 'valider_auto') {
         $site_id = (int)($_POST['site_id'] ?? 0);
         $date    = trim($_POST['date'] ?? date('Y-m-d'));
+        // Une décision du GSB (dont un réajustement en attente de la réponse
+        // du coordinateur) n'est jamais écrasée par une validation automatique.
+        $statut_exist = db_fetch_value(
+            "SELECT statut FROM validations_stock_matin WHERE site_id=? AND date_validation=?",
+            [$site_id, $date]
+        );
+        if (in_array($statut_exist, ['reajuste', 'valide_gsb', 'autorise_ecart'], true))
+            json_response(false, $statut_exist === 'reajuste'
+                ? 'Stock réajusté : la validation attend la réponse du coordinateur.'
+                : 'Ce site a déjà une décision du gestionnaire pour cette date.');
         $snap    = _calculer_ecarts_site($site_id, $date);
         if (!$snap['chaine_complete'] && $snap['dernier_import']) {
             json_response(false, 'Comparaison impossible : '
@@ -221,7 +231,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         foreach($coords as $c) {
             db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
                 [$c['id'],'stock_valide','✅ Stock validé',"Votre stock bobines du $date est validé. Vous pouvez commencer votre activité.",
-                 '/pages/validation_stock_matin.php']);
+                 '/pages/validation_stock_matin.php?date=' . $date]);
         }
         audit_log($user['id'],'CREATE','validations_stock_matin',0,"Validation auto stock site:$site_id $date");
         json_response(true,'Stock validé automatiquement.');
@@ -267,7 +277,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
                 [$c['id'],'stock_valide','✅ Stock validé',
                  "Votre stock bobines du $date est validé (sans import EMUCI disponible). Vous pouvez saisir un nouveau point journalier.",
-                 '/pages/validation_stock_matin.php']);
+                 '/pages/validation_stock_matin.php?date=' . $date]);
         }
         audit_log($user['id'],'CREATE','validations_stock_matin',0,"Validation manuelle sans import EMUCI site:$site_id $date : $commentaire");
         json_response(true,'Stock validé (sans référence EMUCI). Le coordinateur peut saisir un nouveau point.');
@@ -451,18 +461,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             $coords = db_fetch_all("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug='coordinateur_site' AND u.site_id=? AND u.actif=1",[$site_id]);
             $msg_map = [
                 'autorise_ecart' => "⚠️ Votre stock du $date présente des écarts mais vous êtes autorisé à travailler. Commentaire GSB : $comment_site",
-                'reajuste'       => "🔄 Votre stock du $date a été réajusté (ERP EMUCI corrigé). Veuillez corriger votre saisie et soumettre un nouveau point journalier pour finaliser la validation. Motif : $comment_site",
+                'reajuste'       => "🔄 Votre stock du $date a été réajusté (ERP EMUCI corrigé). Indiquez la valeur correcte de chaque bobine réajustée sur la page Validation du stock pour finaliser la validation. Motif : $comment_site",
                 'refuse'         => "❌ Votre activité du $date est bloquée. Corrigez vos données et soumettez un nouveau point journalier. Commentaire : $comment_site",
             ];
             $titre_map = [
                 'autorise_ecart' => '⚠️ Écart autorisé',
-                'reajuste'       => '🔄 Stock réajusté — nouvelle saisie requise',
+                'reajuste'       => '🔄 Stock réajusté — vos valeurs sont attendues',
                 'refuse'         => '❌ Activité bloquée — correction requise',
             ];
             foreach($coords as $c) {
                 db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
                     [$c['id'],'stock_validation',$titre_map[$statut_site],$msg_map[$statut_site],
-                     '/pages/validation_stock_matin.php']);
+                     '/pages/validation_stock_matin.php?date=' . $date]);
             }
 
             audit_log($user['id'],'UPDATE','validations_stock_matin',0,
@@ -470,7 +480,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             db_commit();
             json_response(true, match($statut_site){
                 'autorise_ecart'=>'Toutes les bobines sont traitées. Écart autorisé : le coordinateur peut travailler.',
-                'reajuste'      =>'Toutes les bobines sont traitées. Stock réajusté. Le coordinateur doit soumettre un nouveau point journalier pour finaliser la validation.',
+                'reajuste'      =>'Toutes les bobines sont traitées. Stock réajusté. Le coordinateur doit indiquer les valeurs correctes pour finaliser la validation.',
                 'refuse'        =>'Toutes les bobines sont traitées. Coordinateur bloqué. En attente de correction.',
             }, ['site_complet' => true, 'nb_restants' => 0]);
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
@@ -527,7 +537,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
                     [$c_user['id'],'stock_valide','✅ Stock validé',
                      "Vos corrections ont été acceptées par le gestionnaire. Votre stock du $date est validé.",
-                     '/pages/validation_stock_matin.php']);
+                     '/pages/validation_stock_matin.php?date=' . $date]);
             }
             audit_log($user['id'],'UPDATE','validations_stock_matin',0,"Validation corrections coord site:$site_id $date");
             db_commit();
@@ -560,7 +570,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
                 [$c_user['id'],'stock_validation','🔄 Nouvelles corrections demandées',
                  "Le gestionnaire $gsb_nom demande de nouvelles corrections pour votre site ($date). Motif : $commentaire",
-                 '/pages/validation_stock_matin.php']);
+                 '/pages/validation_stock_matin.php?date=' . $date]);
         }
         audit_log($user['id'],'UPDATE','validations_stock_matin',0,"Nouvelles modifs demandées site:$site_id $date — $commentaire");
         json_response(true,'Demande de correction envoyée au coordinateur.');
@@ -700,7 +710,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             );
             foreach ($coords as $cu) {
                 db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
-                    [$cu['id'],'info',$titre_coord,$msg_coord,'/pages/validation_stock_matin.php']);
+                    [$cu['id'],'info',$titre_coord,$msg_coord,'/pages/validation_stock_matin.php?date=' . $date]);
             }
             audit_log($user['id'],'UPDATE','validations_stock_matin',0,
                 "traiter_corrections_coord site:$site_id $date — validées:$nb_valides refusées:$nb_refuses");
@@ -792,7 +802,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     "INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
                     [$g['id'],'stock_validation','🔄 Correction coordinateur disponible',
                      "Le coordinateur $coord_nom a fourni les valeurs corrigées pour le site $site_nom ($date). À réviser avant re-validation.",
-                     '/pages/validation_stock_matin.php']
+                     '/pages/validation_stock_matin.php?date=' . $date]
                 );
             }
             audit_log($user['id'],'UPDATE','corrections_bobines',0,"Réponse coord réajust site:$site_id $date");
@@ -907,7 +917,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     "INSERT INTO notifications (user_id, type, titre, message, lien) VALUES (?,?,?,?,?)",
                     [$c['id'], 'info', '🔄 Correction de stock requise',
                      "Le gestionnaire $gsb_nom demande une correction sur la bobine $bobine_num ($date). Valeur ERP EMUCI : $films_pj → Valeur attendue : $films_proposes. Motif : $notes",
-                     '/pages/validation_stock_matin.php']
+                     '/pages/validation_stock_matin.php?date=' . $date]
                 );
                 $notif_sent++;
             }
@@ -1200,6 +1210,16 @@ $sites_list_filter = $can_valider ? db_fetch_all("SELECT id,nom FROM sites WHERE
 
 // Vue coordinateur : son propre statut de validation pour aujourd'hui
 $coord_validation = null;
+// Réajustements / refus en attente du coordinateur à une autre date que celle affichée
+$coord_autres_attentes = [];
+if ($is_coord && $site_force) {
+    $coord_autres_attentes = db_fetch_all(
+        "SELECT date_validation, statut FROM validations_stock_matin
+         WHERE site_id=? AND statut IN ('reajuste','refuse') AND date_validation<>?
+         ORDER BY date_validation DESC LIMIT 5",
+        [$site_force, $f_date]
+    );
+}
 if ($is_coord && $site_force) {
     $coord_validation = db_fetch_one(
         "SELECT v.*, s.nom AS site_nom, CONCAT(u.prenom,' ',u.nom) AS gsb_nom
@@ -1308,12 +1328,20 @@ $nb_avec_ecart  = count(array_filter($validations_jour, fn($v) => $v['statut'] !
 
 <?php if($is_coord): ?>
 <!-- ── VUE COORDINATEUR ── -->
+<?php foreach($coord_autres_attentes as $aa): ?>
+<a href="?date=<?= h($aa['date_validation']) ?>" style="display:flex;align-items:center;gap:10px;background:#FFF7ED;border:1.5px solid #F59E0B;border-radius:12px;padding:12px 16px;margin-bottom:12px;font-size:13px;color:#92400E;text-decoration:none">
+  <i class="ph ph-arrow-clockwise" style="font-size:18px" aria-hidden="true"></i>
+  <span style="flex:1"><strong>Stock du <?= fmt_date($aa['date_validation'],'d/m/Y') ?> :</strong>
+    <?= $aa['statut'] === 'reajuste' ? 'réajusté par le gestionnaire, vos valeurs sont attendues.' : 'bloqué par le gestionnaire, correction requise.' ?></span>
+  <span style="font-weight:700;white-space:nowrap">Ouvrir <i class="ph ph-arrow-right" aria-hidden="true"></i></span>
+</a>
+<?php endforeach; ?>
 <?php
 $statut_colors = [
   'valide_auto'   => ['bg'=>'#D1FAE5','border'=>'#34D399','icon'=>'ph-check-circle','label'=>'Validé automatiquement',    'color'=>'#065F46'],
   'valide_gsb'    => ['bg'=>'#D1FAE5','border'=>'#34D399','icon'=>'ph-check-circle','label'=>'Validé par le gestionnaire','color'=>'#065F46'],
   'autorise_ecart'=> ['bg'=>'#FEF3C7','border'=>'#F59E0B','icon'=>'ph-warning','label'=>'Écart autorisé — vous pouvez travailler','color'=>'#92400E'],
-  'reajuste'      => ['bg'=>'#FFF7ED','border'=>'#F59E0B','icon'=>'ph-arrow-clockwise','label'=>'Stock réajusté — nouvelle saisie requise','color'=>'#92400E'],
+  'reajuste'      => ['bg'=>'#FFF7ED','border'=>'#F59E0B','icon'=>'ph-arrow-clockwise','label'=>'Stock réajusté — vos valeurs sont attendues','color'=>'#92400E'],
   'refuse'        => ['bg'=>'#FEE2E2','border'=>'#F87171','icon'=>'ph-x-circle','label'=>'Activité bloquée — correction requise', 'color'=>'#991B1B'],
 ];
 ?>
@@ -2024,10 +2052,13 @@ async function verifierSite(siteId, siteNom) {
   }
 
   // ── 0 écart + import EMUCI présent → validation automatique silencieuse
-  // Déclenché aussi si un record refuse/reajuste existe déjà (import antérieur incorrect)
+  // Déclenché aussi si un record refuse existe déjà (import antérieur incorrect)
   // mais PAS si le site est déjà valide_auto / valide_gsb / autorise_ecart (décision GSB déjà prise)
+  // ni réajusté : le réajustement aligne le stock ERP sur EMUCI, le recalcul
+  // ne montre donc plus d'écart, mais la validation attend la réponse du
+  // coordinateur (panneau « Corrections du coordinateur » ci-dessous).
   const existStatut = d.validation?.statut ?? null;
-  const dejaValide = ['valide_auto','valide_gsb','autorise_ecart'].includes(existStatut);
+  const dejaValide = ['valide_auto','valide_gsb','autorise_ecart','reajuste'].includes(existStatut);
   if (canValider && !dejaValide && d.nb_ecarts === 0 && d.dernier_import) {
     const v = await ap({action:'valider_auto', site_id:siteId, date:'<?= h($f_date) ?>'});
     if (v.success) {
