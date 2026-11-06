@@ -1,7 +1,7 @@
 <?php
 // ============================================================
-//  includes/reception_commande.php — réception d'une commande ligne
-//  par ligne et traitement des écarts de réception
+//  includes/reception_commande.php — mouvements de stock des commandes,
+//  réception ligne par ligne et traitement des écarts de réception
 // ============================================================
 //  À la réception (pages/commandes.php, action 'receptionner'), le
 //  coordinateur déclare pour chaque ligne ce qu'il a réellement reçu :
@@ -9,16 +9,23 @@
 //  vignette, il coche les rouleaux arrivés. Le site n'est crédité que du
 //  reçu. Chaque manque ouvre un écart (commande_ecarts_reception) que le
 //  gestionnaire de stock — le GSB pour les rouleaux — tranche :
-//    - restitue : la quantité revient au dépôt d'où elle était sortie ;
-//    - renvoye  : idem, puis une nouvelle commande « À préparer » reprend
-//                 les manquants (elle repasse par l'expédition normale) ;
+//    - restitue : la quantité revient au dépôt d'où elle était sortie
+//                 (pour un rouleau : il a été retrouvé au dépôt) ;
+//    - renvoye  : la quantité revient au dépôt, puis une nouvelle commande
+//                 « À préparer » reprend les manquants. Un rouleau absent,
+//                 lui, passe « Perdue » : le renvoi en fait choisir un autre ;
 //    - perte    : rien ne revient ; un rouleau passe « Perdue ».
 //  Sans la migration (sql/migration_reception_par_ligne*.sql), la
 //  réception reste celle d'avant : tout le livré est crédité.
+//
+//  Les mouvements de stock d'une ligne (débit du dépôt à l'expédition,
+//  crédit du site à la réception, remise au dépôt) passent tous par
+//  rcp_stock() / rcp_mouvement() : une seule règle par type d'article.
 // ============================================================
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/referentiels.php';
+require_once __DIR__ . '/notifications.php';
 require_once __DIR__ . '/commande_bobines.php';
 require_once __DIR__ . '/achats.php';
 
@@ -30,11 +37,87 @@ function rcp_disponible(): bool {
                 && db_colonne_existe('commande_ecarts_reception', 'id');
 }
 
-/** Rivet gonflable ou éclaté d'après le libellé de la ligne (même règle que l'expédition). */
+// ── Mouvements de stock d'une ligne de commande ────────────────
+
+/** Rivet gonflable ou éclaté d'après le libellé de la ligne (accents ignorés). */
 function rcp_type_rivet(string $libelle): string {
     $n = strtolower(str_replace(['é','è','ê','ë','É','È','Ê','Ë'], 'e', $libelle));
     return str_contains($n, 'eclat') ? 'eclate' : 'gonflable';
 }
+
+/** Type de PMMA du catalogue d'après le libellé (à défaut, le libellé sans « PMMA »). */
+function rcp_type_pmma(string $libelle): string {
+    return resoudre_type_pmma($libelle) ?? trim(preg_replace('/^PMMA\s*/i', '', $libelle));
+}
+
+/**
+ * Où vit le stock d'une ligne : null si la ligne n'a pas de stock suivi
+ * (bobine, équipement, article en saisie libre, PMMA sans type).
+ * $l : ligne de commande_lignes (type_article, article_id, libelle, unite).
+ */
+function rcp_cle_stock(array $l): ?array {
+    switch ($l['type_article'] ?? '') {
+        case 'article': return !empty($l['article_id']) ? ['article', (int)$l['article_id']] : null;
+        case 'rivet':   return ['rivet', rcp_type_rivet((string)$l['libelle'])];
+        case 'pmma':    $t = rcp_type_pmma((string)$l['libelle']); return $t !== '' ? ['pmma', $t] : null;
+    }
+    return null;
+}
+
+/** Quantité de la ligne dans l'unité du stock (une ligne PMMA en cartons se compte en unités). */
+function rcp_unites(array $l, int $q): int {
+    $c = rcp_cle_stock($l);
+    return $c && $c[0] === 'pmma' ? pmma_qte_en_unites($c[1], $l['unite'] ?? null, $q) : $q;
+}
+
+/** Stock actuel de la ligne sur un site, dans l'unité du stock ; null si non suivi. */
+function rcp_stock(array $l, int $site_id, bool $verrou = false): ?int {
+    $c = rcp_cle_stock($l);
+    if (!$c) return null;
+    $fu = $verrou ? ' FOR UPDATE' : '';
+    $sql = ['article' => "SELECT quantite FROM stock_site WHERE article_id=? AND site_id=?$fu",
+            'rivet'   => "SELECT quantite FROM op_stock_rivets WHERE type_rivet=? AND site_id=?$fu",
+            'pmma'    => "SELECT quantite FROM stock_pmma_site WHERE type_pmma=? AND site_id=?$fu"][$c[0]];
+    return (int)(db_fetch_value($sql, [$c[1], $site_id]) ?? 0);
+}
+
+/**
+ * Ajoute (q > 0) ou retire (q < 0) q, dans l'unité de la ligne, au stock
+ * d'un site. $global : un article suit aussi articles.stock_global, le
+ * stock des dépôts (débité à l'expédition, rendu à la remise en stock,
+ * inchangé à la réception sur site).
+ */
+function rcp_mouvement(array $l, int $site_id, int $q, bool $global = false): void {
+    $c = rcp_cle_stock($l);
+    if (!$c || $q === 0) return;
+    $u = rcp_unites($l, abs($q)) * ($q < 0 ? -1 : 1);
+    if ($u < 0) {
+        // Retrait : UPDATE, pas l'UPSERT — les quantités sont UNSIGNED et
+        // MySQL refuse une valeur négative dans VALUES même quand la ligne
+        // existe. L'appelant a vérifié le stock (rcp_stock()).
+        $sql = ['article' => "UPDATE stock_site SET quantite = quantite - ? WHERE article_id=? AND site_id=?",
+                'rivet'   => "UPDATE op_stock_rivets SET quantite = quantite - ? WHERE type_rivet=? AND site_id=?",
+                'pmma'    => "UPDATE stock_pmma_site SET quantite = quantite - ? WHERE type_pmma=? AND site_id=?"][$c[0]];
+        db_query($sql, [-$u, $c[1], $site_id]);
+        if ($global && $c[0] === 'article')
+            db_query("UPDATE articles SET stock_global = GREATEST(0, stock_global - ?) WHERE id=?", [-$u, $c[1]]);
+        return;
+    }
+    if ($c[0] === 'article') {
+        db_query("INSERT INTO stock_site (article_id,site_id,quantite) VALUES (?,?,?)
+                  ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)", [$c[1], $site_id, $u]);
+        if ($global)
+            db_query("UPDATE articles SET stock_global = GREATEST(0, stock_global + ?) WHERE id=?", [$u, $c[1]]);
+    } elseif ($c[0] === 'rivet') {
+        db_query("INSERT INTO op_stock_rivets (site_id,type_rivet,quantite) VALUES (?,?,?)
+                  ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)", [$site_id, $c[1], $u]);
+    } else {
+        db_query("INSERT INTO stock_pmma_site (site_id,type_pmma,quantite) VALUES (?,?,?)
+                  ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)", [$site_id, $c[1], $u]);
+    }
+}
+
+// ── Réception ligne par ligne ──────────────────────────────────
 
 /**
  * Lignes à déclarer à la réception, avec ce qui a été expédié :
@@ -60,7 +143,8 @@ function rcp_lignes_a_recevoir(int $cmd_id): array {
 /**
  * Contrôle la déclaration du coordinateur, sans rien écrire.
  * $saisie : [ligne_id => ['quantite_recue' => int, 'motif' => str, 'bobines' => [ids reçus]]].
- * Une ligne absente de la saisie est réputée reçue en totalité.
+ * Chaque ligne à recevoir doit y figurer : une saisie absente (écran pas
+ * encore chargé, appel qui a échoué) ne vaut pas « tout reçu ».
  * Renvoie [ligne_id => ['recu' => int, 'motif' => ?str, 'bobines_manquantes' => [...], 'manque' => int]].
  * Lève une Exception au premier problème.
  */
@@ -69,23 +153,26 @@ function rcp_preparer(int $cmd_id, array $saisie): array {
     foreach (rcp_lignes_a_recevoir($cmd_id) as $l) {
         $lid   = $l['id'];
         $s     = $saisie[$lid] ?? null;
+        if ($s === null)
+            throw new Exception("Réception de « {$l['libelle']} » non renseignée : rechargez la page et recommencez.");
         $motif = trim((string)($s['motif'] ?? ''));
         if ($l['bobines']) {
-            $recus = $s === null ? array_column($l['bobines'], 'id')
-                                 : array_map('intval', (array)($s['bobines'] ?? []));
-            $ok = $manq = [];
-            foreach ($l['bobines'] as $b) {
-                if (in_array((int)$b['id'], $recus, true)) $ok[] = $b; else $manq[] = $b;
-            }
+            $recus = array_map('intval', (array)($s['bobines'] ?? []));
+            $manq  = array_values(array_filter($l['bobines'], fn($b) => !in_array((int)$b['id'], $recus, true)));
             if ($manq && $motif === '')
                 throw new Exception("Motif obligatoire pour « {$l['libelle']} » : " . count($manq) . " rouleau(x) non reçu(s).");
+            // Le reçu se compte dans l'unité de la ligne, à partir du livré :
+            // un rouleau manquant retire une bobine (ligne en bobines) ou ses
+            // films (ligne en films). Compter les rouleaux cochés donnait plus
+            // que le livré quand le GSB avait servi des rouleaux entamés.
             $en_bob = cmdbob_en_bobines($l);
-            $recu   = $en_bob ? count($ok) : array_sum(array_column($ok, 'stock_systeme'));
+            $moins  = $en_bob ? count($manq) : array_sum(array_column($manq, 'stock_systeme'));
+            $recu   = max(0, $l['livre'] - $moins);
             $plan[$lid] = ['recu' => $recu, 'motif' => $manq ? $motif : null, 'bobines_manquantes' => $manq,
                            'manque' => $l['livre'] - $recu, 'en_bobines' => $en_bob];
             continue;
         }
-        $recu = $s === null ? $l['livre'] : $s['quantite_recue'] ?? null;
+        $recu = $s['quantite_recue'] ?? null;
         if (!is_numeric($recu) || (int)$recu != $recu || (int)$recu < 0 || (int)$recu > $l['livre'])
             throw new Exception("Quantité reçue invalide pour « {$l['libelle']} » : entre 0 et {$l['livre']}.");
         $recu = (int)$recu;
@@ -153,18 +240,31 @@ function rcp_nb_ouverts(array $cmd_ids): array {
          WHERE statut='ouvert' AND commande_id IN ($ids) GROUP BY commande_id"), 'n', 'commande_id');
 }
 
+/**
+ * Notifie les utilisateurs actifs d'un rôle : notify_role() là où elle existe
+ * (elle couvre aussi les Support IT au sous-rôle équivalent), sinon le rôle seul.
+ */
+function rcp_notifier_role(string $role, string $titre, string $msg, string $lien): void {
+    if (function_exists('notify_role')) { notify_role($role, $titre, $msg, $lien); return; }
+    foreach (db_fetch_all("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug=? AND u.actif=1", [$role]) as $u)
+        notif_create('info', $titre, $msg, (int)$u['id'], $lien);
+}
+
 /** Gestionnaires à prévenir d'un écart ; le GSB en plus si des rouleaux manquent. */
 function rcp_notifier_ecarts(array $cmd, int $nb, bool $avec_rouleaux): void {
+    $site  = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$cmd['site_id']]) ?? '';
+    $titre = "⚠️ Écart de réception — {$cmd['numero_commande']}";
+    $msg   = "$site a réceptionné la commande avec $nb manque(s) : à remettre en stock, renvoyer ou passer en perte.";
     $roles = ['gestionnaire_stock', 'admin', 'superadmin'];
     if ($avec_rouleaux) $roles[] = 'gestionnaire_stock_bobines';
-    $in    = implode(',', array_fill(0, count($roles), '?'));
-    $site  = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$cmd['site_id']]) ?? '';
-    foreach (db_fetch_all("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug IN ($in) AND u.actif=1", $roles) as $u) {
-        db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
-            [$u['id'], 'info', "⚠️ Écart de réception — {$cmd['numero_commande']}",
-             "$site a réceptionné la commande avec $nb manque(s) : à remettre en stock, renvoyer ou passer en perte.",
-             '/pages/commandes.php']);
-    }
+    foreach ($roles as $r) rcp_notifier_role($r, $titre, $msg, '/pages/commandes.php');
+}
+
+/** Un rouleau non reçu, qui ne réapparaîtra pas : « Perdue », réservation close. */
+function rcp_rouleau_perdu(array $e, string $note): void {
+    db_query("UPDATE commande_ligne_bobines SET statut='perdu'
+              WHERE commande_id=? AND bobine_id=? AND statut='non_recu'", [$e['commande_id'], $e['bobine_id']]);
+    db_query("UPDATE op_bobines SET statut='perdue', notes_perte=? WHERE id=?", [$note, $e['bobine_id']]);
 }
 
 /** Remet au dépôt d'origine la quantité d'un écart (transaction de l'appelant). */
@@ -179,69 +279,60 @@ function rcp_remettre_en_stock(array $e, int $user_id, string $cmd_numero): void
         return;
     }
     $dep = (int)($e['depot_source_id'] ?? 0);
-    $q   = (int)$e['quantite'];
-    if (!$dep || $q <= 0) return;
+    if (!$dep || (int)$e['quantite'] <= 0) return;
     $l = db_fetch_one("SELECT * FROM commande_lignes WHERE id=?", [$e['commande_ligne_id']]);
-    if ($l['type_article'] === 'article' && $l['article_id']) {
-        db_query("INSERT INTO stock_site (article_id,site_id,quantite) VALUES (?,?,?)
-                  ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)", [(int)$l['article_id'], $dep, $q]);
-        db_query("UPDATE articles SET stock_global = stock_global + ? WHERE id=?", [$q, (int)$l['article_id']]);
-    } elseif ($l['type_article'] === 'rivet') {
-        db_query("INSERT INTO op_stock_rivets (site_id,type_rivet,quantite) VALUES (?,?,?)
-                  ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)", [$dep, rcp_type_rivet($l['libelle']), $q]);
-    } elseif ($l['type_article'] === 'pmma') {
-        $type = resoudre_type_pmma($l['libelle']) ?? trim(preg_replace('/^PMMA\s*/i', '', $l['libelle']));
-        if ($type === '') return;
-        db_query("INSERT INTO stock_pmma_site (site_id,type_pmma,quantite) VALUES (?,?,?)
-                  ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)",
-            [$dep, $type, pmma_qte_en_unites($type, $l['unite'] ?? null, $q)]);
-    }
+    if ($l) rcp_mouvement($l, $dep, (int)$e['quantite'], true);
 }
 
 /**
  * Tranche les écarts ouverts d'une commande. $decisions : [ecart_id => 'restitue'|'renvoye'|'perte'].
  * $peut_articles : gestionnaire de stock ; $peut_rouleaux : GSB. Les écarts
- * non cités restent ouverts. Renvoie ['nb' => n, 'renvoi' => numéro ou null].
+ * non cités restent ouverts. Renvoie ['nb' => n, 'renvoi' => numéro ou null, 'resume' => texte].
  */
 function rcp_traiter(int $cmd_id, array $decisions, string $notes, array $user, bool $peut_articles, bool $peut_rouleaux): array {
     if (!rcp_disponible()) throw new Exception('Migration reception_par_ligne non jouée sur cette base.');
     $cmd = db_fetch_one("SELECT * FROM commandes WHERE id=?", [$cmd_id]);
     if (!$cmd) throw new Exception('Commande introuvable.');
-    $ouverts = array_column(array_filter(rcp_ecarts($cmd_id), fn($e) => $e['statut'] === 'ouvert'), null, 'id');
+    $notes   = trim($notes);
+    $ecarts  = array_column(rcp_ecarts($cmd_id), null, 'id');
     $a_faire = [];
     foreach ($decisions as $eid => $dec) {
         if ($dec === '' || $dec === null) continue;
-        $e = $ouverts[(int)$eid] ?? null;
-        if (!$e) throw new Exception("Écart #$eid introuvable ou déjà traité.");
+        $e = $ecarts[(int)$eid] ?? null;
+        if (!$e || $e['statut'] !== 'ouvert') throw new Exception("Écart #$eid introuvable ou déjà traité.");
         if (!isset(RCP_DECISIONS[$dec])) throw new Exception("Décision inconnue pour « {$e['libelle']} ».");
         $rouleau = (bool)$e['bobine_id'];
         if ($rouleau && !$peut_rouleaux) throw new Exception("Les rouleaux non reçus sont traités par le GSB (« {$e['libelle']} »).");
         if (!$rouleau && !$peut_articles) throw new Exception("Cet écart est traité par le gestionnaire de stock (« {$e['libelle']} »).");
-        if ($dec === 'perte' && trim($notes) === '') throw new Exception('Précisez la raison de la perte dans le commentaire.');
+        if ($dec === 'perte' && $notes === '') throw new Exception('Précisez la raison de la perte dans le commentaire.');
         $a_faire[(int)$eid] = $dec;
     }
     if (!$a_faire) throw new Exception('Choisissez une décision pour au moins un écart.');
 
     $renvoi_num = null;
+    $renvoi_id  = null;
     db_begin();
     try {
         $renvois = [];   // commande_ligne_id => quantité à renvoyer
         foreach ($a_faire as $eid => $dec) {
-            $e = $ouverts[$eid];
-            if ($dec === 'perte') {
-                if ($e['bobine_id']) {
-                    db_query("UPDATE commande_ligne_bobines SET statut='perdu'
-                              WHERE commande_id=? AND bobine_id=? AND statut='non_recu'", [$cmd_id, $e['bobine_id']]);
-                    db_query("UPDATE op_bobines SET statut='perdue', notes_perte=? WHERE id=?",
-                        ["Non reçue sur site (commande {$cmd['numero_commande']}) : " . trim($notes), $e['bobine_id']]);
-                }
-            } else {
+            // L'écart passe d'abord « traité », sous condition qu'il soit
+            // encore ouvert : de deux traitements simultanés (double clic,
+            // deux gestionnaires), un seul bouge le stock.
+            $maj = db_query("UPDATE commande_ecarts_reception SET statut=?, traite_par=?, traite_at=NOW(), notes_traitement=?
+                             WHERE id=? AND statut='ouvert'", [$dec, $user['id'], $notes ?: null, $eid]);
+            if ($maj->rowCount() !== 1) throw new Exception('Cet écart vient d\'être traité par quelqu\'un d\'autre : rechargez la page.');
+            $e = $ecarts[$eid];
+            if ($e['bobine_id'] && $dec !== 'restitue') {
+                // Rouleau absent : perdu, qu'on le renvoie (un autre rouleau
+                // sera choisi) ou non. Le remettre disponible laisserait
+                // rechoisir un rouleau introuvable.
+                rcp_rouleau_perdu($e, "Non reçue sur site (commande {$cmd['numero_commande']})"
+                    . ($dec === 'renvoye' ? ' : remplacée par une commande de renvoi' : '') . ($notes !== '' ? " — $notes" : ''));
+            } elseif ($dec !== 'perte') {
                 rcp_remettre_en_stock($e, (int)$user['id'], $cmd['numero_commande']);
-                if ($dec === 'renvoye')
-                    $renvois[(int)$e['commande_ligne_id']] = ($renvois[(int)$e['commande_ligne_id']] ?? 0) + (int)$e['quantite'];
             }
-            db_query("UPDATE commande_ecarts_reception SET statut=?, traite_par=?, traite_at=NOW(), notes_traitement=? WHERE id=?",
-                [$dec, $user['id'], trim($notes) ?: null, $eid]);
+            if ($dec === 'renvoye')
+                $renvois[(int)$e['commande_ligne_id']] = ($renvois[(int)$e['commande_ligne_id']] ?? 0) + (int)$e['quantite'];
         }
 
         if ($renvois) {
@@ -263,26 +354,19 @@ function rcp_traiter(int $cmd_id, array $decisions, string $notes, array $user, 
         }
 
         $resume = [];
-        foreach (array_count_values($a_faire) as $d => $n) $resume[] = "$n " . strtolower(RCP_DECISIONS[$d]);
+        foreach (array_count_values($a_faire) as $d => $n) $resume[] = "$n " . mb_strtolower(RCP_DECISIONS[$d]);
         $resume = implode(', ', $resume) . ($renvoi_num ? " — commande $renvoi_num à expédier" : '');
-        audit_log($user['id'], 'UPDATE', 'commandes', $cmd_id, "Écarts de réception traités : $resume" . (trim($notes) ? " ($notes)" : ''));
+        audit_log($user['id'], 'UPDATE', 'commandes', $cmd_id, "Écarts de réception traités : $resume" . ($notes !== '' ? " ($notes)" : ''));
 
         $dest = array_column(db_fetch_all(
             "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id
              WHERE r.slug='coordinateur_site' AND u.site_id=? AND u.actif=1", [$cmd['site_id']]), 'id');
         if ($cmd['created_by']) $dest[] = (int)$cmd['created_by'];
-        foreach (array_unique(array_map('intval', $dest)) as $uid) {
-            db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
-                [$uid, 'info', "Écart de réception traité — {$cmd['numero_commande']}", ucfirst($resume) . '.', '/pages/commandes.php']);
-        }
-        if ($renvoi_num && cmdbob_lignes_a_choisir($renvoi_id) > 0) {
-            foreach (db_fetch_all("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id
-                                   WHERE r.slug='gestionnaire_stock_bobines' AND u.actif=1") as $g) {
-                db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
-                    [$g['id'], 'info', "🎞️ Commande $renvoi_num : bobines à choisir",
-                     "Renvoi des rouleaux non reçus de {$cmd['numero_commande']}.", '/pages/commandes.php']);
-            }
-        }
+        foreach (array_unique(array_map('intval', $dest)) as $uid)
+            notif_create('info', "Écart de réception traité — {$cmd['numero_commande']}", ucfirst($resume) . '.', $uid, '/pages/commandes.php');
+        if ($renvoi_id && cmdbob_lignes_a_choisir($renvoi_id) > 0)
+            rcp_notifier_role('gestionnaire_stock_bobines', "🎞️ Commande $renvoi_num : bobines à choisir",
+                "Renvoi des rouleaux non reçus de {$cmd['numero_commande']}.", '/pages/commandes.php');
         db_commit();
     } catch (Exception $ex) { db_rollback(); throw $ex; }
     return ['nb' => count($a_faire), 'renvoi' => $renvoi_num, 'resume' => $resume];

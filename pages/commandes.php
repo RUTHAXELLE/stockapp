@@ -481,10 +481,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             db_fetch_all("SELECT id, type_article FROM commande_lignes WHERE commande_id=?", [$cmd_id]),
             'type_article', 'id'
         );
-        $unite_map = array_column(
-            db_fetch_all("SELECT id, unite FROM commande_lignes WHERE commande_id=?", [$cmd_id]),
-            'unite', 'id'
-        );
+        $lignes_db = array_column(
+            db_fetch_all("SELECT * FROM commande_lignes WHERE commande_id=?", [$cmd_id]), null, 'id');
         // PMMA et rivets viennent d'un dépôt réel (Entrepôt ou Stock-Siège,
         // au choix du gestionnaire qui sait physiquement d'où il expédie) :
         // pas de débit silencieux d'un site au hasard, et pas de stock qui
@@ -551,63 +549,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                         [$dist_id, $ta === 'article' ? ($l['article_id']??null) : null, (int)$l['ligne_id'],
                          $l['libelle']??'', $q_liv, $l['unite']??'unité']
                     );
-                    // Décrémenter stock central articles
-                    if ($ta === 'article' && !empty($l['article_id'])) {
-                        // Débit du dépôt choisi pour la ligne (entrepôt ou
-                        // magasin), bloquant comme pour le PMMA et les rivets :
-                        // mieux vaut arrêter l'expédition que sortir du stock
-                        // d'un dépôt qui ne l'a pas.
-                        $dep_art   = $depot_map[(int)$l['ligne_id']];
-                        $stock_dep = (int)(db_fetch_value(
-                            "SELECT quantite FROM stock_site WHERE article_id=? AND site_id=? FOR UPDATE",
-                            [(int)$l['article_id'], $dep_art]
-                        ) ?? 0);
-                        if ($stock_dep < $q_liv)
-                            throw new Exception("Stock insuffisant pour « " . ($l['libelle'] ?? '') . " » au dépôt choisi : $stock_dep disponible(s), $q_liv requis.");
-                        db_query("UPDATE stock_site SET quantite=quantite-? WHERE article_id=? AND site_id=?",
-                            [$q_liv, (int)$l['article_id'], $dep_art]);
-                        db_query("UPDATE articles SET stock_global = GREATEST(0, stock_global - ?) WHERE id=?",
-                            [$q_liv, (int)$l['article_id']]);
-                    }
-                    // Débit du dépôt source pour rivets/PMMA — contrepartie
-                    // du crédit fait au site à la réception (action
-                    // 'receptionner'). Bloque si le dépôt choisi n'a pas la
-                    // quantité : mieux vaut arrêter l'expédition que livrer
-                    // un site avec un stock qui ne serait jamais sorti de
-                    // nulle part.
+                    // Débit du dépôt choisi pour la ligne (entrepôt ou magasin),
+                    // contrepartie du crédit fait au site à la réception.
+                    // Bloquant : mieux vaut arrêter l'expédition que sortir du
+                    // stock d'un dépôt qui ne l'a pas. La règle par type
+                    // (article + stock_global, rivet, PMMA compté en unités)
+                    // est celle de rcp_mouvement() (includes/reception_commande.php),
+                    // la même que pour la réception et la remise en stock d'un
+                    // écart. La ligne vient de la base, jamais du client : un
+                    // article_id ou un libellé forgé ne choisit pas le stock débité.
                     $depot_ligne = $depot_map[(int)($l['ligne_id'] ?? 0)] ?? 0;
                     if ($depot_ligne) {
                         db_query("UPDATE commande_lignes SET depot_source_id=? WHERE id=?", [$depot_ligne, (int)$l['ligne_id']]);
-                    }
-                    if ($ta === 'rivet') {
-                        $lib_norm = strtolower(str_replace(
-                            ['é','è','ê','ë','É','È','Ê','Ë'],
-                            ['e','e','e','e','e','e','e','e'],
-                            $l['libelle'] ?? ''
-                        ));
-                        $type_rivet = (strpos($lib_norm, 'eclat') !== false) ? 'eclate' : 'gonflable';
-                        $stock_dep  = (int)(db_fetch_value(
-                            "SELECT quantite FROM op_stock_rivets WHERE site_id=? AND type_rivet=?",
-                            [$depot_ligne, $type_rivet]
-                        ) ?? 0);
-                        if ($stock_dep < $q_liv)
-                            throw new Exception("Stock dépôt insuffisant pour les rivets $type_rivet : $stock_dep disponible(s), $q_liv requis.");
-                        db_query("UPDATE op_stock_rivets SET quantite=quantite-? WHERE site_id=? AND type_rivet=?",
-                            [$q_liv, $depot_ligne, $type_rivet]);
-                    } elseif ($ta === 'pmma') {
-                        $type_pmma = resoudre_type_pmma($l['libelle'] ?? '')
-                                  ?? trim(preg_replace('/^PMMA\s*/i', '', $l['libelle'] ?? ''));
-                        if ($type_pmma) {
-                            // Ligne en cartons : le stock, lui, est en unités.
-                            $q_unites  = pmma_qte_en_unites($type_pmma, $unite_map[(int)($l['ligne_id'] ?? 0)] ?? null, $q_liv);
-                            $stock_dep = (int)(db_fetch_value(
-                                "SELECT quantite FROM stock_pmma_site WHERE site_id=? AND type_pmma=?",
-                                [$depot_ligne, $type_pmma]
-                            ) ?? 0);
-                            if ($stock_dep < $q_unites)
-                                throw new Exception("Stock dépôt insuffisant pour PMMA $type_pmma : $stock_dep unité(s) disponible(s), $q_unites requise(s).");
-                            db_query("UPDATE stock_pmma_site SET quantite=quantite-? WHERE site_id=? AND type_pmma=?",
-                                [$q_unites, $depot_ligne, $type_pmma]);
+                        $ldb   = $lignes_db[(int)$l['ligne_id']];
+                        $dispo = rcp_stock($ldb, $depot_ligne, true);
+                        if ($dispo !== null) {
+                            $besoin = rcp_unites($ldb, $q_liv);
+                            if ($dispo < $besoin)
+                                throw new Exception("Stock insuffisant pour « {$ldb['libelle']} » au dépôt choisi : $dispo disponible(s), $besoin requis.");
+                            rcp_mouvement($ldb, $depot_ligne, -$q_liv, true);
                         }
                     }
                 }
@@ -682,7 +642,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         }
         db_begin();
         try {
-            db_query("UPDATE commandes SET statut='recu',recu_par=?,recu_at=NOW(),bl_reception=? WHERE id=?",[$user['id'],$up['filename'],$cmd_id]);
+            // Sous condition du statut : de deux envois simultanés (double
+            // clic, renvoi après une erreur réseau), un seul crédite le site.
+            $maj = db_query("UPDATE commandes SET statut='recu',recu_par=?,recu_at=NOW(),bl_reception=?
+                             WHERE id=? AND statut='en_cours_livraison'",[$user['id'],$up['filename'],$cmd_id]);
+            if ($maj->rowCount() !== 1) throw new Exception('Cette commande vient déjà d\'être réceptionnée.');
             // Quantités reçues et écarts d'abord : les rouleaux non reçus
             // sortent de la liste 'assigne' et ne passent donc pas au site.
             $nb_ecarts_rec = $plan_rec ? rcp_appliquer($cmd_id, $plan_rec, (int)$user['id']) : 0;
@@ -711,24 +675,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                       WHERE ds.commande_id=?",[$cmd_id]);
             db_query("UPDATE distributions_site SET statut='livre',recu_at=NOW(),recu_par=?
                       WHERE commande_id=?",[$user['id'],$cmd_id]);
-            // Mettre à jour stock site — articles classiques (+) uniquement.
-            // Liste blanche plutôt que liste noire : pour tout autre type
-            // (bobine, équipement informatique/opérationnel...), article_id
-            // désigne l'id d'une autre table (op_types_bobines, equipements)
-            // et non un articles.id — l'y insérer créditerait le stock d'un
-            // article sans rapport. Rivet/PMMA ont leur propre bloc dédié
-            // plus bas ; bobine et équipement sont gérés ailleurs (ou pas
-            // encore automatisés à la réception).
-            $lignes_rec = db_fetch_all(
-                "SELECT cl.article_id, {$q_rec} AS qte
-                 FROM commande_lignes cl
-                 WHERE cl.commande_id=? AND cl.type_article='article'
-                   AND cl.article_id IS NOT NULL AND {$q_rec} > 0",
-                [$cmd_id]
-            );
-            $nb_equip_op = 0;
-            foreach ($lignes_rec as $lr) {
-                if ($lr['article_id'] && $lr['qte'] > 0) {
+            // Crédit du site, du reçu déclaré (à défaut, du livré). Le débit
+            // du dépôt a eu lieu à l'expédition ; ici, on ne crédite que le
+            // site destinataire, par la même règle (rcp_mouvement() : rivet
+            // d'après le libellé, PMMA ramené au catalogue et compté en
+            // unités). Liste blanche des types : pour une bobine ou un
+            // équipement, article_id désigne une autre table et ne doit pas
+            // créditer un article sans rapport.
+            $nb_art = $nb_riv = $nb_pmma = $nb_equip_op = 0;
+            foreach (db_fetch_all(
+                "SELECT cl.*, {$q_rec} AS qte FROM commande_lignes cl
+                 WHERE cl.commande_id=? AND cl.type_article IN ('article','rivet','pmma') AND {$q_rec} > 0",
+                [$cmd_id]) as $lr) {
+                if ($lr['type_article'] === 'article') {
+                    if (!$lr['article_id']) continue;
+                    $nb_art++;
                     // Matériel et outillage industriel, consommables
                     // informatiques : une fiche d'équipement (opérationnel /
                     // informatique) par unité sur le site, pas du stock d'articles.
@@ -737,65 +698,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                             (int)$lr['qte'], (int)$user['id'], "Reçu via la commande {$cmd['numero_commande']}"));
                         continue;
                     }
-                    db_query(
-                        "INSERT INTO stock_site (article_id,site_id,quantite) VALUES (?,?,?)
-                         ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)",
-                        [$lr['article_id'],$cmd['site_id'],$lr['qte']]
-                    );
+                } elseif ($lr['type_article'] === 'rivet') {
+                    $nb_riv++;
+                } else {
+                    $nb_pmma++;
                 }
-            }
-
-            // Le débit du dépôt source (Entrepôt ou Stock-Siège, au choix du
-            // gestionnaire) a déjà eu lieu à l'expédition — cf. action
-            // 'emettre_livraison' plus haut. Ici, on ne fait que créditer le
-            // site destinataire.
-
-            // Mettre à jour stock rivets (+)
-            $lignes_rivets = db_fetch_all(
-                "SELECT cl.libelle, {$q_rec} AS qte
-                 FROM commande_lignes cl
-                 WHERE cl.commande_id=? AND cl.type_article='rivet' AND {$q_rec} > 0",
-                [$cmd_id]
-            );
-            foreach ($lignes_rivets as $lr) {
-                // Normaliser accents pour comparaison fiable (éclaté → eclat)
-                $lib_norm   = strtolower(str_replace(
-                    ['é','è','ê','ë','É','È','Ê','Ë'],
-                    ['e','e','e','e','e','e','e','e'],
-                    $lr['libelle']
-                ));
-                $type_rivet = (strpos($lib_norm, 'eclat') !== false) ? 'eclate' : 'gonflable';
-                $qte_liv    = (int)$lr['qte'];
-                db_query(
-                    "INSERT INTO op_stock_rivets (site_id, type_rivet, quantite) VALUES (?,?,?)
-                     ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)",
-                    [$cmd['site_id'], $type_rivet, $qte_liv]
-                );
-            }
-
-            // Mettre à jour stock PMMA (+)
-            $lignes_pmma = db_fetch_all(
-                "SELECT cl.libelle, cl.unite, {$q_rec} AS qte
-                 FROM commande_lignes cl
-                 WHERE cl.commande_id=? AND cl.type_article='pmma' AND {$q_rec} > 0",
-                [$cmd_id]
-            );
-            foreach ($lignes_pmma as $lr) {
-                // Le libellé de la ligne commandée est saisi à la main : le
-                // découper donnait un type par variante d'écriture, donc un
-                // stock éclaté sur plusieurs lignes pour la même matière.
-                // On le ramène d'abord au code du catalogue ; à défaut, on
-                // garde le libellé découpé pour ne pas perdre la livraison.
-                $type_pmma = resoudre_type_pmma($lr['libelle'])
-                          ?? trim(preg_replace('/^PMMA\s*/i', '', $lr['libelle']));
-                if ($type_pmma) {
-                    $qte_liv   = pmma_qte_en_unites($type_pmma, $lr['unite'] ?? null, (int)$lr['qte']);
-                    db_query(
-                        "INSERT INTO stock_pmma_site (site_id, type_pmma, quantite) VALUES (?,?,?)
-                         ON DUPLICATE KEY UPDATE quantite = quantite + VALUES(quantite)",
-                        [$cmd['site_id'], $type_pmma, $qte_liv]
-                    );
-                }
+                rcp_mouvement($lr, (int)$cmd['site_id'], (int)$lr['qte']);
             }
             audit_log($user['id'],'UPDATE','commandes',$cmd_id,"Réception confirmée par coordinateur"
                 . ($nb_ecarts_rec ? " — $nb_ecarts_rec manque(s) déclaré(s)" : ''));
@@ -805,7 +713,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             db_commit();
             $msg = sprintf(
                 'Réception confirmée ✅ | Articles: %d | Rivets: %d | PMMA: %d',
-                count($lignes_rec), count($lignes_rivets), count($lignes_pmma)
+                $nb_art, $nb_riv, $nb_pmma
             );
             if ($nb_bob_rec > 0)
                 $msg .= " | Bobines : $nb_bob_rec, en stock sur le site (demande d'utilisation pour les utiliser)";
@@ -814,7 +722,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             if ($nb_ecarts_rec > 0)
                 $msg .= " | ⚠️ $nb_ecarts_rec manque(s) signalé(s) au gestionnaire de stock";
             json_response(true, $msg);
-        } catch(Exception $e){ db_rollback(); json_response(false,$e->getMessage()); }
+        } catch(Exception $e){
+            db_rollback();
+            // Réception refusée : le bon de livraison envoyé ne sert à rien.
+            upload_delete($up['filename'], 'bl');
+            json_response(false,$e->getMessage());
+        }
     }
 
     // ── Lignes à déclarer dans la fenêtre de réception (coordinateur)
@@ -932,34 +845,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         );
         foreach ($lignes as $l) {
             $stocks = [];
+            // Même lecture que le contrôle de l'expédition (rcp_stock()), pour
+            // que le stock affiché soit exactement celui qui sera vérifié.
+            // Ligne en cartons : le dépôt s'affiche en cartons pleins pour se
+            // comparer à la quantité saisie.
+            $par_carton = rcp_unites($l, 1);
             foreach ($depots_list as $d) {
-                $dep = (int)$d['id'];
-                if ($l['type_article'] === 'article') {
-                    $stock = (int)(db_fetch_value(
-                        "SELECT quantite FROM stock_site WHERE article_id=? AND site_id=?",
-                        [(int)$l['article_id'], $dep]) ?? 0);
-                } elseif ($l['type_article'] === 'rivet') {
-                    $lib_norm = strtolower(str_replace(
-                        ['é','è','ê','ë','É','È','Ê','Ë'],
-                        ['e','e','e','e','e','e','e','e'],
-                        $l['libelle']
-                    ));
-                    $type = (strpos($lib_norm, 'eclat') !== false) ? 'eclate' : 'gonflable';
-                    $stock = (int)(db_fetch_value(
-                        "SELECT quantite FROM op_stock_rivets WHERE site_id=? AND type_rivet=?",
-                        [$dep, $type]) ?? 0);
-                } else {
-                    $type = resoudre_type_pmma($l['libelle'])
-                         ?? trim(preg_replace('/^PMMA\s*/i', '', $l['libelle']));
-                    $stock = (int)(db_fetch_value(
-                        "SELECT quantite FROM stock_pmma_site WHERE site_id=? AND type_pmma=?",
-                        [$dep, $type]) ?? 0);
-                    // Ligne en cartons : afficher le dépôt en cartons pleins
-                    // pour le comparer à la quantité saisie.
-                    $par_carton = pmma_qte_en_unites($type, $l['unite'] ?? null, 1);
-                    if ($par_carton > 1) $stock = intdiv($stock, $par_carton);
-                }
-                $stocks[$dep] = $stock;
+                $dep   = (int)$d['id'];
+                $stock = rcp_stock($l, $dep) ?? 0;
+                $stocks[$dep] = $par_carton > 1 ? intdiv($stock, $par_carton) : $stock;
             }
             $out[] = ['ligne_id' => (int)$l['id'], 'stocks' => $stocks];
         }
@@ -1372,6 +1266,12 @@ function _bdc_pdf($cmd, $lignes, $voir_prix, array $ctx = []) {
         $st_colors = ['valide'=>'#15803d','rejete'=>'#dc2626','modifie'=>'#d97706','modification_demandee'=>'#5b21b6'];
         $st_txt    = $st_labels[$l['statut_ligne'] ?? ''] ?? '';
         $st_col    = $st_colors[$l['statut_ligne'] ?? ''] ?? '#555';
+        // Ligne reçue avec un manque : ni « Livré » ni vert.
+        if (($l['quantite_recue'] ?? null) !== null && $l['quantite_livree'] !== null
+            && (int)$l['quantite_recue'] < (int)$l['quantite_livree']) {
+            $st_txt = (int)$l['quantite_recue'] === 0 ? 'Non reçu' : 'Reçu partiel';
+            $st_col = '#b45309';
+        }
 
         $rows .= "<tr>
             <td style='background:$bg;padding:7px 9px;border:1px solid #d1d5db;vertical-align:middle'>
@@ -2142,6 +2042,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
               <strong>Remettre en stock</strong> : la quantité revient au dépôt d'où elle est partie.
               <strong>Renvoyer</strong> : idem, puis une nouvelle commande « À préparer » reprend les manquants.
               <strong>Perte</strong> : rien ne revient (une bobine passe « Perdue »).
+              Pour un rouleau, « Remettre en stock » signifie qu'il a été retrouvé au dépôt ; « Renvoyer » le passe « Perdue » et en fait expédier un autre.
             </p>
             <label for="detail-ecarts-notes" style="font-size:12.5px;font-weight:700">Commentaire <span style="font-weight:400;color:var(--muted)">(obligatoire pour une perte)</span></label>
             <textarea id="detail-ecarts-notes" class="form-control" rows="2" style="margin-top:4px"></textarea>
@@ -2981,8 +2882,15 @@ async function receptionner(id, numero){
   document.getElementById('receptionLignesBox').style.display = 'none';
   document.getElementById('receptionLignes').innerHTML = '';
   document.getElementById('modalReception').style.display = 'flex';
-  const d = await ap({action:'get_reception', cmd_id:id});
+  // Confirmation bloquée tant que les lignes ne sont pas chargées : sinon une
+  // réception envoyée trop tôt ne déclarerait aucun manque.
+  const btnOk = document.getElementById('btnConfirmerReception');
+  btnOk.disabled = true;
+  let d;
+  try { d = await ap({action:'get_reception', cmd_id:id}); }
+  catch (e) { d = {success:false, message:'Lignes de la commande non chargées (réseau) : fermez et rouvrez la réception.'}; }
   if (!d.success) { document.getElementById('alertReception').innerHTML = '<div class="alert alert-danger"></div>'; document.getElementById('alertReception').firstChild.textContent = d.message; return; }
+  btnOk.disabled = false;
   if (!d.data.par_ligne || !d.data.lignes.length) return;   // base sans la migration : réception globale, comme avant
   receptionLignes = d.data.lignes;
   const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -3068,7 +2976,9 @@ async function confirmerReception(btn){
   fd.append('reception', JSON.stringify(saisie));
   fd.append('bl_reception', f);
   btn.disabled = true;
-  const d = await fetch(window.location.href, {method:'POST', headers:{'X-Requested-With':'XMLHttpRequest'}, body:fd}).then(r => r.json());
+  let d;
+  try { d = await fetch(window.location.href, {method:'POST', headers:{'X-Requested-With':'XMLHttpRequest'}, body:fd}).then(r => r.json()); }
+  catch (e) { d = {success:false, message:'Réponse non reçue (réseau). Rechargez la page pour voir si la réception est passée avant de recommencer.'}; }
   btn.disabled = false;
   if (!d.success) { alerte.innerHTML = `<div class="alert alert-danger">${escB(d.message)}</div>`; return; }
   toast(d.message, 'success');
