@@ -183,7 +183,9 @@ $stocks = db_fetch_all(
             sr.type_rivet,
             COALESCE(sr.quantite,0) AS quantite,
             COALESCE(sr.seuil_alerte,200) AS seuil_alerte,
-            COALESCE((SELECT SUM(p.rivets_utilises+p.rivets_endommages)
+            COALESCE((SELECT SUM(CASE sr.type_rivet WHEN 'gonflable' THEN p.rivets_gonflables
+                                                    WHEN 'eclate'    THEN p.rivets_eclates
+                                                    ELSE p.rivets_utilises+p.rivets_endommages END)
                       FROM op_points_journaliers p
                       WHERE p.site_id=s.id AND DATE_FORMAT(p.date_point,'%Y-%m')=DATE_FORMAT(CURRENT_DATE,'%Y-%m')),0) AS utilises_mois
      FROM sites s

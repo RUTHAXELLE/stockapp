@@ -889,6 +889,75 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     json_response(false,'Action inconnue.');
 }
 
+// ── Bon de commande et formulaire : commande précédente, conso hebdo ──
+
+// Type de rivet d'une ligne d'après son libellé (null : ancienne ligne « Rivets »).
+function bdc_type_rivet(string $lib): ?string {
+    $l = mb_strtolower($lib);
+    return str_contains($l, 'gonfl') ? 'gonflable' : (str_contains($l, 'clat') ? 'eclate' : null);
+}
+
+// Quantité demandée à la dernière commande du site pour la même ligne,
+// antérieure à la commande $avant_id (0 : la plus récente). Le type fait
+// partie de la clé : article_id désigne un article OU un type de bobine.
+function bdc_derniere(int $sid, string $type, string $lib, int $aid, int $avant_id = 0): int {
+    $types = in_array($type, ['article', 'consommable'], true) ? ['article', 'consommable'] : [$type];
+    if (in_array($type, ['bobine', 'vignette'], true) && $aid) {
+        $cle = '(cl.article_id=? OR cl.libelle LIKE ?)';
+        $p   = [$aid, (cmdbob_type_code($aid) ?? '#') . ' %'];
+    } elseif ($aid) {
+        $cle = 'cl.article_id=?';
+        $p   = [$aid];
+    } else {
+        $cle = 'cl.libelle=?';
+        $p   = [$lib];
+    }
+    $ph = implode(',', array_fill(0, count($types), '?'));
+    return (int)(db_fetch_value(
+        "SELECT cl.quantite FROM commande_lignes cl JOIN commandes c ON c.id=cl.commande_id
+         WHERE cl.type_article IN ($ph) AND $cle AND c.site_id=?
+           AND c.statut NOT IN ('annule','rejete') AND (? = 0 OR c.id < ?)
+         ORDER BY c.created_at DESC, c.id DESC LIMIT 1",
+        array_merge($types, $p, [$sid, $avant_id, $avant_id])) ?? 0);
+}
+
+// Consommation hebdomadaire moyenne du site sur les 4 semaines qui
+// précèdent $date_ref. Rivets et bobines : ce que les points journaliers
+// ont réellement sorti du stock. Autres articles (pas de suivi de
+// consommation) : quantités reçues sur la période.
+function bdc_conso_hebdo(int $sid, string $type, string $lib, int $aid, string $date_ref): int {
+    $deduit = db_colonne_existe('op_points_journaliers', 'stock_deduit')
+        ? 'p.stock_deduit >= 1' : "p.statut <> 'rejete'";
+    if ($type === 'rivet') {
+        $col = match (bdc_type_rivet($lib)) {
+            'gonflable' => 'p.rivets_gonflables',
+            'eclate'    => 'p.rivets_eclates',
+            default     => 'p.rivets_utilises + p.rivets_endommages',
+        };
+        return (int)(db_fetch_value(
+            "SELECT COALESCE(ROUND(SUM($col) / 4), 0) FROM op_points_journaliers p
+             WHERE p.site_id=? AND $deduit AND p.date_point > DATE_SUB(?, INTERVAL 28 DAY) AND p.date_point <= ?",
+            [$sid, $date_ref, $date_ref]) ?? 0);
+    }
+    if (in_array($type, ['bobine', 'vignette'], true)) {
+        $code = $aid ? cmdbob_type_code($aid) : null;
+        if ($code === null) return 0;
+        return (int)(db_fetch_value(
+            "SELECT COALESCE(ROUND(SUM(fu.films_utilises + fu.films_endommages) / 4), 0)
+             FROM op_films_utilises fu
+             JOIN op_points_journaliers p ON p.id = fu.point_id
+             JOIN op_bobines b ON b.id = fu.bobine_id
+             WHERE b.type_code=? AND p.site_id=? AND $deduit AND p.date_point > DATE_SUB(?, INTERVAL 28 DAY) AND p.date_point <= ?",
+            [$code, $sid, $date_ref, $date_ref]) ?? 0);
+    }
+    [$cle, $p] = $aid ? ['cl.article_id=?', [$aid]] : ['cl.type_article=? AND cl.libelle=?', [$type, $lib]];
+    return (int)(db_fetch_value(
+        "SELECT COALESCE(ROUND(SUM(" . rcp_sql_qte_site('cl') . ") / 4), 0)
+         FROM commande_lignes cl JOIN commandes c ON c.id=cl.commande_id
+         WHERE $cle AND c.site_id=? AND c.statut IN ('recu','livre') AND DATE(c.recu_at) > DATE_SUB(?, INTERVAL 28 DAY) AND DATE(c.recu_at) <= ?",
+        array_merge($p, [$sid, $date_ref, $date_ref])) ?? 0);
+}
+
 // ── Export bon de commande
 if (isset($_GET['export'], $_GET['id'])) {
     $cmd_id = (int)$_GET['id'];
@@ -911,44 +980,20 @@ if (isset($_GET['export'], $_GET['id'])) {
     // Charger données contextuelles selon le type_article de chaque ligne
     $ctx = [];
     $sid = (int)$cmd['site_id'];
+    // Conso : les 4 semaines avant la commande, pas avant aujourd'hui.
+    $date_ref = substr((string)($cmd['created_at'] ?? date('Y-m-d')), 0, 10);
 
     foreach ($lignes as $l) {
         $type = $l['type_article'] ?? 'article';
         $lib  = $l['libelle']      ?? '';
         $aid  = (int)($l['article_id'] ?? 0);
 
-        // Helper : dernière quantité commandée par type+libelle ou article_id
-        $fn_derniere = function() use ($sid, $cmd_id, $type, $lib, $aid): int {
-            if ($aid) {
-                return (int)(db_fetch_value(
-                    "SELECT cl.quantite FROM commande_lignes cl
-                     JOIN commandes c2 ON c2.id=cl.commande_id
-                     WHERE cl.article_id=? AND c2.site_id=? AND c2.statut NOT IN ('annule','rejete') AND c2.id!=?
-                     ORDER BY c2.created_at DESC LIMIT 1", [$aid,$sid,$cmd_id]) ?? 0);
-            }
-            return (int)(db_fetch_value(
-                "SELECT cl.quantite FROM commande_lignes cl
-                 JOIN commandes c2 ON c2.id=cl.commande_id
-                 WHERE cl.type_article=? AND cl.libelle=? AND c2.site_id=?
-                   AND c2.statut NOT IN ('annule','rejete') AND c2.id!=?
-                 ORDER BY c2.created_at DESC LIMIT 1", [$type,$lib,$sid,$cmd_id]) ?? 0);
+        // Commande précédente (antérieure à celle-ci) et conso hebdo
+        $fn_derniere = function () use ($sid, $cmd_id, $type, $lib, &$aid): int {
+            return bdc_derniere($sid, $type, $lib, $aid, $cmd_id);
         };
-
-        // Helper : conso hebdo moyenne
-        $fn_conso = function() use ($sid, $type, $lib, $aid): int {
-            if ($aid) {
-                return (int)(db_fetch_value(
-                    "SELECT COALESCE(ROUND(SUM(" . rcp_sql_qte_site('cl') . ")/4),0)
-                     FROM commande_lignes cl JOIN commandes c ON c.id=cl.commande_id
-                     WHERE cl.article_id=? AND c.site_id=? AND c.statut IN ('recu','livre')
-                       AND c.recu_at >= (CURRENT_DATE - INTERVAL 4 WEEK)", [$aid,$sid]) ?? 0);
-            }
-            return (int)(db_fetch_value(
-                "SELECT COALESCE(ROUND(SUM(" . rcp_sql_qte_site('cl') . ")/4),0)
-                 FROM commande_lignes cl JOIN commandes c ON c.id=cl.commande_id
-                 WHERE cl.type_article=? AND cl.libelle=? AND c.site_id=?
-                   AND c.statut IN ('recu','livre')
-                   AND c.recu_at >= (CURRENT_DATE - INTERVAL 4 WEEK)", [$type,$lib,$sid]) ?? 0);
+        $fn_conso = function () use ($sid, $type, $lib, &$aid, $date_ref): int {
+            return bdc_conso_hebdo($sid, $type, $lib, $aid, $date_ref);
         };
 
         switch ($type) {
@@ -1151,6 +1196,12 @@ $fn_types_rouleaux = function (string $categorie) use ($_sid): array {
 };
 $bobines_list   = $fn_types_rouleaux('bobine');
 $vignettes_list = $fn_types_rouleaux('vignette');
+if ($_sid) {
+    foreach ($bobines_list as &$_r)   $_r['conso'] = bdc_conso_hebdo($_sid, 'bobine', '', (int)$_r['id'], date('Y-m-d'));
+    unset($_r);
+    foreach ($vignettes_list as &$_r) $_r['conso'] = bdc_conso_hebdo($_sid, 'vignette', '', (int)$_r['id'], date('Y-m-d'));
+    unset($_r);
+}
 
 // ── Rivets : deux types (gonflable / eclate) avec stock et historique par type
 $rivet_types = [
@@ -1169,15 +1220,8 @@ foreach ($rivet_types as $rt) {
         'stock_site'   => $_sid ? (int)(db_fetch_value(
             "SELECT COALESCE(quantite,0) FROM op_stock_rivets WHERE site_id=? AND type_rivet=?",
             [$_sid, $rt['key']]) ?? 0) : 0,
-        'derniere'     => $_sid ? (int)(db_fetch_value(
-            "SELECT cl.quantite FROM commande_lignes cl JOIN commandes c ON c.id=cl.commande_id
-             WHERE cl.type_article='rivet' AND cl.libelle=? AND c.site_id=? AND c.statut NOT IN ('annule','rejete')
-             ORDER BY c.created_at DESC LIMIT 1", [$rt['libelle'], $_sid]) ?? 0) : 0,
-        'conso'        => $_sid ? (int)(db_fetch_value(
-            "SELECT COALESCE(ROUND(SUM(" . rcp_sql_qte_site('cl') . ")/4),0)
-             FROM commande_lignes cl JOIN commandes c ON c.id=cl.commande_id
-             WHERE cl.type_article='rivet' AND cl.libelle=? AND c.site_id=? AND c.statut IN ('recu','livre')
-               AND c.recu_at >= (CURRENT_DATE - INTERVAL 4 WEEK)", [$rt['libelle'], $_sid]) ?? 0) : 0,
+        'derniere'     => $_sid ? bdc_derniere($_sid, 'rivet', $rt['libelle'], 0) : 0,
+        'conso'        => $_sid ? bdc_conso_hebdo($_sid, 'rivet', $rt['libelle'], 0, date('Y-m-d')) : 0,
     ];
 }
 
