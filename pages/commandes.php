@@ -983,10 +983,19 @@ if (isset($_GET['export'], $_GET['id'])) {
                 break;
 
             case 'rivet':
+                // Stock du type de la ligne (gonflable / éclaté) : la somme
+                // des deux types s'affichait sur chaque ligne.
+                $lib_min = mb_strtolower($lib);
+                $type_rivet = str_contains($lib_min, 'gonfl') ? 'gonflable'
+                            : (str_contains($lib_min, 'clat') ? 'eclate' : null);
                 $ctx[$l['id']] = [
-                    'stock_site' => (int)(db_fetch_value(
-                        "SELECT COALESCE(SUM(quantite),0) FROM op_stock_rivets WHERE site_id=?",
-                        [$sid]) ?? 0),
+                    'stock_site' => (int)($type_rivet
+                        ? db_fetch_value(
+                            "SELECT COALESCE(SUM(quantite),0) FROM op_stock_rivets WHERE site_id=? AND type_rivet=?",
+                            [$sid, $type_rivet])
+                        : db_fetch_value(
+                            "SELECT COALESCE(SUM(quantite),0) FROM op_stock_rivets WHERE site_id=?",
+                            [$sid])) ?? 0,
                     'derniere'   => $fn_derniere(),
                     'conso'      => $fn_conso(),
                 ];
@@ -1480,7 +1489,7 @@ function _bdc_pdf($cmd, $lignes, $voir_prix, array $ctx = []) {
 }
 
 function _bdc_excel($cmd, $lignes, array $ctx = []) {
-    $autoload = __DIR__.'/../../vendor/autoload.php';
+    $autoload = __DIR__.'/../vendor/autoload.php';
     if (!file_exists($autoload)) { header('Content-Type: text/plain'); echo 'PhpSpreadsheet non installé.'; exit; }
     require_once $autoload;
     $coord = fn(int $col, int $row): string =>
