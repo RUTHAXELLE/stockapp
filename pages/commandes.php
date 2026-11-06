@@ -1048,13 +1048,13 @@ if (isset($_GET['export'], $_GET['id'])) {
 
             case 'bobine':
             case 'vignette':
-                // Stock = films (ou vignettes) restants des rouleaux en_stock
-                // de CE type sur ce site — sans filtre, bobines et vignettes
-                // s'additionnaient.
+                // Stock = films (ou vignettes) restants des rouleaux de CE
+                // type sur ce site, pleins (en_stock) ou entamés (en_cours) —
+                // sans filtre de type, bobines et vignettes s'additionnaient.
                 $ctx[$l['id']] = [
                     'stock_site' => (int)(db_fetch_value(
                         "SELECT COALESCE(SUM(films_restants),0) FROM op_bobines
-                         WHERE statut='en_stock' AND site_id=? AND type_code=?",
+                         WHERE statut IN ('en_stock','en_cours') AND site_id=? AND type_code=?",
                         [$sid, (string)cmdbob_type_code((int)$aid)]) ?? 0),
                     'derniere'   => $fn_derniere(),
                     'conso'      => $fn_conso(),
