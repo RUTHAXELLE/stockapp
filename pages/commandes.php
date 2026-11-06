@@ -2836,10 +2836,7 @@ async function confirmerReception(btn){
   fermer('Reception');
   setTimeout(() => location.reload(), 800);
 }
-async function annulerPrepa(id,num){const motif=(prompt('Annuler la commande '+num+' ?
-
-Les bobines déjà réservées seront libérées et le demandeur prévenu.
-Motif (obligatoire) :')||'').trim();if(!motif)return;const d=await ap({action:'annuler',cmd_id:id,motif});if(d.success){toast(d.message,'success');setTimeout(()=>location.reload(),800);}else toast(d.message,'danger');}
+async function annulerPrepa(id,num){const motif=(prompt('Annuler la commande '+num+' ?\n\nLes bobines déjà réservées seront libérées et le demandeur prévenu.\nMotif (obligatoire) :')||'').trim();if(!motif)return;const d=await ap({action:'annuler',cmd_id:id,motif});if(d.success){toast(d.message,'success');setTimeout(()=>location.reload(),800);}else toast(d.message,'danger');}
 async function annuler(id){if(!confirm('Annuler cette commande ?'))return;const d=await ap({action:'annuler',cmd_id:id});if(d.success){toast(d.message,'success');setTimeout(()=>location.reload(),800);}else toast(d.message,'danger');}
 </script>
 
