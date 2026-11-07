@@ -1635,7 +1635,7 @@ $lbl_attente = $is_coord ? 'En attente de validation' : 'À valider';
 $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
 ?>
 <!-- ÉTAPES WORKFLOW (KPIs cliquables) -->
-<div class="cmd-steps" id="cmdSteps">
+<div class="cmd-steps" id="cmdSteps" data-live>
   <div class="step s-attente" onclick="filtrer('en_attente')">
     <div class="s-num"><?= $kpi['attente'] ?></div>
     <div class="s-lbl">⏳ <?= $lbl_attente ?></div>
@@ -1687,7 +1687,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
 </div>
 
 <!-- LISTE COMMANDES -->
-<div class="card" id="cmdResultCard">
+<div class="card" id="cmdResultCard" data-live>
   <div class="card-header">
     <h3><i class="ph-duotone ph-shopping-cart"></i> Commandes <span style="font-size:12px;font-weight:400;color:var(--muted)">(<?= count($commandes) ?>)</span></h3>
   </div>

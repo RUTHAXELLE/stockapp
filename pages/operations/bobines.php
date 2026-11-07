@@ -677,7 +677,7 @@ endif;
 </style>
 
 <!-- KPIs -->
-<div class="bob-kpi" style="grid-template-columns:repeat(6,1fr)">
+<div class="bob-kpi" id="bobKpi" data-live style="grid-template-columns:repeat(6,1fr)">
   <div class="bk" style="border-left:3px solid var(--blue)"><div class="bk-icon">▶️</div><div><div class="bk-val" style="color:var(--blue)"><?= $stats_map['en_cours']['n']??0 ?></div><div class="bk-label">En utilisation</div></div></div>
   <div class="bk" style="border-left:3px solid var(--success)"><div class="bk-icon"><i class="ph ph-package" aria-hidden="true"></i></div><div><div class="bk-val" style="color:var(--success-d)"><?= $stats_map['en_stock']['n']??0 ?></div><div class="bk-label">En stock</div></div></div>
   <div class="bk" style="border-left:3px solid #9e9e9e"><div class="bk-icon"><i class="ph ph-arrow-clockwise" aria-hidden="true"></i></div><div><div class="bk-val" style="color:#9e9e9e"><?= $stats_map['retiree']['n']??0 ?></div><div class="bk-label">Retirées</div></div></div>
@@ -774,7 +774,7 @@ endif;
     <?php endif; ?>
   </form>
 
-  <div class="card" id="bobinesResultCard" style="padding:0;overflow:hidden">
+  <div class="card" id="bobinesResultCard" data-live style="padding:0;overflow:hidden">
     <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
       <h3 style="font-family:'Montserrat',sans-serif;font-size:14px;font-weight:700;color:var(--navy)"><i class="ph ph-film-strip" aria-hidden="true"></i> <?= ucfirst($bob_label_pl) ?> (<?= count($bobines) ?>)</h3>
       <span style="font-size:12px;color:var(--muted)">Stock total système : <strong><?= number_format($total_stock) ?> films</strong></span>

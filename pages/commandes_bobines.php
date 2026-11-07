@@ -394,7 +394,7 @@ include __DIR__ . '/../templates/header.php';
 </style>
 
 <!-- KPIs -->
-<div class="cb-steps">
+<div class="cb-steps" id="cbSteps" data-live>
   <div class="cb-step s-attente" onclick="filtrer('en_attente')">
     <div class="sv"><?= $kpi['attente'] ?></div>
     <div class="sl">⏳ À valider</div>
@@ -443,7 +443,7 @@ include __DIR__ . '/../templates/header.php';
 </div>
 
 <!-- LISTE -->
-<div class="card">
+<div class="card" id="cbResultCard" data-live>
   <div class="card-header">
     <h3><i class="ph-duotone ph-film-strip" style="color:var(--primary-d)"></i> Commandes Bobines
       <span style="font-size:12px;font-weight:400;color:var(--muted)">(<?= count($commandes) ?>)</span>

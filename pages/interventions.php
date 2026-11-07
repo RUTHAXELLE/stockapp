@@ -221,7 +221,7 @@ include __DIR__ . '/../templates/header.php';
 </style>
 
 <!-- KPIs -->
-<div class="int-kpis">
+<div class="int-kpis" id="intKpis" data-live>
   <div class="ik"><div class="ik-val"><?= $nb_preventive ?></div><div class="ik-lbl"><i class="ph ph-calendar" aria-hidden="true"></i> Préventives</div></div>
   <div class="ik red"><div class="ik-val" style="color:var(--danger-d)"><?= $nb_curative ?></div><div class="ik-lbl"><i class="ph ph-wrench" aria-hidden="true"></i> Curatives</div></div>
   <div class="ik violet"><div class="ik-val" style="color:#7c3aed"><?= $nb_autre ?></div><div class="ik-lbl"><i class="ph ph-toolbox" aria-hidden="true"></i> Autres</div></div>
@@ -277,7 +277,7 @@ foreach($types_onglets as $tab_key => $type_filtre):
   $items = array_values($items);
 ?>
 <div id="tab-<?= $tab_key ?>" style="display:<?= $onglet===$tab_key?'block':'none' ?>">
-  <div class="card">
+  <div class="card" id="intCard-<?= $tab_key ?>" data-live>
     <div class="card-header">
       <h3>
         <?= $tab_key==='preventive'?'<i class="ph ph-calendar" aria-hidden="true"></i> Interventions Préventives':($tab_key==='curative'?'<i class="ph ph-warning-octagon" aria-hidden="true"></i> Interventions Curatives':($tab_key==='autre'?'<i class="ph ph-toolbox" aria-hidden="true"></i> Autres interventions':($tab_key==='demandes'?'<i class="ph ph-tray" aria-hidden="true"></i> Demandes Coordinateurs':'<i class="ph ph-wrench" aria-hidden="true"></i> Toutes les Interventions'))) ?>

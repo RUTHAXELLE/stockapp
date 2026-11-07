@@ -73,6 +73,8 @@ function refreshNotifs() {
   }).then(d=>{
     if (!d || !d.success) return;
     const count = d.data.count || 0;
+    if (window._notifsVues !== undefined && count > window._notifsVues && window.actualiserZonesLive) window.actualiserZonesLive();
+    window._notifsVues = count;
     const badge = document.querySelector('.notif-count');
     const btn   = document.querySelector('.notif-btn');
     if (badge) { badge.textContent = count > 9 ? '9+' : count; badge.style.display = count > 0 ? '' : 'none'; }
@@ -157,6 +159,80 @@ function liveRefresh(opts) {
   }
   timer = setInterval(tick, interval);
 }
+
+// ===== ACTUALISATION AUTOMATIQUE DES ZONES [data-live] =====
+// Une page marque ses zones vivantes (indicateurs, liste) avec data-live et
+// un id. Toutes les 30 s, et dès qu'une notification arrive ou qu'on revient
+// sur l'onglet, la page est relue (même URL, filtres compris) et chaque zone
+// qui a changé est remplacée : une nouvelle commande apparaît sans F5.
+// Jamais sous les yeux de quelqu'un qui agit : pause si l'onglet est caché,
+// si une fenêtre (modale) est ouverte, si un champ de la zone a le focus ou
+// a été modifié (case cochée, saisie), ou si du texte y est sélectionné.
+(function () {
+  const INTERVALLE = 30000;
+  const zones = () => Array.from(document.querySelectorAll('[data-live][id]'));
+  if (!zones().length) return;
+
+  function modaleOuverte() {
+    return Array.from(document.querySelectorAll(
+      '[id^="modal"], [id^="Modal"], .modal-overlay, .ach-modal-bg, .modal, dialog[open]'
+    )).some(m => m.getClientRects().length > 0 && getComputedStyle(m).visibility !== 'hidden');
+  }
+  function zoneOccupee(z) {
+    const a = document.activeElement;
+    if (a && z.contains(a) && (['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName) || a.isContentEditable)) return true;
+    const sel = window.getSelection && window.getSelection();
+    if (sel && !sel.isCollapsed && sel.anchorNode && z.contains(sel.anchorNode)) return true;
+    return Array.from(z.querySelectorAll('input, textarea, select')).some(c => {
+      if (c.type === 'checkbox' || c.type === 'radio') return c.checked !== c.defaultChecked;
+      if (c.tagName === 'SELECT') return Array.from(c.options).some(o => o.selected !== o.defaultSelected);
+      return c.value !== c.defaultValue;
+    });
+  }
+  // Comparaison sans ce que la pagination ajoute à l'affichage.
+  function empreinte(el) {
+    const c = el.cloneNode(true);
+    c.querySelectorAll('.pg-nav').forEach(n => n.remove());
+    c.querySelectorAll('.pg-hors-page').forEach(n => {
+      n.classList.remove('pg-hors-page');
+      if (!n.classList.length) n.removeAttribute('class');
+    });
+    return c.outerHTML;
+  }
+
+  let enVol = false, arrete = false;
+  function tick() {
+    if (arrete || enVol || document.hidden || modaleOuverte()) return;
+    const actives = zones().filter(z => !zoneOccupee(z));
+    if (!actives.length) return;
+    enVol = true;
+    fetch(location.href, { credentials: 'same-origin', headers: { 'X-Live-Refresh': '1' } })
+      .then(r => {
+        if (r.redirected && /\/login\.php/i.test(r.url)) { arrete = true; return null; }
+        return r.ok ? r.text() : null;
+      })
+      .then(html => {
+        if (!html || document.hidden || modaleOuverte()) return;
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        actives.forEach(z => {
+          if (!z.isConnected || zoneOccupee(z)) return;
+          const neuf = doc.getElementById(z.id);
+          if (!neuf || empreinte(neuf) === empreinte(z)) return;
+          // La page de pagination affichée est conservée.
+          const pages = Array.from(z.querySelectorAll('[data-paginer]')).map(t => t._pgPage || 1);
+          z.querySelectorAll('[data-paginer]').forEach(t => { if (t._pgNav && !z.contains(t._pgNav)) t._pgNav.remove(); });
+          const importe = document.importNode(neuf, true);
+          importe.querySelectorAll('[data-paginer]').forEach((t, i) => { if (pages[i] > 1) t._pgKeep = pages[i]; });
+          z.replaceWith(importe);
+        });
+      })
+      .catch(() => {})
+      .finally(() => { enVol = false; });
+  }
+  window.actualiserZonesLive = tick;
+  setInterval(tick, INTERVALLE);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+})();
 
 // ===== DÉCONNEXION AUTOMATIQUE APRÈS INACTIVITÉ =====
 // Basé sur de vrais événements utilisateur (souris, clavier, tactile) —
@@ -308,7 +384,8 @@ function achParseJson(r) {
     // modifie aussi des styles : elle ne doit pas faire changer de page.
     if (el._pgReset) {
       const avant = el._pgVis || [];
-      if (avant.length !== vis.length || vis.some((r, i) => r !== avant[i])) el._pgPage = 1;
+      if (el._pgKeep) { el._pgPage = el._pgKeep; el._pgKeep = 0; }
+      else if (avant.length !== vis.length || vis.some((r, i) => r !== avant[i])) el._pgPage = 1;
       el._pgReset = false;
     }
     el._pgVis = vis;

@@ -779,7 +779,7 @@ include __DIR__ . '/../templates/header.php';
 <?php endif; ?>
 
 <!-- ── KPIs ── -->
-<div class="equip-kpis" id="equipKpis">
+<div class="equip-kpis" id="equipKpis" data-live>
   <a href="<?= h($kpi_url_total) ?>" class="ek<?= $kpi_active_total?' ek-active':'' ?>" title="Voir tous les équipements">          <div class="ek-val"><?= $kpi_total ?></div>                                          <div class="ek-lbl">Total</div></a>
   <a href="<?= h($kpi_url_ok) ?>" class="ek green<?= $kpi_active_ok?' ek-active':'' ?>" title="Filtrer sur les équipements opérationnels">    <div class="ek-val" style="color:var(--success-d)"><?= $kpi_ok ?></div>                <div class="ek-lbl"><i class="ph ph-check-circle" aria-hidden="true"></i> Opérationnels</div></a>
   <a href="<?= h($kpi_url_hs) ?>" class="ek red<?= $kpi_active_hs?' ek-active':'' ?>" title="Filtrer sur les équipements hors service">      <div class="ek-val" style="color:var(--danger-d)"><?= $kpi_hs ?></div>                 <div class="ek-lbl"><i class="ph ph-x-circle" aria-hidden="true"></i> Hors service</div></a>
@@ -903,7 +903,7 @@ include __DIR__ . '/../templates/header.php';
 <?php endif; ?>
 
 <!-- LISTE ÉQUIPEMENTS -->
-<div class="card" id="equipResultCard">
+<div class="card" id="equipResultCard" data-live>
   <div class="card-header">
     <h3>
       <?= $f_categorie==='informatique'

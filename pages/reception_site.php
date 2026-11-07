@@ -254,7 +254,7 @@ include __DIR__ . '/../templates/header.php';
 </style>
 
 <!-- KPIs -->
-<div class="rec-kpi">
+<div class="rec-kpi" id="recKpi" data-live>
   <div class="rk warning">
     <div class="rk-icon">⏳</div>
     <div><div class="rk-val"><?= $kpi_attente ?></div><div class="rk-label">En attente de réception</div></div>
@@ -294,7 +294,7 @@ include __DIR__ . '/../templates/header.php';
 </form>
 
 <!-- TABLEAU -->
-<div class="card" style="padding:0;overflow:hidden">
+<div class="card" id="recResultCard" data-live style="padding:0;overflow:hidden">
   <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
     <h3 style="font-family:'Montserrat',sans-serif;font-size:14px;font-weight:700;color:var(--navy)">
       <i class="ph ph-package" aria-hidden="true"></i> Liste des réceptions
