@@ -1107,6 +1107,24 @@ if ($site_force)  { $where[] = 'c.site_id=?'; $params[] = $site_force; }
 elseif ($f_site)  { $where[] = 'c.site_id=?'; $params[] = $f_site; }
 if ($f_statut)    { $where[] = 'c.statut=?';  $params[] = $f_statut; }
 
+// Ordre de la liste selon le rôle : d'abord ce que la personne doit traiter,
+// la plus récente en premier dans chaque statut.
+//  - coordinateur : à réceptionner (en livraison), à corriger ;
+//  - gestionnaire de stock (et GSB, superviseur achat) : à préparer, en livraison ;
+//  - superviseur et autres : à valider (les nouvelles commandes), à corriger.
+$ordre_statuts = match (true) {
+    $role_slug === 'coordinateur_site'
+        => ['en_cours_livraison', 'modification_demandee', 'en_attente', 'en_attente_livraison'],
+    in_array($role_slug, ['gestionnaire_stock', 'gestionnaire_stock_bobines', 'superviseur_achat'], true)
+        => ['en_attente_livraison', 'en_cours_livraison', 'en_attente', 'modification_demandee'],
+    default
+        => ['en_attente', 'modification_demandee', 'en_attente_livraison', 'en_cours_livraison'],
+};
+$ordre_statuts = array_merge($ordre_statuts, ['recu', 'livre', 'rejete', 'annule']);
+$ordre_sql = 'CASE c.statut';
+foreach ($ordre_statuts as $_i => $_st) $ordre_sql .= " WHEN '$_st' THEN $_i";
+$ordre_sql .= ' ELSE 99 END';
+
 $commandes = db_fetch_all(
     "SELECT c.*, s.nom AS site_nom, CONCAT(u.prenom,' ',u.nom) AS agent,
             COUNT(l.id) AS nb_lignes,
@@ -1119,7 +1137,7 @@ $commandes = db_fetch_all(
      LEFT JOIN users u ON u.id=c.created_by
      LEFT JOIN commande_lignes l ON l.commande_id=c.id
      WHERE ".implode(' AND ',$where)."
-     GROUP BY c.id, s.nom, u.prenom, u.nom ORDER BY c.created_at DESC, c.id DESC LIMIT 100",
+     GROUP BY c.id, s.nom, u.prenom, u.nom ORDER BY $ordre_sql, c.created_at DESC, c.id DESC LIMIT 100",
     $params
 );
 // Écarts de réception encore ouverts, par commande (badge + action du gestionnaire).
@@ -1692,7 +1710,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
     <h3><i class="ph-duotone ph-shopping-cart"></i> Commandes <span style="font-size:12px;font-weight:400;color:var(--muted)">(<?= count($commandes) ?>)</span></h3>
   </div>
   <div class="table-wrap">
-    <table data-lignes-visibles="6">
+    <table data-lignes-visibles="4">
       <thead><tr>
         <th>N° Commande</th><th>Site</th><th>Date</th>
         <th style="text-align:center">Articles</th>
