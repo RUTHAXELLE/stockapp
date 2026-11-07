@@ -1119,7 +1119,7 @@ $commandes = db_fetch_all(
      LEFT JOIN users u ON u.id=c.created_by
      LEFT JOIN commande_lignes l ON l.commande_id=c.id
      WHERE ".implode(' AND ',$where)."
-     GROUP BY c.id, s.nom, u.prenom, u.nom ORDER BY c.created_at DESC LIMIT 100",
+     GROUP BY c.id, s.nom, u.prenom, u.nom ORDER BY c.created_at DESC, c.id DESC LIMIT 100",
     $params
 );
 // Écarts de réception encore ouverts, par commande (badge + action du gestionnaire).
@@ -1692,7 +1692,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
     <h3><i class="ph-duotone ph-shopping-cart"></i> Commandes <span style="font-size:12px;font-weight:400;color:var(--muted)">(<?= count($commandes) ?>)</span></h3>
   </div>
   <div class="table-wrap">
-    <table data-paginer="25">
+    <table data-lignes-visibles="6">
       <thead><tr>
         <th>N° Commande</th><th>Site</th><th>Date</th>
         <th style="text-align:center">Articles</th>
@@ -1704,7 +1704,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
       <?php if(empty($commandes)): ?>
         <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--muted)">Aucune commande.</td></tr>
       <?php else: foreach($commandes as $cmd): ?>
-        <tr>
+        <tr data-cle="<?= (int)$cmd['id'] ?>">
           <td style="font-family:monospace;font-weight:700;color:var(--primary-d);white-space:nowrap"><?= h($cmd['numero_commande']) ?></td>
           <td style="font-size:13px"><?= h($cmd['site_nom']??'—') ?></td>
           <td style="font-size:12px;white-space:nowrap"><?= fmt_date($cmd['created_at'],'d/m/Y') ?></td>

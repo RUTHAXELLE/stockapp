@@ -160,6 +160,48 @@ function liveRefresh(opts) {
   timer = setInterval(tick, interval);
 }
 
+// ===== LISTE LIMITÉE À N LIGNES AVEC DÉFILEMENT =====
+// <table data-lignes-visibles="6"> : son conteneur (.table-wrap) montre les
+// N premières lignes, la suite défile, l'en-tête reste visible. La hauteur
+// est mesurée (les lignes n'ont pas toutes la même hauteur). Le style
+// d'origine du conteneur est gardé dans data-style-orig, pour que
+// l'actualisation automatique ne prenne pas la hauteur posée ici pour un
+// changement venu du serveur.
+(function () {
+  function ajuster(t) {
+    if (!t.getClientRects().length) return;            // onglet masqué : mesuré plus tard
+    const n    = parseInt(t.dataset.lignesVisibles, 10) || 6;
+    const wrap = t.closest('.table-wrap') || t.parentElement;
+    if (wrap.dataset.styleOrig === undefined) wrap.dataset.styleOrig = wrap.getAttribute('style') || '';
+    const lignes = Array.from(t.tBodies).flatMap(tb => Array.from(tb.rows)).filter(r => r.getClientRects().length);
+    let haut = '';
+    if (lignes.length > n) {
+      const tete = t.tHead ? t.tHead.getBoundingClientRect().height : 0;
+      haut = Math.ceil(tete + lignes.slice(0, n).reduce((s, r) => s + r.getBoundingClientRect().height, 0) + 2) + 'px';
+    }
+    if (wrap.style.overflowY !== 'auto') wrap.style.overflowY = 'auto';
+    if (wrap.style.maxHeight !== haut) wrap.style.maxHeight = haut;
+  }
+  window.ajusterLignesVisibles = function (racine) {
+    const r = racine || document;
+    if (r.matches && r.matches('table[data-lignes-visibles]')) ajuster(r);
+    r.querySelectorAll('table[data-lignes-visibles]').forEach(ajuster);
+  };
+  let prevu = null;
+  const planifier = () => { clearTimeout(prevu); prevu = setTimeout(() => window.ajusterLignesVisibles(), 0); };
+  document.addEventListener('DOMContentLoaded', planifier);
+  window.addEventListener('load', planifier);
+  window.addEventListener('resize', planifier);
+  // Filtres, onglets, rechargements AJAX : la liste change, on remesure.
+  new MutationObserver(muts => {
+    // Lignes ajoutées ou filtrées, onglet affiché ; jamais le conteneur
+    // lui-même, dont ajuster() modifie le style.
+    if (muts.some(m => m.type === 'childList' || m.target.tagName === 'TR' ||
+        (!m.target.classList.contains('table-wrap') && m.target.querySelector('table[data-lignes-visibles]'))))
+      planifier();
+  }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'hidden', 'class'] });
+})();
+
 // ===== ACTUALISATION AUTOMATIQUE DES ZONES [data-live] =====
 // Une page marque ses zones vivantes (indicateurs, liste) avec data-live et
 // un id. Toutes les 30 s, et dès qu'une notification arrive ou qu'on revient
@@ -193,9 +235,13 @@ function liveRefresh(opts) {
   function empreinte(el) {
     const c = el.cloneNode(true);
     c.querySelectorAll('.pg-nav').forEach(n => n.remove());
-    c.querySelectorAll('.pg-hors-page').forEach(n => {
-      n.classList.remove('pg-hors-page');
+    c.querySelectorAll('.pg-hors-page, .live-nouveau').forEach(n => {
+      n.classList.remove('pg-hors-page', 'live-nouveau');
       if (!n.classList.length) n.removeAttribute('class');
+    });
+    c.querySelectorAll('[data-style-orig]').forEach(n => {
+      if (n.dataset.styleOrig) n.setAttribute('style', n.dataset.styleOrig); else n.removeAttribute('style');
+      n.removeAttribute('data-style-orig');
     });
     return c.outerHTML;
   }
@@ -221,9 +267,15 @@ function liveRefresh(opts) {
           // La page de pagination affichée est conservée.
           const pages = Array.from(z.querySelectorAll('[data-paginer]')).map(t => t._pgPage || 1);
           z.querySelectorAll('[data-paginer]').forEach(t => { if (t._pgNav && !z.contains(t._pgNav)) t._pgNav.remove(); });
+          // Position de défilement des listes et lignes déjà connues.
+          const defil = Array.from(z.querySelectorAll('.table-wrap')).map(w => w.scrollTop);
+          const cles  = new Set(Array.from(z.querySelectorAll('tr[data-cle]')).map(r => r.dataset.cle));
           const importe = document.importNode(neuf, true);
           importe.querySelectorAll('[data-paginer]').forEach((t, i) => { if (pages[i] > 1) t._pgKeep = pages[i]; });
           z.replaceWith(importe);
+          if (window.ajusterLignesVisibles) window.ajusterLignesVisibles(importe);
+          importe.querySelectorAll('.table-wrap').forEach((w, i) => { if (defil[i]) w.scrollTop = defil[i]; });
+          if (cles.size) importe.querySelectorAll('tr[data-cle]').forEach(r => { if (!cles.has(r.dataset.cle)) r.classList.add('live-nouveau'); });
         });
       })
       .catch(() => {})

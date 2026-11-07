@@ -350,6 +350,12 @@ $unread = count($notifs);
 
     /* ===== TABLES ===== */
     .table-wrap { overflow-x: auto; }
+    /* Liste limitée à N lignes (data-lignes-visibles) : l'en-tête reste visible au défilement. */
+    table[data-lignes-visibles] thead th { position: sticky; top: 0; z-index: 1; }
+    /* Ligne arrivée par l'actualisation automatique : brève surbrillance. */
+    @keyframes liveNouveau { from { background: #FEF3C7; } to { background: transparent; } }
+    tr.live-nouveau > td { animation: liveNouveau 4s ease-out; }
+    @media (prefers-reduced-motion: reduce) { tr.live-nouveau > td { animation: none; background: #FEF3C7; } }
     table { width: 100%; border-collapse: collapse; }
     th {
       background: var(--tertiary) !important;
