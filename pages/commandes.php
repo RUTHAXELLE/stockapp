@@ -466,6 +466,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             unset($_l);
         }
 
+        // Ligne rejetée à la validation : rien n'est livré (quantité forcée
+        // à 0, motif repris du rejet), quoi qu'envoie l'écran.
+        $statut_lignes = array_column(
+            db_fetch_all("SELECT id, statut_ligne, motif_rejet FROM commande_lignes WHERE commande_id=?", [$cmd_id]), null, 'id');
+        foreach ($lignes_liv as &$_l) {
+            $_sl = $statut_lignes[(int)($_l['ligne_id'] ?? 0)] ?? null;
+            if ($_sl && $_sl['statut_ligne'] === 'rejete') {
+                $_l['quantite_livree'] = 0;
+                $_l['motif_ecart']     = 'Ligne rejetée' . ($_sl['motif_rejet'] ? ' : ' . $_sl['motif_rejet'] : '');
+            }
+        }
+        unset($_l);
+
         foreach ($lignes_liv as $l) {
             $q_cmd = (int)($l['quantite']      ?? 0);
             $q_liv = (int)($l['quantite_livree']?? 0);
@@ -2827,15 +2840,19 @@ async function ouvrirLivraison(cmdId,numCmd){
             </select></div>
             <div id="stockDepot${i}" style="font-size:12px;font-weight:700;margin-top:3px"></div>`:''}
           ${(estRouleau(l.type_article)&&(l.bobines||[]).length)?`<div style="font-size:12px;margin-top:3px;color:#075985">Bobines choisies par le GSB : <strong style="font-family:monospace">${l.bobines.map(b=>escB(b.numero)).join(', ')}</strong></div>`:''}
-          ${l.statut_ligne==='rejete'?'<span style="background:#FEE2E2;color:#991B1B;padding:2px 7px;border-radius:8px;font-size:10.5px;font-weight:700">❌ Ligne rejetée — '+l.motif_rejet+'</span>':''}
+          ${l.statut_ligne==='rejete'?'<span style="background:#FEE2E2;color:#991B1B;padding:2px 7px;border-radius:8px;font-size:10.5px;font-weight:700">❌ Ligne rejetée — '+escB(l.motif_rejet)+'</span>':''}
         </div>
         <div>
+          ${l.statut_ligne==='rejete'?`
+          <label style="font-size:12px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Qté livrée</label>
+          <input type="hidden" class="qte-liv" data-rejete="1" data-idx="${i}" data-qte="${l.quantite}" data-libelle="${escB(l.libelle)}" value="0">
+          <div style="font-size:13px;font-weight:700;color:#991B1B;padding:8px 0">0 · non livrée</div>`:`
           <label style="font-size:12px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Qté livrée *</label>
           <input type="number" class="form-control qte-liv"
-            data-idx="${i}" data-qte="${l.quantite}" data-libelle="${l.libelle}"
+            data-idx="${i}" data-qte="${l.quantite}" data-libelle="${escB(l.libelle)}"
             value="${l.qte_bobines ?? l.quantite}" min="0" step="1" onchange="checkEcart(${i})"
             style="border-radius:8px;text-align:center;font-weight:800"
-            ${l.statut_ligne==='rejete'?'disabled value="0"':''} ${l.qte_bobines!==undefined?'readonly title="Quantité issue des bobines choisies par le GSB"':''}>
+            ${l.qte_bobines!==undefined?'readonly title="Quantité issue des bobines choisies par le GSB"':''}>`}
         </div>
         <div id="motifGrp${i}" style="display:none">
           <label style="font-size:12px;font-weight:700;color:var(--warning-d);display:block;margin-bottom:4px">Motif écart *</label>
@@ -2901,7 +2918,7 @@ async function confirmerLivraison(){
     const qteLiv=parseInt(inp.value)||0;
     const qteCmd=parseInt(inp.dataset.qte)||0;
     const motifEl=document.querySelector(`.motif-ecart[data-idx="${i}"]`);
-    const motif=motifEl?motifEl.value.trim():'';
+    const motif=inp.dataset.rejete?'Ligne rejetée':(motifEl?motifEl.value.trim():'');
     if(qteLiv!==qteCmd&&!motif){inp.style.borderColor='var(--danger-d)';valid=false;}
     const depEl=document.querySelector(`.depot-liv[data-idx="${i}"]`);
     if(depEl&&qteLiv>0&&!depEl.value){depEl.style.borderColor='var(--danger-d)';sansDepot++;}
