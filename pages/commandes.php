@@ -970,8 +970,10 @@ function bdc_conso_hebdo(int $sid, string $type, string $lib, int $aid, string $
 
 // ── Bon de livraison (à partir de l'expédition) ─────────────────
 //    Imprimé par le magasin pour accompagner la marchandise ; le site le
-//    signe à l'arrivée et le joint, scanné, à sa réception.
+//    signe à l'arrivée et le joint, scanné, à sa réception. Document du
+//    magasin : le coordinateur ne l'imprime pas.
 if (isset($_GET['bl'], $_GET['id'])) {
+    if ($is_coord) { http_response_code(403); include __DIR__ . '/../templates/403.php'; exit; }
     $cmd = db_fetch_one(
         "SELECT c.*, s.nom AS site_nom, d.nom AS depot_nom,
                 CONCAT(u.prenom,' ',u.nom) AS agent,
@@ -1894,7 +1896,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
               <i class="ph-duotone ph-eye"></i>
             </button>
             <a href="?id=<?= $cmd['id'] ?>&export=1&format=pdf" target="_blank" class="btn btn-secondary btn-sm" title="Imprimer PDF" aria-label="Imprimer le bon de commande en PDF"><i class="ph ph-printer" aria-hidden="true"></i></a>
-            <?php if (in_array($cmd['statut'], ['en_cours_livraison', 'recu', 'livre'], true)): ?>
+            <?php if (!$is_coord && in_array($cmd['statut'], ['en_cours_livraison', 'recu', 'livre'], true)): ?>
             <a href="?id=<?= $cmd['id'] ?>&bl=1" target="_blank" class="btn btn-secondary btn-sm" style="white-space:nowrap" title="Imprimer le bon de livraison" aria-label="Imprimer le bon de livraison en PDF"><i class="ph ph-truck" aria-hidden="true"></i> BL</a>
             <?php endif; ?>
             <?php if(($is_gsb || ($is_gestionnaire && !$bob_a_choisir)) && $cmd['statut']==='en_attente_livraison' && (int)$cmd['nb_lignes_bobine'] > 0 && cmdbob_actif()): ?>
