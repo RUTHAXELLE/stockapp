@@ -968,6 +968,30 @@ function bdc_conso_hebdo(int $sid, string $type, string $lib, int $aid, string $
         array_merge($p, [$sid, $date_ref, $date_ref])) ?? 0);
 }
 
+// ── Bon de livraison (à partir de l'expédition) ─────────────────
+//    Imprimé par le magasin pour accompagner la marchandise ; le site le
+//    signe à l'arrivée et le joint, scanné, à sa réception.
+if (isset($_GET['bl'], $_GET['id'])) {
+    $cmd = db_fetch_one(
+        "SELECT c.*, s.nom AS site_nom, d.nom AS depot_nom,
+                CONCAT(u.prenom,' ',u.nom) AS agent,
+                CONCAT(ul.prenom,' ',ul.nom) AS expediteur_nom, ul.signature AS expediteur_signature,
+                CONCAT(ur.prenom,' ',ur.nom) AS recepteur_nom
+         FROM commandes c
+         LEFT JOIN sites s  ON s.id  = c.site_id
+         LEFT JOIN sites d  ON d.id  = c.depot_source_id
+         LEFT JOIN users u  ON u.id  = c.created_by
+         LEFT JOIN users ul ON ul.id = c.livraison_par
+         LEFT JOIN users ur ON ur.id = c.recu_par
+         WHERE c.id=?", [(int)$_GET['id']]);
+    if (!$cmd || ($site_force && (int)$cmd['site_id'] !== $site_force)) { http_response_code(404); echo 'Commande introuvable'; exit; }
+    if (!in_array($cmd['statut'], ['en_cours_livraison', 'recu', 'livre'], true)) {
+        http_response_code(409); echo "Le bon de livraison n'existe qu'une fois la commande expédiée."; exit;
+    }
+    _bl_pdf($cmd);
+    exit;
+}
+
 // ── Export bon de commande
 if (isset($_GET['export'], $_GET['id'])) {
     $cmd_id = (int)$_GET['id'];
@@ -1560,6 +1584,117 @@ function _bdc_pdf($cmd, $lignes, $voir_prix, array $ctx = []) {
     exit;
 }
 
+/** Bon de livraison PDF : ce qui a été expédié, ligne par ligne, avec les rouleaux. */
+function _bl_pdf(array $cmd): void {
+    $autoload = __DIR__ . '/../vendor/autoload.php';
+    if (!file_exists($autoload)) { header('Content-Type: text/plain'); echo 'Dompdf non installé.'; exit; }
+    require_once $autoload;
+    $e = fn($v) => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+
+    $lignes = db_fetch_all(
+        "SELECT cl.*, d.nom AS depot_nom FROM commande_lignes cl
+         LEFT JOIN sites d ON d.id = cl.depot_source_id
+         WHERE cl.commande_id=? AND COALESCE(cl.statut_ligne, '') <> 'rejete' ORDER BY cl.id", [(int)$cmd['id']]);
+    // Rouleaux expédiés, quel que soit leur sort à la réception.
+    $rouleaux = [];
+    if (cmdbob_actif()) {
+        foreach (db_fetch_all("SELECT commande_ligne_id, numero_bobine FROM commande_ligne_bobines
+                               WHERE commande_id=? ORDER BY numero_bobine", [(int)$cmd['id']]) as $r)
+            $rouleaux[(int)$r['commande_ligne_id']][] = $r['numero_bobine'];
+    }
+
+    $depots = array_values(array_unique(array_filter(array_column($lignes, 'depot_nom'))));
+    $depot  = $cmd['depot_nom'] ?: ($depots ? implode(', ', $depots) : '-');
+    $plusieurs_depots = count($depots) > 1;
+
+    $th = "background:#06033A;color:white;padding:8px 9px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;border:1px solid #1a1060";
+    $td = "padding:7px 9px;border:1px solid #d1d5db;vertical-align:middle";
+    $rows = ''; $odd = true; $tot_cmd = 0; $tot_liv = 0; $n = 0;
+    foreach ($lignes as $l) {
+        $bg  = $odd ? '#ffffff' : '#f0f4ff'; $odd = !$odd; $n++;
+        $dem = (int)$l['quantite'];
+        $liv = $l['quantite_livree'] !== null ? (int)$l['quantite_livree'] : $dem;
+        $tot_cmd += $dem; $tot_liv += $liv;
+        $detail = [];
+        if (!empty($rouleaux[(int)$l['id']])) $detail[] = 'Rouleaux : ' . $e(implode(', ', $rouleaux[(int)$l['id']]));
+        if ($plusieurs_depots && $l['depot_nom']) $detail[] = 'Dépôt : ' . $e($l['depot_nom']);
+        $obs = $liv < $dem ? ($liv === 0 ? 'Non livré' : 'Livré partiellement') . ($l['motif_ecart'] ? ' : ' . $e($l['motif_ecart']) : '') : '';
+        $rows .= "<tr>
+            <td style='background:$bg;$td;text-align:center;color:#555'>$n</td>
+            <td style='background:$bg;$td'><strong>" . $e($l['libelle']) . "</strong>"
+              . ($detail ? "<div style='font-size:9px;color:#555;margin-top:2px'>" . implode('<br>', $detail) . "</div>" : '') . "</td>
+            <td style='background:$bg;$td;text-align:center;color:#555'>" . $e($l['unite']) . "</td>
+            <td style='background:$bg;$td;text-align:center;color:#555'>$dem</td>
+            <td style='background:$bg;$td;text-align:center;font-weight:800;font-size:13px;color:" . ($liv < $dem ? '#b45309' : '#06033A') . "'>$liv</td>
+            <td style='background:$bg;$td;font-size:9px;color:#b45309'>$obs</td>
+            <td style='background:$bg;$td;width:70px'></td>
+        </tr>";
+    }
+
+    $date_exp = !empty($cmd['livraison_at']) ? date('d/m/Y H:i', strtotime($cmd['livraison_at'])) : '-';
+    $sig_exp  = !empty($cmd['expediteur_signature'])
+        ? "<img src=\"" . $e($cmd['expediteur_signature']) . "\" style=\"max-height:70px;max-width:220px;display:block;margin:0 auto 6px auto\">"
+        : "<div style='border-bottom:1px solid #ccc;height:50px;margin-bottom:8px'></div>";
+    $case = fn(string $titre, string $corps) => "<td width='33%' style='border:1.5px solid #1B75BC;padding:12px 14px;vertical-align:top'>
+        <div style='font-size:11px;font-weight:bold;color:#06033A;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin-bottom:10px'>$titre</div>$corps</td>";
+    $vide = "<div style='font-size:9px;color:#888'>Nom :</div><div style='border-bottom:1px solid #ccc;height:18px;margin-bottom:8px'></div>
+             <div style='font-size:9px;color:#888'>Date et heure :</div><div style='border-bottom:1px solid #ccc;height:18px;margin-bottom:8px'></div>
+             <div style='font-size:9px;color:#888'>Signature :</div><div style='height:44px'></div>";
+    $info = fn(string $k, string $v, string $w = '33%') => "<td width='$w' style='background:#f8f9fa;border:1px solid #e2e8f0;padding:8px 12px'>
+        <div style='font-size:9px;text-transform:uppercase;color:#888;font-weight:bold;letter-spacing:.5px'>$k</div>
+        <div style='font-size:12px;font-weight:bold;color:#06033A;margin-top:3px'>$v</div></td>";
+    $num_bl = 'BL-' . $cmd['numero_commande'];
+    $notes = trim((string)($cmd['notes_livraison'] ?? ''));
+
+    $html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>" . $e($num_bl) . "</title>
+    <style>@page { margin: 1.5cm 1.5cm 2cm 1.5cm; } * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Helvetica, Arial, sans-serif; font-size: 11px; color: #1a1a2e; }</style></head><body>
+    <table width='100%' style='border-collapse:collapse;background-color:#06033A'><tr>
+      <td style='padding:14px 18px;vertical-align:middle;width:110px'><div style='background:white;border-radius:6px;padding:5px 8px;display:inline-block'>" . pdf_logo_img('38px') . "</div></td>
+      <td style='padding:14px 18px;vertical-align:middle'>
+        <div style='color:white;font-size:17px;font-weight:bold'>BON DE LIVRAISON</div>
+        <div style='color:rgba(255,255,255,0.65);font-size:10px;margin-top:3px'>Express Multiservices CI &mdash; EMUCI &nbsp;|&nbsp; Commande interne " . $e($cmd['numero_commande']) . "</div></td>
+      <td align='right' style='padding:14px 18px;vertical-align:middle'><div style='color:#00AEEF;font-size:18px;font-weight:bold;letter-spacing:1px'>" . $e($num_bl) . "</div></td>
+    </tr></table>
+    <div style='height:5px;background-color:#1B75BC;margin-bottom:16px'></div>
+    <table width='100%' style='border-collapse:collapse;margin-bottom:14px'>
+      <tr>" . $info('Expéditeur (dépôt)', $e($depot)) . $info('Destinataire (site)', $e($cmd['site_nom'])) . $info("Date d'expédition", $date_exp) . "</tr>
+      <tr>" . $info('Expédié par', $e($cmd['expediteur_nom'] ?: '-')) . $info('Demandeur', $e($cmd['agent'] ?: '-'))
+            . $info('Quantité livrée / commandée', "$tot_liv / $tot_cmd") . "</tr>
+    </table>"
+    . ($notes !== '' ? "<div style='background:#f0f7ff;border:1px solid #bfdbfe;padding:9px 13px;margin-bottom:14px'>
+        <div style='font-size:9px;text-transform:uppercase;color:#1D4ED8;font-weight:700;letter-spacing:.5px;margin-bottom:4px'>Notes de livraison</div>
+        <div style='font-size:11px'>" . nl2br($e($notes)) . "</div></div>" : '') . "
+    <table width='100%' style='border-collapse:collapse;margin-bottom:12px'>
+      <thead><tr>
+        <th style='$th;text-align:center;width:24px'>#</th><th style='$th;text-align:left'>Article</th>
+        <th style='$th;text-align:center'>Unité</th><th style='$th;text-align:center'>Qté cmd.</th>
+        <th style='$th;text-align:center'>Qté livrée</th><th style='$th;text-align:left'>Observation</th>
+        <th style='$th;text-align:center'>Reçu (site)</th>
+      </tr></thead>
+      <tbody>$rows</tbody>
+    </table>
+    <div style='font-size:9px;color:#666;margin-bottom:6px'>À l'arrivée, le site contrôle chaque ligne, note la quantité reçue dans la dernière colonne,
+      signe ce bon et le joint (PDF) à la réception de la commande dans l'ERP.</div>
+    <table width='100%' style='border-collapse:separate;border-spacing:10px 0;margin-top:22px'><tr>"
+      . $case('Magasin (expéditeur)', "<div style='text-align:center'>$sig_exp<div style='font-size:11px;font-weight:700;color:#06033A'>"
+                . $e($cmd['expediteur_nom'] ?: '-') . "</div><div style='font-size:10px;color:#888;margin-top:3px'>$date_exp</div></div>")
+      . $case('Transporteur', $vide)
+      . $case('Site (réceptionnaire)', $vide) . "
+    </tr></table>
+    </body></html>";
+
+    $options = new \Dompdf\Options();
+    $options->set('defaultFont', 'Helvetica');
+    $options->set('isRemoteEnabled', false);
+    $dompdf = new \Dompdf\Dompdf($options);
+    $dompdf->loadHtml($html);
+    $dompdf->setPaper('A4', 'portrait');
+    $dompdf->render();
+    $dompdf->stream(preg_replace('/[^a-zA-Z0-9_-]/', '', $num_bl) . '.pdf', ['Attachment' => false]);
+    exit;
+}
+
 function _bdc_excel($cmd, $lignes, array $ctx = []) {
     $autoload = __DIR__.'/../vendor/autoload.php';
     if (!file_exists($autoload)) { header('Content-Type: text/plain'); echo 'PhpSpreadsheet non installé.'; exit; }
@@ -1759,6 +1894,9 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
               <i class="ph-duotone ph-eye"></i>
             </button>
             <a href="?id=<?= $cmd['id'] ?>&export=1&format=pdf" target="_blank" class="btn btn-secondary btn-sm" title="Imprimer PDF" aria-label="Imprimer le bon de commande en PDF"><i class="ph ph-printer" aria-hidden="true"></i></a>
+            <?php if (in_array($cmd['statut'], ['en_cours_livraison', 'recu', 'livre'], true)): ?>
+            <a href="?id=<?= $cmd['id'] ?>&bl=1" target="_blank" class="btn btn-secondary btn-sm" style="white-space:nowrap" title="Imprimer le bon de livraison" aria-label="Imprimer le bon de livraison en PDF"><i class="ph ph-truck" aria-hidden="true"></i> BL</a>
+            <?php endif; ?>
             <?php if(($is_gsb || ($is_gestionnaire && !$bob_a_choisir)) && $cmd['statut']==='en_attente_livraison' && (int)$cmd['nb_lignes_bobine'] > 0 && cmdbob_actif()): ?>
               <button class="btn btn-sm" style="background:#E0F2FE;color:#075985;border:1.5px solid #7DD3FC;white-space:nowrap" onclick="ouvrirBobines(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>',<?= $bob_a_choisir ? 'false' : 'true' ?>)"><i class="ph ph-film-strip" aria-hidden="true"></i> <?= $bob_a_choisir ? 'Choisir les bobines' : 'Bobines choisies' ?></button>
             <?php endif; ?>
