@@ -104,6 +104,10 @@ function _groupes_def(): array {
                 ['label'=>'Commandes', 'icon'=>'ph-shopping-cart',
                  'url'=>'pages/commandes.php','active_keys'=>['commandes'],
                  'perm'=>['commandes','can_read'], 'ou_fonction'=>FONCTION_MAGASIN],
+                ['label'=>'Archives des BL', 'icon'=>'ph-archive',
+                 'url'=>'pages/commandes_bl.php','active_keys'=>['commandes_bl'],
+                 'perm'=>['commandes','can_read'], 'ou_fonction'=>FONCTION_MAGASIN,
+                 'roles_exclude'=>['coordinateur_site']],
             ],
         ],
 

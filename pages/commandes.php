@@ -20,8 +20,9 @@ require_once __DIR__ . '/../includes/referentiels.php';
 require_once __DIR__ . '/../includes/commande_bobines.php';
 require_once __DIR__ . '/../includes/reception_commande.php';
 require_once __DIR__ . '/../includes/articles_equipements.php';
-// Bon de livraison joint par le coordinateur à la réception.
+// Bon de livraison joint par le coordinateur à la réception, archivé en base.
 require_once __DIR__ . '/../includes/upload.php';
+require_once __DIR__ . '/../includes/commande_bl.php';
 
 require_auth();
 
@@ -665,6 +666,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             $maj = db_query("UPDATE commandes SET statut='recu',recu_par=?,recu_at=NOW(),bl_reception=?
                              WHERE id=? AND statut='en_cours_livraison'",[$user['id'],$up['filename'],$cmd_id]);
             if ($maj->rowCount() !== 1) throw new Exception('Cette commande vient déjà d\'être réceptionnée.');
+            // BL signé archivé dans la base (le disque de Render est effacé à
+            // chaque déploiement) ; le fichier temporaire est supprimé après.
+            $bl_en_base = blc_disponible();
+            if ($bl_en_base) blc_enregistrer($cmd_id, UPLOAD_BL_DIR . $up['filename'], $up['filename'], (int)$user['id']);
             // Quantités reçues et écarts d'abord : les rouleaux non reçus
             // sortent de la liste 'assigne' et ne passent donc pas au site.
             $nb_ecarts_rec = $plan_rec ? rcp_appliquer($cmd_id, $plan_rec, (int)$user['id']) : 0;
@@ -729,6 +734,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 rcp_notifier_ecarts($cmd, $nb_ecarts_rec,
                     (bool)array_filter($plan_rec, fn($p) => !empty($p['bobines_manquantes'])));
             db_commit();
+            // Archivé en base : la copie sur le disque (publique par son adresse) part.
+            if ($bl_en_base) upload_delete($up['filename'], 'bl');
             $msg = sprintf(
                 'Réception confirmée ✅ | Articles: %d | Rivets: %d | PMMA: %d',
                 $nb_art, $nb_riv, $nb_pmma
@@ -819,7 +826,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
              WHERE c.id=?", [$cmd_id]
         );
         if (!$det) json_response(false,'Commande introuvable.');
-        $det['bl_reception_url'] = !empty($det['bl_reception']) ? upload_url($det['bl_reception'], 'bl') : null;
+        // BL signé : lu par pages/commandes_bl.php (contrôle d'accès), plus par
+        // son adresse dans uploads/. « perdu » : déposé avant l'archivage en
+        // base et effacé depuis (redéploiement Render).
+        $_bl_base = blc_disponible() && db_fetch_value("SELECT 1 FROM commande_bl WHERE commande_id=?", [$cmd_id]);
+        $det['bl_etat'] = blc_etat($det, (bool)$_bl_base);
+        $det['bl_reception_url'] = in_array($det['bl_etat'], ['base', 'disque'], true) ? 'commandes_bl.php?id=' . $cmd_id : null;
         $lgns = db_fetch_all("SELECT * FROM commande_lignes WHERE commande_id=? ORDER BY id", [$cmd_id]);
         $bob = cmdbob_par_ligne($cmd_id);
         $bob_recu = cmdbob_par_ligne($cmd_id, 'recu');
@@ -2239,6 +2251,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
           <div id="detail-bl-box" style="background:#f0fdf4;border-radius:10px;padding:10px 13px;border:1px solid #bbf7d0;display:none">
             <div style="font-size:12px;text-transform:uppercase;color:#15803d;font-weight:700;letter-spacing:.5px;margin-bottom:3px">Bon de livraison reçu</div>
             <a id="detail-bl-link" href="#" target="_blank" rel="noopener" style="font-size:13px;font-weight:700;color:#15803d;text-decoration:underline"><i class="ph ph-file-pdf" aria-hidden="true"></i> Ouvrir le PDF</a>
+            <div id="detail-bl-perdu" style="font-size:12.5px;color:#b91c1c;display:none">Fichier perdu : déposé avant l'archivage en base.</div>
           </div>
           <div id="detail-notes-box" style="background:#f0f7ff;border-radius:10px;padding:10px 13px;border:1px solid #bfdbfe;grid-column:span 2;display:none">
             <div style="font-size:12px;text-transform:uppercase;color:#1D4ED8;font-weight:700;letter-spacing:.5px;margin-bottom:3px">Notes / Observations</div>
@@ -2396,8 +2409,11 @@ async function voirDetail(id, numero, versEcarts) {
   } else { fBox.style.display = 'none'; }
 
   const blBox = document.getElementById('detail-bl-box');
-  if (cmd.bl_reception_url) {
-    document.getElementById('detail-bl-link').href = cmd.bl_reception_url;
+  if (cmd.bl_reception_url || cmd.bl_etat === 'perdu') {
+    const blLien = document.getElementById('detail-bl-link');
+    blLien.style.display = cmd.bl_reception_url ? '' : 'none';
+    if (cmd.bl_reception_url) blLien.href = cmd.bl_reception_url;
+    document.getElementById('detail-bl-perdu').style.display = cmd.bl_reception_url ? 'none' : '';
     blBox.style.display = '';
   } else { blBox.style.display = 'none'; }
 
