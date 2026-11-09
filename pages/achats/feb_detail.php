@@ -21,8 +21,7 @@ $row = $feb_id ? db_fetch_one("SELECT * FROM feb WHERE id=?", [$feb_id]) : null;
 // avec lecture sur achats_suivi (RAF/DAF/PDG, gestionnaire stock) voit aussi
 // tout : c'est déjà ce que suivi_achats.php lui montre, sans filtre de
 // périmètre — le lien « Voir » qu'il y ouvre ne doit pas le rediriger.
-$voit_tout = in_array($user['role_slug'] ?? '', ['admin', 'superadmin', 'superviseur_achat'], true)
-    || can('achats_suivi', 'can_read');
+$voit_tout = ach_est_acheteur($user) || can('achats_suivi', 'can_read');
 if (!$row || (!$voit_tout && (int)$row['demandeur_id'] !== (int)$user['id'])) {
     header('Location: ' . APP_URL . '/pages/achats/mes_feb.php');
     exit;

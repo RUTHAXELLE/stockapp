@@ -318,9 +318,9 @@ function rcp_notifier_ecarts(array $cmd, int $nb, bool $avec_rouleaux): void {
     $site  = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$cmd['site_id']]) ?? '';
     $titre = "⚠️ Écart de réception — {$cmd['numero_commande']}";
     $msg   = "$site a réceptionné la commande avec $nb manque(s) : à remettre en stock, renvoyer ou passer en perte.";
-    $roles = ['gestionnaire_stock', 'admin', 'superadmin'];
-    if ($avec_rouleaux) $roles[] = 'gestionnaire_stock_bobines';
-    foreach ($roles as $r) rcp_notifier_role($r, $titre, $msg, '/pages/commandes.php');
+    // Magasin (option de la matrice) et admins ; le GSB si des rouleaux manquent.
+    foreach (users_fonction(FONCTION_MAGASIN) as $uid) notif_create('info', $titre, $msg, $uid, '/pages/commandes.php');
+    if ($avec_rouleaux) rcp_notifier_role('gestionnaire_stock_bobines', $titre, $msg, '/pages/commandes.php');
 }
 
 /**

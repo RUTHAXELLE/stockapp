@@ -12,7 +12,8 @@ require_once __DIR__ . '/../../includes/achats.php';
 
 require_auth();
 $user = current_user();
-require_permission('achats', 'can_update');
+// Page réservée à l'acheteur (option Acheteur de la matrice) : le droit
+// achats.can_update n'est plus exigé en plus, il sert aux visas.
 // Étapes 2 à 4 du processus : réservées au service Achats. Le droit
 // can_update sur « achats » ne suffit pas à distinguer un acheteur d'un
 // valideur (RAF/DAF/PDG l'ont aussi, pour mes_visas.php).
@@ -203,10 +204,10 @@ $demandeurs  = db_fetch_all(
      FROM feb f JOIN users u ON u.id = f.demandeur_id
      WHERE f.statut IN ('soumise','prise_en_charge') ORDER BY nom"
 );
-$acheteurs_possibles = $is_admin ? db_fetch_all(
+$_ids_acheteurs = $is_admin ? users_fonction(FONCTION_ACHETEUR) : [];
+$acheteurs_possibles = $_ids_acheteurs ? db_fetch_all(
     "SELECT u.id, CONCAT(u.prenom,' ',u.nom) AS nom FROM users u
-     JOIN roles r ON r.id = u.role_id
-     WHERE r.slug IN ('superviseur_achat','admin','superadmin') AND u.actif=1
+     WHERE u.id IN (" . implode(',', $_ids_acheteurs) . ")
      ORDER BY nom"
 ) : [];
 

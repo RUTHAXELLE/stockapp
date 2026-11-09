@@ -17,7 +17,7 @@ $peut_creer = ach_peut_creer($user);
 // que les siennes, plus celles qu'il a endossées comme N+1 (créées par
 // quelqu'un d'autre de son département) — filtre serveur, jamais côté
 // affichage.
-$voit_tout = in_array($user['role_slug'] ?? '', ['admin', 'superadmin', 'superviseur_achat'], true);
+$voit_tout = ach_est_acheteur($user);
 $est_n1    = ach_est_n1_quelque_part((int)$user['id']);
 $_SESSION['groupe_actif'] = 'ACHATS';
 $page_title  = 'Mes FEB';

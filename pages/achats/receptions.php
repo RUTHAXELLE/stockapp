@@ -22,7 +22,8 @@ $uid  = (int)$user['id'];
 
 // Étapes 1 et 2 : même profil (achats_suivi.can_create), décision du
 // 2026-08-23 — ce n'est plus le N+1, qui n'intervient qu'à l'étape 3.
-$can_magasin = can('achats_suivi', 'can_create');
+// Option « Magasin » de la matrice : mêmes étapes, sans le droit achats_suivi.
+$can_magasin = can('achats_suivi', 'can_create') || droit_fonction(FONCTION_MAGASIN);
 
 $is_admin        = in_array($user['role_slug'] ?? '', ['admin', 'superadmin'], true);
 $departements_n1 = ach_departements_n1($uid);
@@ -39,9 +40,9 @@ $can_dept_reception = $is_admin || !empty($departements_n1);
 // Étape 3, visibilité seule (statut, pas d'action) : le service Achats la
 // voit pour suivre où en est chaque expédition, sans pouvoir la confirmer
 // à la place du département destinataire.
-$peut_voir_etape3 = can('achats_suivi', 'can_read') || $can_dept_reception;
+$peut_voir_etape3 = can('achats_suivi', 'can_read') || $can_magasin || $can_dept_reception;
 
-if (!can('achats_suivi', 'can_read') && !$can_dept_reception) {
+if (!can('achats_suivi', 'can_read') && !$can_magasin && !$can_dept_reception) {
     http_response_code(403);
     include __DIR__ . '/../../templates/403.php';
     exit;

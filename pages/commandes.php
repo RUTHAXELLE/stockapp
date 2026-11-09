@@ -32,13 +32,15 @@ $active_page = 'commandes';
 
 $is_coord      = $role_slug === 'coordinateur_site';
 $is_superviseur = in_array($role_slug, ['superviseur_operation','admin','superadmin']);
-$is_gestionnaire = in_array($role_slug, ['admin','superadmin','gestionnaire_stock','superviseur_achat']);
+// Magasin : option « Magasin » de la matrice (onglet Achats), cf. droit_fonction().
+$is_gestionnaire = droit_fonction(FONCTION_MAGASIN, $user);
 // GSB : choisit les bobines des lignes « bobine » avant l'expédition.
 $is_gsb        = in_array($role_slug, ['gestionnaire_stock_bobines','admin','superadmin']);
 $voir_prix     = !$is_coord; // coordinateur ne voit pas les prix
 
 $site_force    = ($is_coord && $user['site_id']) ? (int)$user['site_id'] : 0;
-require_permission('commandes', 'can_read');
+// Le magasin (option de la matrice) ouvre la page même sans commandes.can_read.
+if (!$is_gestionnaire) require_permission('commandes', 'can_read');
 $can_create    = can('commandes', 'can_create');
 $sites_list    = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
 // Dépôts depuis lesquels le gestionnaire expédie (entrepôt, magasin) —
@@ -194,10 +196,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                      "Votre commande a été validée par le superviseur et est en cours de préparation.",
                      '/pages/commandes.php']);
             }
-            $gests = db_fetch_all(
-                "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id
-                 WHERE r.slug IN ('gestionnaire_stock','superviseur_achat','admin','superadmin') AND u.actif=1"
-            );
+            $gests = array_map(fn($id) => ['id' => $id], users_fonction(FONCTION_MAGASIN));
             foreach ($gests as $g) {
                 db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
                     [$g['id'],'info',"📦 Commande {$cmd['numero_commande']} à préparer",
@@ -387,9 +386,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             if (($err = cmdbob_controle($l, $choix)) !== null) throw new Exception($err);
             $reste = cmdbob_lignes_a_choisir($cmd_id);
             if ($reste === 0) {
-                foreach (db_fetch_all(
-                    "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id
-                     WHERE r.slug IN ('gestionnaire_stock','superviseur_achat') AND u.actif=1") as $g) {
+                foreach (array_map(fn($id) => ['id' => $id], users_fonction(FONCTION_MAGASIN, false)) as $g) {
                     db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
                         [$g['id'], 'info', "🎞️ Commande {$l['numero_commande']} : bobines choisies",
                          "Le GSB a choisi les bobines — la commande peut être expédiée.", '/pages/commandes.php']);
@@ -1115,7 +1112,7 @@ if ($f_statut)    { $where[] = 'c.statut=?';  $params[] = $f_statut; }
 $ordre_statuts = match (true) {
     $role_slug === 'coordinateur_site'
         => ['en_cours_livraison', 'modification_demandee', 'en_attente', 'en_attente_livraison'],
-    in_array($role_slug, ['gestionnaire_stock', 'gestionnaire_stock_bobines', 'superviseur_achat'], true)
+    $role_slug === 'gestionnaire_stock_bobines' || ($is_gestionnaire && !in_array($role_slug, ['admin', 'superadmin'], true))
         => ['en_attente_livraison', 'en_cours_livraison', 'en_attente', 'modification_demandee'],
     default
         => ['en_attente', 'modification_demandee', 'en_attente_livraison', 'en_cours_livraison'],

@@ -221,7 +221,7 @@ function notif_check_fin_cycles(): int {
  * héritées de la scission consommables → articles, plus alimentées par les écrans.
  */
 function notif_check_stock_bas(): int {
-    $magasin   = _notif_users(['admin','superadmin','gestionnaire_stock','superviseur_achat']);
+    $magasin   = users_fonction(FONCTION_MAGASIN);
     $operation = _notif_users(['admin','superadmin','superviseur_operation']);
     $coord     = fn($site_id) => _notif_users(['coordinateur_site'], (int)$site_id);
     $fmt       = fn($v) => rtrim(rtrim(number_format((float)$v, 2, ',', ' '), '0'), ',');

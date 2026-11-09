@@ -103,7 +103,7 @@ function _groupes_def(): array {
                  'perm'=>['tracabilite_endommagements','can_read']],
                 ['label'=>'Commandes', 'icon'=>'ph-shopping-cart',
                  'url'=>'pages/commandes.php','active_keys'=>['commandes'],
-                 'perm'=>['commandes','can_read']],
+                 'perm'=>['commandes','can_read'], 'ou_fonction'=>FONCTION_MAGASIN],
             ],
         ],
 
@@ -384,12 +384,10 @@ function _groupes_def(): array {
                  'roles_exclude'=>['lecteur']],
                 ['label'=>'File d\'attente Achats', 'icon'=>'ph-queue',
                  'url'=>'pages/achats/file_attente.php','active_keys'=>['achats_file_attente'],
-                 'perm'=>['achats','can_update'],
-                 // can_update sur `achats` est aussi porté par les valideurs
-                 // (visa, mes_visas.php) — cf. ach_est_acheteur() dans
-                 // includes/achats.php : ils n'ouvrent plus la page (403),
-                 // exclus ici en plus pour ne pas leur laisser un lien mort.
-                 'roles_exclude'=>['raf','daf','directeur_general','lecteur']],
+                 // Réservée à l'acheteur : option « Acheteur » de la matrice
+                 // (achats_acheteur), et non can_update sur `achats`, porté
+                 // aussi par les valideurs (visa, mes_visas.php).
+                 'fonction'=>FONCTION_ACHETEUR],
                 ['label'=>'Mes visas',             'icon'=>'ph-signature',
                  'url'=>'pages/achats/mes_visas.php','active_keys'=>['achats_mes_visas'],
                  'perm'=>['achats','can_update'], 'ou_n1'=>true],
@@ -402,7 +400,7 @@ function _groupes_def(): array {
                 // (raf/daf/lecteur) voit l'ecran meme sans pouvoir confirmer.
                 ['label'=>'Réceptions',            'icon'=>'ph-package',
                  'url'=>'pages/achats/receptions.php','active_keys'=>['achats_receptions'],
-                 'perm'=>['achats_suivi','can_read'], 'ou_n1'=>true],
+                 'perm'=>['achats_suivi','can_read'], 'ou_n1'=>true, 'ou_fonction'=>FONCTION_MAGASIN],
                 ['label'=>'Stock par département', 'icon'=>'ph-buildings',
                  'url'=>'pages/achats/stock_departements.php','active_keys'=>['achats_stock_departements'],
                  'perm'=>['achats_suivi','can_read'], 'ou_n1'=>true],
@@ -415,7 +413,8 @@ function _groupes_def(): array {
                 // sa propre bascule.
                 ['label'=>'Commandes', 'icon'=>'ph-shopping-cart',
                  'url'=>'pages/commandes.php','active_keys'=>['commandes'],
-                 'perm'=>['commandes','can_read'], 'recette_only'=>true],
+                 'perm'=>['commandes','can_read'], 'recette_only'=>true, 'ou_magasin_hors_groupes'=>true,
+                 'ou_fonction'=>FONCTION_MAGASIN],
                 ['label'=>"File d'attente équipements", 'icon'=>'ph-desktop-tower',
                  'url'=>'pages/achats/equipements_attente.php','active_keys'=>['achats_equipements_attente'],
                  'perm'=>['achats_suivi','can_read'], 'ou_n1'=>true],
@@ -592,6 +591,11 @@ function get_groupe_nav_items(string $slug): array {
             if (!$autorise && !empty($item['ou_role']) && in_array($role, (array)$item['ou_role'], true)) {
                 $autorise = true;
             }
+            // Bypass fonction (option Acheteur / Magasin de la matrice) —
+            // réplique droit_fonction() du gate réel de la page.
+            if (!$autorise && !empty($item['ou_fonction']) && $user) {
+                $autorise = droit_fonction($item['ou_fonction'], $user);
+            }
             // Bypass sous-rôle support_it — réplique is_support_it_with() du
             // gate réel de la page (ex. validation_stock_matin.php : support_it
             // avec le sous-rôle 'gestionnaire_bobines').
@@ -600,6 +604,8 @@ function get_groupe_nav_items(string $slug): array {
             }
             if (!$autorise) continue;
         }
+        // Item réservé à une fonction (option Acheteur / Magasin de la matrice).
+        if (!empty($item['fonction']) && !($user && droit_fonction($item['fonction'], $user))) continue;
         // Filtre rôles exclus (blacklist)
         if (!empty($item['roles_exclude']) && in_array($role, $item['roles_exclude'])) continue;
         // Tableau de bord sans aucun bloc pour ce rôle (ex. un rôle limité aux
@@ -627,7 +633,13 @@ function get_groupe_nav_items(string $slug): array {
         // Item ajouté uniquement pour compenser un groupe masqué en mode
         // recette (cf. 'Commandes' dans ACHATS) — inutile et redondant en
         // production, où ce groupe reste accessible normalement.
-        if (!empty($item['recette_only']) && !(defined('RECETTE_ACHATS') && RECETTE_ACHATS)) continue;
+        // Exception : l'option Magasin donne accès aux commandes internes ; si
+        // le rôle n'a pas le groupe STOCK (dont l'entrée « Commandes » s'ouvre
+        // au magasin), l'entrée apparaît dans Achats.
+        if (!empty($item['recette_only']) && !(defined('RECETTE_ACHATS') && RECETTE_ACHATS)) {
+            $hors_groupes = !in_array('STOCK', get_groupes_pour_role($role), true);
+            if (!(!empty($item['ou_magasin_hors_groupes']) && $hors_groupes && $user && droit_fonction(FONCTION_MAGASIN, $user))) continue;
+        }
         $items[] = $item;
     }
     return $items;

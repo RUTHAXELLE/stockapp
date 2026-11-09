@@ -84,11 +84,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 [$id, $user['id'], "⚠️ Litige signalé par {$user['prenom']} {$user['nom']} : $notes"]);
 
             // Notifier TOUS les gestionnaires de stock + admins
-            $gestionnaires = db_fetch_all(
-                "SELECT u.id, u.email, u.prenom FROM users u
-                 JOIN roles r ON r.id=u.role_id
-                 WHERE r.slug IN ('gestionnaire_stock','admin','superadmin') AND u.actif=1"
-            );
+            $_ids_mag = users_fonction(FONCTION_MAGASIN);
+            $gestionnaires = $_ids_mag ? db_fetch_all(
+                "SELECT u.id, u.email, u.prenom FROM users u WHERE u.id IN (" . implode(',', $_ids_mag) . ")"
+            ) : [];
             $article = $rec['conso_lib'] ?? $rec['equip_num'] ?? 'Article inconnu';
             $titre   = "⚠️ Litige réception — {$rec['site_nom']} : $article";
             $msg     = "Le coordinateur du site <strong>{$rec['site_nom']}</strong> a signalé un litige sur la réception de <strong>$article</strong>.<br><br>"
@@ -351,7 +350,7 @@ include __DIR__ . '/../templates/header.php';
             <?php
             $role = $user['role_slug'];
             $peut_receptionner = $is_coord; // seul le coordinateur réceptionne
-            $peut_traiter_litige = !$is_coord && in_array($role, ['gestionnaire_stock','admin','superadmin']);
+            $peut_traiter_litige = !$is_coord && droit_fonction(FONCTION_MAGASIN, $user);
             ?>
 
             <?php if($r['statut']==='en_attente' && $peut_receptionner): ?>

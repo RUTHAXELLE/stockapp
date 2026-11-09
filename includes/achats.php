@@ -61,9 +61,12 @@ function ach_peut_creer(?array $user = null): bool {
 //
 //    Un administrateur reste inclus — il doit pouvoir débloquer une FEB
 //    dont l'acheteur est absent (réattribution, réouverture).
+//
+//    Option « Acheteur » de la matrice (module achats_acheteur, droit
+//    Modifier), attribuable à n'importe quel rôle ; superviseur_achat en
+//    repli tant que la migration n'est pas passée — cf. droit_fonction().
 function ach_est_acheteur(?array $user = null): bool {
-    $user = $user ?? current_user();
-    return in_array($user['role_slug'] ?? '', ['superviseur_achat', 'admin', 'superadmin'], true);
+    return droit_fonction(FONCTION_ACHETEUR, $user ?? current_user());
 }
 
 // ── Barrière d'écran pour les pages réservées au service Achats. Même
@@ -519,10 +522,7 @@ function ach_creer_feb(array $user, ?int $feb_id, array $entete, array $lignes, 
                 // la FEB va directement à la file d'attente Achats — type
                 // 'info', seul type applicatif autorisé par la contrainte
                 // d'énumération sur notifications.type.
-                $achats = db_fetch_all(
-                    "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id
-                     WHERE r.slug='superviseur_achat' AND u.actif=1"
-                );
+                $achats = array_map(fn($id) => ['id' => $id], users_fonction(FONCTION_ACHETEUR, false));
                 foreach ($achats as $a) {
                     db_query(
                         "INSERT INTO notifications (user_id, type, titre, message, lien) VALUES (?, 'info', 'Nouvelle FEB', ?, ?)",
@@ -1453,9 +1453,7 @@ function ach_endosser_n1(int $feb_id, array $user, bool $accepte, string $commen
     audit_log($uid, 'UPDATE', 'achats', $feb_id, 'Endossée par le supérieur hiérarchique — transmise aux Achats');
     ach_notifier_demandeur_feb($feb_id, "Votre FEB {$feb['numero']} a été endossée par votre supérieur hiérarchique et transmise aux Achats.");
 
-    $achats = db_fetch_all(
-        "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug='superviseur_achat' AND u.actif=1"
-    );
+    $achats = array_map(fn($id) => ['id' => $id], users_fonction(FONCTION_ACHETEUR, false));
     foreach ($achats as $a) {
         db_query(
             "INSERT INTO notifications (user_id, type, titre, message, lien) VALUES (?, 'info', 'Nouvelle FEB', ?, ?)",

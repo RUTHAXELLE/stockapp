@@ -67,6 +67,10 @@ $modules = [
     'achats_dashboard'   => ['<i class="ph ph-gauge" aria-hidden="true"></i>', 'Dashboard Achats', 'ACHATS'],
     'achats_param'       => ['<i class="ph ph-sliders-horizontal" aria-hidden="true"></i>', 'Paramétrage achats', 'ACHATS'],
     'achats_suivi'       => ['<i class="ph ph-truck" aria-hidden="true"></i>', 'Suivi achats (DA/BC)', 'ACHATS'],
+    // Fonctions métier, droit « Modifier » (cf. droit_fonction(),
+    // includes/session.php) — sql/migration_achats_droits_acheteur_magasin.sql.
+    'achats_acheteur'    => ['<i class="ph ph-user-gear" aria-hidden="true"></i>', 'Acheteur : traitement des FEB (Modifier)', 'ACHATS'],
+    'achats_magasin'     => ['<i class="ph ph-warehouse" aria-hidden="true"></i>', 'Magasin : expédition des commandes, réceptions (Modifier)', 'ACHATS'],
     // Ordre + regroupement alignés sur le menu Informatique
     // (includes/groupes_config.php) : Interventions, Rapport journalier,
     // Affectations IT, Transfert équipement. 'affectations' gouverne aussi

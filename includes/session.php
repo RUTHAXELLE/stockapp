@@ -222,6 +222,52 @@ function can(string $module, string $droit = 'can_read'): bool {
     return _check_permission_db($user['role_id'], $module, $droit);
 }
 
+// ── Fonctions métier attribuées par la matrice des permissions (onglet
+//    Achats) : « Modifier » coché sur le module = la fonction est exercée.
+//    Anciennement codées en dur par rôle ; ces rôles restent le repli tant
+//    que sql/migration_achats_droits_acheteur_magasin.sql n'est pas passée
+//    (aucune ligne du module en base).
+const FONCTION_ACHETEUR = 'achats_acheteur';   // prise en charge des FEB, offres, validation
+const FONCTION_MAGASIN  = 'achats_magasin';    // expédition des commandes internes, réceptions
+const FONCTIONS_ROLES_REPLI = [
+    FONCTION_ACHETEUR => ['superviseur_achat'],
+    FONCTION_MAGASIN  => ['gestionnaire_stock', 'superviseur_achat'],
+];
+
+function _fonction_en_base(string $module): bool {
+    static $cache = [];
+    if (!array_key_exists($module, $cache)) {
+        $cache[$module] = (bool)db_fetch_value("SELECT COUNT(*) FROM permissions WHERE module=?", [$module]);
+    }
+    return $cache[$module];
+}
+
+/** L'utilisateur (connecté par défaut) exerce-t-il cette fonction ? Admin et superadmin : toujours. */
+function droit_fonction(string $module, ?array $user = null): bool {
+    $user = $user ?? current_user();
+    if (!$user) return false;
+    $role = $user['role_slug'] ?? '';
+    if (in_array($role, ['admin', 'superadmin'], true)) return true;
+    if (_fonction_en_base($module)) return _check_permission_db((int)$user['role_id'], $module, 'can_update');
+    return in_array($role, FONCTIONS_ROLES_REPLI[$module] ?? [], true);
+}
+
+/** Utilisateurs actifs qui exercent la fonction (pour les notifications), admins inclus si demandé. */
+function users_fonction(string $module, bool $avec_admins = true): array {
+    $admins = $avec_admins ? " OR r.slug IN ('admin','superadmin')" : '';
+    if (_fonction_en_base($module)) {
+        $sql = "SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id
+                 WHERE u.actif = 1 AND (EXISTS (SELECT 1 FROM permissions p
+                       WHERE p.role_id = u.role_id AND p.module = ? AND p.can_update = 1)$admins)";
+        return array_map('intval', array_column(db_fetch_all($sql, [$module]), 'id'));
+    }
+    $roles = FONCTIONS_ROLES_REPLI[$module] ?? [];
+    if (!$roles) return [];
+    $sql = "SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id
+             WHERE u.actif = 1 AND (r.slug IN (" . implode(',', array_fill(0, count($roles), '?')) . ")$admins)";
+    return array_map('intval', array_column(db_fetch_all($sql, $roles), 'id'));
+}
+
 /**
  * L'utilisateur est-il N+1 d'un département auquel appartient au moins un
  * gestionnaire de stock ?
