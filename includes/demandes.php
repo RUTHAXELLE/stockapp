@@ -344,8 +344,14 @@ function di_notify_role(string $roleCode, string $message, ?int $demandeId = nul
 function di_creer(array $user, string $typeCode, array $champs, bool $soumettre, string $priorite = 'normal'): int {
     $type = di_type($typeCode);
     if (!$type) throw new Exception('Type de demande invalide.');
-    if ($typeCode === 'exceptionnel' && trim($champs['motif'] ?? '') === '') {
-        throw new Exception('Le motif est obligatoire pour une demande exceptionnelle.');
+    // Le champ « Motif » du formulaire exceptionnel est devenu « Description /
+    // Justification » (clé description) en juillet 2026 : le contrôle cherchait
+    // encore « motif » et refusait toute demande exceptionnelle, brouillon
+    // compris. Exigé à la soumission seulement ; « motif » reste lu pour les
+    // brouillons d'avant le changement.
+    if ($typeCode === 'exceptionnel' && $soumettre
+        && trim((string)($champs['description'] ?? $champs['motif'] ?? '')) === '') {
+        throw new Exception('La description / justification est obligatoire pour une demande exceptionnelle.');
     }
     $workflow = di_workflow($typeCode);
     $now = date('Y-m-d H:i:s');
