@@ -50,6 +50,18 @@ $sites_list    = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY n
 $depots_list   = db_fetch_all("SELECT id,nom,type FROM sites WHERE type IN ('entrepot','magasin') AND actif=1 ORDER BY type, nom");
 // Types de ligne débités d'un dépôt choisi à l'expédition.
 const CMD_TYPES_DEPOT = ['article', 'pmma', 'rivet'];
+// Types de ligne acceptés à la création (ceux du formulaire, « autre » =
+// saisie libre). Un type inconnu échappait
+// à toutes les règles de stock (rcp_cle_stock() renvoie null) sans erreur.
+const CMD_TYPES_LIGNE = ['article', 'autre', 'bobine', 'vignette', 'pmma', 'rivet',
+                         'equipement_informatique', 'equipement_operationnel'];
+// Décisions du superviseur sur une ligne.
+const CMD_DECISIONS_LIGNE = ['valide', 'rejete', 'modification_demandee'];
+
+// Commande lisible par l'utilisateur : le coordinateur, son site seulement.
+function cmd_visible(?array $cmd, int $site_force): bool {
+    return $cmd && (!$site_force || (int)$cmd['site_id'] === $site_force);
+}
 
 // ============================================================
 //  AJAX
@@ -66,7 +78,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $lignes_raw = $_POST['lignes'] ?? '[]';
         $lignes     = json_decode($lignes_raw, true);
         if (!$site_id)     json_response(false,'Site obligatoire.');
-        if (empty($lignes)) json_response(false,'Ajoutez au moins un article.');
+        if (empty($lignes) || !is_array($lignes)) json_response(false,'Ajoutez au moins un article.');
+        foreach ($lignes as $l) {
+            $lib = trim((string)($l['libelle'] ?? '')) ?: 'une ligne';
+            if (!in_array($l['type'] ?? 'article', CMD_TYPES_LIGNE, true))
+                json_response(false, "Type d'article inconnu pour « $lib ».");
+            if (!is_numeric($l['quantite'] ?? null) || (int)$l['quantite'] < 1)
+                json_response(false, "Quantité invalide pour « $lib » : au moins 1.");
+            if ($voir_prix && (int)($l['prix_unitaire'] ?? 0) < 0)
+                json_response(false, "Prix invalide pour « $lib ».");
+        }
 
         // Une seule commande en attente de validation à la fois, par site : sans
         // ce garde-fou un chef de site pouvait empiler les commandes non validées
@@ -77,21 +98,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // sans cette exemption, une commande issue d'une FEB reste en attente
         // et bloque tout tiers qui veut ensuite créer sa propre commande
         // manuelle sur le même site.
-        if (!in_array($user['role_slug'] ?? '', ['admin','superadmin'], true)) {
-            $en_cours = db_fetch_one(
-                "SELECT numero_commande FROM commandes
-                  WHERE site_id=? AND statut='en_attente' AND feb_id IS NULL ORDER BY id DESC LIMIT 1",
-                [$site_id]
-            );
-            if ($en_cours) {
-                json_response(false,
-                    "La commande {$en_cours['numero_commande']} de ce site attend encore sa validation. "
-                  . "Elle doit être validée ou rejetée avant d'en créer une nouvelle.");
-            }
-        }
-
         db_begin();
         try {
+            // Contrôlé sous verrou du site : hors transaction, un double clic
+            // créait deux commandes en attente pour le même site.
+            db_query("SELECT id FROM sites WHERE id=? FOR UPDATE", [$site_id]);
+            if (!in_array($user['role_slug'] ?? '', ['admin','superadmin'], true)) {
+                $en_cours = db_fetch_one(
+                    "SELECT numero_commande FROM commandes
+                      WHERE site_id=? AND statut='en_attente' AND feb_id IS NULL ORDER BY id DESC LIMIT 1",
+                    [$site_id]
+                );
+                if ($en_cours) {
+                    throw new Exception(
+                        "La commande {$en_cours['numero_commande']} de ce site attend encore sa validation. "
+                      . "Elle doit être validée ou rejetée avant d'en créer une nouvelle.");
+                }
+            }
             $num = ach_numero_commande();
             db_query(
                 "INSERT INTO commandes (numero_commande,site_id,statut,notes,created_by) VALUES (?,?,'en_attente',?,?)",
@@ -106,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                      (commande_id,type_article,article_id,libelle,quantite,unite,prix_unitaire,statut_ligne)
                      VALUES (?,?,?,?,?,?,?,'en_attente')",
                     [$cmd_id, $l['type']??'article', $art_id,
-                     $l['libelle']??'', (int)($l['quantite']??1), $l['unite']??'unité',
+                     $l['libelle']??'', (int)$l['quantite'], $l['unite']??'unité',
                      $voir_prix ? (int)($l['prix_unitaire']??0) : 0]
                 );
             }
@@ -137,6 +160,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         $cmd = db_fetch_one("SELECT * FROM commandes WHERE id=? AND statut='en_attente'", [$cmd_id]);
         if (!$cmd) json_response(false,'Commande introuvable ou déjà traitée.');
+        if (!is_array($lignes_val)) json_response(false, 'Données invalides.');
+
+        // Une décision connue pour CHAQUE ligne de la commande : une valeur
+        // libre était enregistrée telle quelle, et une ligne oubliée restait
+        // « en attente » puis partait à l'expédition comme validée.
+        $decisions = [];
+        foreach ($lignes_val as $l) {
+            if (!in_array($l['statut_ligne'] ?? '', CMD_DECISIONS_LIGNE, true))
+                json_response(false, "Décision inconnue pour « " . ($l['libelle'] ?? 'une ligne') . " ».");
+            $decisions[(int)($l['ligne_id'] ?? 0)] = true;
+        }
+        foreach (db_fetch_all("SELECT id, libelle FROM commande_lignes WHERE commande_id=?", [$cmd_id]) as $_ld)
+            if (!isset($decisions[(int)$_ld['id']]))
+                json_response(false, "Aucune décision pour « {$_ld['libelle']} » : rechargez la page et recommencez.");
 
         // Vérifier qu'au moins une ligne reçoit une vraie décision (validée
         // ou renvoyée pour correction — un rejet seul reste possible mais ne
@@ -147,11 +184,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         db_begin();
         try {
+            // Le statut est repris dans le verrou : la commande a pu être
+            // annulée ou validée par un autre entre la lecture et ici.
+            if (!db_fetch_value("SELECT id FROM commandes WHERE id=? AND statut='en_attente' FOR UPDATE", [$cmd_id]))
+                throw new Exception('Commande introuvable ou déjà traitée.');
             foreach ($lignes_val as $l) {
-                $sl     = $l['statut_ligne'] ?? 'valide';
+                $sl     = $l['statut_ligne'];
                 $motif  = trim($l['motif_rejet'] ?? '');
-                if ($sl === 'rejete' && !$motif) json_response(false,"Motif de rejet obligatoire pour la ligne \"{$l['libelle']}\".");
-                if ($sl === 'modification_demandee' && !$motif) json_response(false,"Précisez ce qui doit être corrigé pour la ligne \"{$l['libelle']}\".");
+                if ($sl === 'rejete' && !$motif) throw new Exception("Motif de rejet obligatoire pour la ligne \"{$l['libelle']}\".");
+                if ($sl === 'modification_demandee' && !$motif) throw new Exception("Précisez ce qui doit être corrigé pour la ligne \"{$l['libelle']}\".");
                 db_query(
                     "UPDATE commande_lignes SET statut_ligne=?, motif_rejet=?, motif_modification=? WHERE id=? AND commande_id=?",
                     [$sl, $sl === 'rejete' ? ($motif ?: null) : null, $sl === 'modification_demandee' ? ($motif ?: null) : null,
@@ -477,19 +518,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         }
         unset($_l);
 
+        // La base fait foi : quantité commandée, article et type de chaque
+        // ligne. L'écran ne fournit que ce qui part (quantité, motif, dépôt).
+        $lignes_db = array_column(
+            db_fetch_all("SELECT * FROM commande_lignes WHERE commande_id=?", [$cmd_id]), null, 'id');
+        $vus = [];
+        foreach ($lignes_liv as &$_l) {
+            $ldb = $lignes_db[(int)($_l['ligne_id'] ?? 0)] ?? null;
+            if (!$ldb) json_response(false, 'Ligne inconnue dans cette commande : rechargez la page et recommencez.');
+            $vus[(int)$ldb['id']] = true;
+            $_l['quantite']   = (int)$ldb['quantite'];
+            $_l['article_id'] = $ldb['article_id'];
+            $_l['libelle']    = $ldb['libelle'];
+            $_l['unite']      = $ldb['unite'];
+            if (!is_numeric($_l['quantite_livree'] ?? null)) json_response(false, "Quantité livrée manquante pour « {$ldb['libelle']} ».");
+            $_l['quantite_livree'] = (int)$_l['quantite_livree'];
+            if ($_l['quantite_livree'] < 0) json_response(false, "Quantité livrée négative pour « {$ldb['libelle']} ».");
+            // Plafond : la quantité commandée. Les lignes bobine en sont
+            // exemptées : leur livré vient des rouleaux choisis par le GSB,
+            // qui peuvent être entamés et dépasser un peu la commande.
+            if (!cmdbob_est_rouleau($ldb['type_article']) && $_l['quantite_livree'] > (int)$ldb['quantite'])
+                json_response(false, "« {$ldb['libelle']} » : livré {$_l['quantite_livree']}, plus que commandé ({$ldb['quantite']}).");
+        }
+        unset($_l);
+        // Chaque ligne non rejetée doit être renseignée : une ligne omise
+        // partait sans être ni débitée ni signalée.
+        foreach ($lignes_db as $ldb)
+            if (!isset($vus[(int)$ldb['id']]) && $ldb['statut_ligne'] !== 'rejete')
+                json_response(false, "« {$ldb['libelle']} » n'est pas renseignée : rechargez la page et recommencez.");
+
         foreach ($lignes_liv as $l) {
-            $q_cmd = (int)($l['quantite']      ?? 0);
-            $q_liv = (int)($l['quantite_livree']?? 0);
+            $q_cmd = (int)$l['quantite'];
+            $q_liv = (int)$l['quantite_livree'];
             if ($q_liv != $q_cmd && empty($l['motif_ecart'])) {
                 json_response(false,"Justification obligatoire pour \"{$l['libelle']}\" (commandé: $q_cmd, livré: $q_liv).");
             }
         }
 
-        // type_article vient de la base, pas du JSON envoyé par le client :
-        // la vérité sur ce qui doit être débité d'un dépôt ne doit pas
-        // dépendre de ce qu'un appel AJAX forgé prétendrait.
-        $lignes_db = array_column(
-            db_fetch_all("SELECT * FROM commande_lignes WHERE commande_id=?", [$cmd_id]), null, 'id');
         $type_article_map = array_column($lignes_db, 'type_article', 'id');
         // PMMA et rivets viennent d'un dépôt réel (Entrepôt ou Stock-Siège,
         // au choix du gestionnaire qui sait physiquement d'où il expédie) :
@@ -518,8 +583,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             // puis échoue ici, avant d'avoir débité le dépôt.
             $maj = db_query("UPDATE commandes SET statut='en_cours_livraison' WHERE id=? AND statut='en_attente_livraison'", [$cmd_id]);
             if ($maj->rowCount() !== 1) throw new Exception('Cette commande vient déjà d\'être expédiée.');
-            // Créer bon de distribution
-            $num_dist = 'DS-'.date('Ymd').'-'.str_pad(rand(1,999),3,'0',STR_PAD_LEFT);
+            // Bon de distribution : un par expédition de commande, numéroté
+            // d'après elle — le tirage au hasard (rand 1-999 par jour) heurtait
+            // l'index unique dès quelques dizaines d'expéditions.
+            $num_dist = 'DS-' . $cmd['numero_commande'];
             db_query(
                 "INSERT INTO distributions_site (numero_distribution,commande_id,site_id,date_distribution,statut,notes,created_by,expedie_at)
                  VALUES (?,?,?,?,'en_cours_livraison',?,?,NOW())",
@@ -536,15 +603,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 'feb_ligne_id', 'id'
             );
 
-            $manques = [];   // stock magasin insuffisant, dit et non absorbé
             foreach ($lignes_liv as $l) {
-                $q_liv = (int)($l['quantite_livree'] ?? $l['quantite']);
+                $q_liv = (int)$l['quantite_livree'];
                 db_query(
                     "UPDATE commande_lignes SET quantite_livree=?,motif_ecart=? WHERE id=? AND commande_id=?",
                     [$q_liv, $l['motif_ecart']??null, (int)$l['ligne_id'], $cmd_id]
                 );
                 $feb_ligne_id = $feb_ligne_map[(int)$l['ligne_id']] ?? null;
-                if ($feb_ligne_id && $q_liv !== (int)($l['quantite'] ?? 0)) {
+                if ($feb_ligne_id && $q_liv !== (int)$l['quantite']) {
                     db_query("UPDATE feb_lignes SET quantite=? WHERE id=?", [$q_liv, $feb_ligne_id]);
                     audit_log($user['id'], 'UPDATE', 'achats', $feb_ligne_id,
                         "Quantité ajustée à $q_liv (écart de livraison de la commande {$cmd['numero_commande']})");
@@ -621,11 +687,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                      "Votre commande est en route. Confirmez la réception à l'arrivée.",
                      '/pages/commandes.php']);
             }
-            $ecart_magasin = $manques ? ' — stock magasin insuffisant : ' . implode(' ; ', $manques) : '';
-            audit_log($user['id'],'UPDATE','commandes',$cmd_id,"Livraison émise — bon $num_dist$ecart_magasin");
+            audit_log($user['id'],'UPDATE','commandes',$cmd_id,"Livraison émise — bon $num_dist");
             db_commit();
-            json_response(true, 'Livraison émise. Coordinateur notifié.'
-                . ($manques ? ' Attention — ' . implode(' ; ', $manques) . '.' : ''));
+            json_response(true, 'Livraison émise. Coordinateur notifié.');
         } catch(Exception $e){ db_rollback(); json_response(false,$e->getMessage()); }
     }
 
@@ -804,8 +868,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         }
         $cmd    = db_fetch_one("SELECT * FROM commandes WHERE id=? AND statut='en_attente'",[$cmd_id]);
         if (!$cmd) json_response(false,'Seules les commandes en attente peuvent être annulées.');
-        if ($is_coord && $cmd['site_id'] != $site_force) json_response(false,'Accès refusé.');
-        db_query("UPDATE commandes SET statut='annule' WHERE id=?",[$cmd_id]);
+        // Qui annule : le coordinateur du site, l'auteur de la commande, un
+        // superviseur ou un administrateur — plus tout profil qui lit la page.
+        $peut_annuler = $is_coord ? (int)$cmd['site_id'] === $site_force
+                                  : ($is_superviseur || (int)$cmd['created_by'] === (int)$user['id']);
+        if (!$peut_annuler) json_response(false,'Accès refusé.');
+        // Sous condition du statut : une validation faite entre-temps l'emporte.
+        $maj = db_query("UPDATE commandes SET statut='annule' WHERE id=? AND statut='en_attente'",[$cmd_id]);
+        if ($maj->rowCount() !== 1) json_response(false,"Cette commande vient d'être traitée : elle ne peut plus être annulée.");
         audit_log($user['id'],'UPDATE','commandes',$cmd_id,"Commande annulée");
         json_response(true,'Commande annulée.');
     }
@@ -825,7 +895,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
              LEFT JOIN feb f    ON f.id  = c.feb_id
              WHERE c.id=?", [$cmd_id]
         );
-        if (!$det) json_response(false,'Commande introuvable.');
+        if (!cmd_visible($det, $site_force)) json_response(false,'Commande introuvable.');
         // BL signé : lu par pages/commandes_bl.php (contrôle d'accès), plus par
         // son adresse dans uploads/. « perdu » : déposé avant l'archivage en
         // base et effacé depuis (redéploiement Render).
@@ -833,6 +903,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $det['bl_etat'] = blc_etat($det, (bool)$_bl_base);
         $det['bl_reception_url'] = in_array($det['bl_etat'], ['base', 'disque'], true) ? 'commandes_bl.php?id=' . $cmd_id : null;
         $lgns = db_fetch_all("SELECT * FROM commande_lignes WHERE commande_id=? ORDER BY id", [$cmd_id]);
+        // Le coordinateur ne voit pas les prix (cf. $voir_prix).
+        if (!$voir_prix) foreach ($lgns as &$_l) unset($_l['prix_unitaire']);
+        unset($_l);
         $bob = cmdbob_par_ligne($cmd_id);
         $bob_recu = cmdbob_par_ligne($cmd_id, 'recu');
         foreach ($lgns as &$_l) {
@@ -855,12 +928,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     // ── Charger lignes commande (pour modals)
     if ($action === 'get_lignes') {
         $cmd_id = (int)($_POST['cmd_id'] ?? 0);
+        if (!cmd_visible(db_fetch_one("SELECT site_id FROM commandes WHERE id=?", [$cmd_id]), $site_force))
+            json_response(false, 'Commande introuvable.');
         $lignes = db_fetch_all("SELECT cl.*, a.stock_global AS stock_central FROM commande_lignes cl
             LEFT JOIN articles a ON a.id=cl.article_id WHERE cl.commande_id=? ORDER BY cl.id", [$cmd_id]);
         $bob = cmdbob_par_ligne($cmd_id);
         foreach ($lignes as &$_l) {
             $_l['bobines'] = cmdbob_est_rouleau($_l['type_article']) ? ($bob[(int)$_l['id']] ?? []) : [];
             if ($_l['bobines']) $_l['qte_bobines'] = cmdbob_qte_livree($_l, $_l['bobines']);
+            // Le coordinateur ne voit ni les prix ni le stock central.
+            if (!$voir_prix) unset($_l['prix_unitaire'], $_l['stock_central']);
         }
         unset($_l);
         json_response(true,'', $lignes);
@@ -1023,7 +1100,7 @@ if (isset($_GET['export'], $_GET['id'])) {
          WHERE c.id=?", [$cmd_id]
     );
     $lignes = db_fetch_all("SELECT * FROM commande_lignes WHERE commande_id=? ORDER BY id", [$cmd_id]);
-    if (!$cmd) { echo "Commande introuvable"; exit; }
+    if (!cmd_visible($cmd, $site_force)) { http_response_code(404); echo "Commande introuvable"; exit; }
 
     // Charger données contextuelles selon le type_article de chaque ligne
     $ctx = [];
