@@ -40,9 +40,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     $type      = trim($_POST['type_code'] ?? '');
     $champs    = $_POST['champs'] ?? [];
     $soumettre = ($_POST['action'] ?? '') === 'soumettre';
+    $brouillon_id = (int)($_POST['demande_id'] ?? 0);
     if (!is_array($champs)) $champs = [];
     try {
-        $id = di_creer($user, $type, $champs, $soumettre);
+        // Brouillon repris : mis à jour (et soumis si demandé), pas recréé.
+        if ($brouillon_id) { di_maj_brouillon($brouillon_id, $user, $champs, $soumettre); $id = $brouillon_id; }
+        else $id = di_creer($user, $type, $champs, $soumettre);
         json_response(true, $soumettre ? 'Demande soumise.' : 'Brouillon enregistré.', ['id' => $id]);
     } catch (Exception $e) {
         json_response(false, $e->getMessage());
@@ -51,6 +54,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
 $types = di_types_actifs();
 $sel   = trim($_GET['type'] ?? '');
+// Reprise d'un brouillon : son auteur seulement, tant qu'il n'est pas soumis.
+$brouillon = null;
+if (!empty($_GET['id'])) {
+    $brouillon = di_get((int)$_GET['id']);
+    if (!$brouillon || (int)$brouillon['demandeur_id'] !== (int)$user['id'] || $brouillon['statut'] !== 'brouillon') {
+        redirect_to('/pages/demandes.php');
+        exit;
+    }
+    $sel = $brouillon['type_code'];
+}
 $sel_type = $sel !== '' ? di_type($sel) : null;
 
 // Vérifier si l'utilisateur a un département assigné
@@ -271,11 +284,15 @@ include __DIR__ . '/../templates/header.php';
     $fields = di_champs_of($sel);
     $wf     = di_workflow($sel);
 ?>
+  <?php if ($brouillon): ?>
+  <a href="<?= APP_URL ?>/pages/demandes.php?id=<?= (int)$brouillon['id'] ?>" class="di-back"><i class="ph-bold ph-arrow-left"></i> Retour au brouillon</a>
+  <?php else: ?>
   <a href="<?= APP_URL ?>/pages/demandes_new.php" class="di-back"><i class="ph-bold ph-arrow-left"></i> Changer de type</a>
+  <?php endif; ?>
   <div class="di-head">
     <div class="ic"><i class="ph-duotone ph-file-text"></i></div>
     <div>
-      <h2><?= h($type['label']) ?></h2>
+      <h2><?= h($type['label']) ?><?= $brouillon ? ' — brouillon ' . h($brouillon['numero']) : '' ?></h2>
       <p><?= h($type['description']) ?></p>
     </div>
   </div>
@@ -289,10 +306,11 @@ include __DIR__ . '/../templates/header.php';
 
   <form class="di-form" id="di-form" onsubmit="return false">
     <input type="hidden" name="type_code" value="<?= h($sel) ?>">
+    <?php if ($brouillon): ?><input type="hidden" name="demande_id" value="<?= (int)$brouillon['id'] ?>"><?php endif; ?>
     <!-- role=alert : l'échec de soumission est annoncé, pas seulement affiché.
          aria-live=assertive parce qu'il interrompt une action volontaire. -->
     <div class="di-alert" id="di-err" role="alert" aria-live="assertive"></div>
-    <?= di_render_form($fields) ?>
+    <?= di_render_form($fields, $brouillon['champs'] ?? []) ?>
     <?php if ($sel === 'autorisation_absence'): ?>
       <!-- Masquée tant qu'aucun type de permission n'impose sa durée. Elle
            explique le verrouillage plutôt que de le laisser deviner. -->

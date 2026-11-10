@@ -7,6 +7,7 @@
 // ============================================================
 
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/demandes_champs.php';
 
 // ── Statuts
 const DI_STATUTS = ['brouillon','en_attente','en_cours','approuve','approuve_traitement','rejete','a_revoir'];
@@ -74,9 +75,9 @@ function di_types_actifs(): array {
 //    Source de vérité unique : Administration → Permissions (le rôle ERP = la fonction de
 //    validation). Plus de matrice « Rôles valideurs » séparée. Le N+1 n'est pas ici : il est
 //    résolu par le N+1 du département du demandeur (user_departements), cf. di_can_validate().
-function di_user_roles(int $userId): array {
+function di_roles_erp_map(): array {
     // Rôle ERP (slug) → codes d'étape de circuit que ce rôle peut viser.
-    static $map = [
+    return [
         'raf'               => ['raf'],
         'daf'               => ['daf'],
         // Le rôle ERP 'gestionnaire' a été supprimé (lot 3). Le code d'étape
@@ -92,6 +93,9 @@ function di_user_roles(int $userId): array {
         'superadmin'        => ['n1', 'raf', 'daf', 'dg', 'it', 'gestionnaire'],
         'admin'             => ['n1', 'raf', 'daf', 'dg', 'it', 'gestionnaire'],
     ];
+}
+function di_user_roles(int $userId): array {
+    $map   = di_roles_erp_map();
     $slug  = db_fetch_value("SELECT r.slug FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=?", [$userId]);
     $roles = ($slug && isset($map[$slug])) ? $map[$slug] : [];
 
@@ -210,10 +214,14 @@ function di_traiter_it(array $demande, array $user, string $commentaire = '', st
     $historique[] = ['action' => 'traite_it', 'par' => $user['id'], 'nom' => $nom,
         'commentaire' => $commentaire, 'ticket_glpi' => $ticketGlpi, 'date' => $now];
 
-    db_query(
-        "UPDATE di_demandes SET traite_it=1, traite_par=?, traite_date=?, ticket_glpi=?, historique=?, updated_at=? WHERE id=?",
+    // Sous condition : de deux clôtures simultanées, une seule passe (la
+    // seconde écrasait le ticket et l'historique de la première).
+    $maj = db_query(
+        "UPDATE di_demandes SET traite_it=1, traite_par=?, traite_date=?, ticket_glpi=?, historique=?, updated_at=?
+          WHERE id=? AND traite_it=0 AND statut='approuve_traitement'",
         [$user['id'], $now, $ticketGlpi, json_encode($historique, JSON_UNESCAPED_UNICODE), $now, $demande['id']]
     );
+    if ($maj->rowCount() !== 1) throw new Exception("Cette demande vient d'être traitée par quelqu'un d'autre.");
 
     di_notify((int)$demande['demandeur_id'],
         "Le traitement IT de votre demande « {$type['label']} » est terminé — ticket GLPI n° $ticketGlpi.",
@@ -306,13 +314,17 @@ function di_can_validate(array $userRoles, int $userId, array $workflow, int $cu
     return in_array($role, $userRoles, true);
 }
 
-// ── Numéro lisible : DEM-YYYYMMDD-NNN
+// ── Numéro lisible : DEM-YYYYMMDD-NNN — dernier numéro du jour + 1 (le
+//    comptage des lignes redonnait un numéro déjà pris après une suppression).
+//    Une collision reste possible entre deux créations simultanées : di_creer()
+//    réessaie alors avec le numéro suivant.
 function di_generate_numero(): string {
     $prefix = 'DEM-' . date('Ymd') . '-';
-    $n = (int) db_fetch_value(
-        "SELECT COUNT(*) FROM di_demandes WHERE numero LIKE ?",
+    $dernier = db_fetch_value(
+        "SELECT numero FROM di_demandes WHERE numero LIKE ? ORDER BY numero DESC LIMIT 1",
         [$prefix . '%']
     );
+    $n = $dernier ? (int)substr((string)$dernier, strlen($prefix)) : 0;
     return $prefix . str_pad((string)($n + 1), 3, '0', STR_PAD_LEFT);
 }
 
@@ -324,124 +336,186 @@ function di_notify(int $userId, string $message, ?int $demandeId = null): void {
         [$userId, $message, $lien]
     );
 }
-// Notifier tous les porteurs d'un rôle de validation (di_user_roles + membres du département lié)
+
+// Administrateurs actifs (secours d'une étape sans porteur, cf. di_soumettre()).
+function di_admins(): array {
+    return array_map('intval', array_column(db_fetch_all(
+        "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug IN ('admin','superadmin') AND u.actif=1"), 'id'));
+}
+
+// Notifier tous les porteurs d'un rôle de validation : rôle ERP qui le porte
+// (cf. di_roles_erp_map() — c'est lui qui donne le droit de viser), anciens
+// droits de la table di_user_roles, membres du département lié. Les
+// administrateurs, qui visent tout, ne sont pas notifiés de chaque étape.
 function di_notify_role(string $roleCode, string $message, ?int $demandeId = null): void {
-    $notified = [];
-    foreach (db_fetch_all("SELECT user_id FROM di_user_roles WHERE role_code = ?", [$roleCode]) as $u) {
-        $uid = (int)$u['user_id'];
-        if (!in_array($uid, $notified, true)) { di_notify($uid, $message, $demandeId); $notified[] = $uid; }
+    $ids = array_column(db_fetch_all("SELECT user_id FROM di_user_roles WHERE role_code = ?", [$roleCode]), 'user_id');
+    $slugs = [];
+    foreach (di_roles_erp_map() as $slug => $codes) {
+        if (in_array($roleCode, $codes, true) && !in_array($slug, ['admin', 'superadmin'], true)) $slugs[] = $slug;
+    }
+    if ($slugs) {
+        $ids = array_merge($ids, array_column(db_fetch_all(
+            "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id
+              WHERE u.actif=1 AND r.slug IN (" . implode(',', array_fill(0, count($slugs), '?')) . ")", $slugs), 'id'));
     }
     $dept_id = db_fetch_value("SELECT departement_id FROM di_roles WHERE code=?", [$roleCode]);
     if ($dept_id) {
-        foreach (db_fetch_all("SELECT user_id FROM user_departements WHERE departement_id=?", [(int)$dept_id]) as $u) {
-            $uid = (int)$u['user_id'];
-            if (!in_array($uid, $notified, true)) { di_notify($uid, $message, $demandeId); $notified[] = $uid; }
+        $ids = array_merge($ids, array_column(db_fetch_all(
+            "SELECT user_id FROM user_departements WHERE departement_id=?", [(int)$dept_id]), 'user_id'));
+    }
+    foreach (array_unique(array_map('intval', $ids)) as $uid) di_notify($uid, $message, $demandeId);
+}
+
+// ── Département du demandeur, pour résoudre son N+1 : celui où il n'est pas
+//    lui-même N+1 d'abord (un agent membre d'OPÉRATION et N+1 d'ACHAT dépend
+//    d'OPÉRATION), puis par id — l'ancien LIMIT 1 sans ORDER BY tirait au sort.
+function di_departement_demandeur(int $userId): ?array {
+    return db_fetch_one(
+        "SELECT departement_id, is_n1 FROM user_departements WHERE user_id=? ORDER BY is_n1 ASC, departement_id ASC LIMIT 1",
+        [$userId]
+    );
+}
+
+// ── Champs obligatoires du type, contrôlés côté serveur à la soumission
+//    (le navigateur seul ne suffit pas). Mêmes champs que l'attribut
+//    required du formulaire : les plages de dates et les plateformes n'en
+//    portent pas.
+function di_verifier_champs(string $typeCode, array $champs): void {
+    if ($typeCode === 'exceptionnel' && trim((string)($champs['description'] ?? $champs['motif'] ?? '')) === '') {
+        throw new Exception('La description / justification est obligatoire pour une demande exceptionnelle.');
+    }
+    foreach (di_champs_of($typeCode) as $f) {
+        if (empty($f['required']) || in_array($f['type'] ?? 'text', ['daterange', 'plateformes'], true)) continue;
+        $v = $champs[$f['key']] ?? '';
+        if (is_array($v) ? di_value_empty($v) : trim((string)$v) === '') {
+            throw new Exception("Le champ « {$f['label']} » est obligatoire.");
         }
     }
 }
 
-// ── Créer / soumettre une demande. Retourne l'id créé.
+// ── Créer une demande (brouillon), et la soumettre si demandé. Retourne l'id.
 function di_creer(array $user, string $typeCode, array $champs, bool $soumettre, string $priorite = 'normal'): int {
     $type = di_type($typeCode);
-    if (!$type) throw new Exception('Type de demande invalide.');
-    // Le champ « Motif » du formulaire exceptionnel est devenu « Description /
-    // Justification » (clé description) en juillet 2026 : le contrôle cherchait
-    // encore « motif » et refusait toute demande exceptionnelle, brouillon
-    // compris. Exigé à la soumission seulement ; « motif » reste lu pour les
-    // brouillons d'avant le changement.
-    if ($typeCode === 'exceptionnel' && $soumettre
-        && trim((string)($champs['description'] ?? $champs['motif'] ?? '')) === '') {
-        throw new Exception('La description / justification est obligatoire pour une demande exceptionnelle.');
-    }
-    $workflow = di_workflow($typeCode);
+    if (!$type || empty($type['actif'])) throw new Exception('Type de demande invalide ou désactivé.');
+    if ($soumettre) di_verifier_champs($typeCode, $champs);
     $now = date('Y-m-d H:i:s');
     $nom = trim(($user['prenom'] ?? '') . ' ' . ($user['nom'] ?? ''));
+    // Soumise directement : l'historique commence à « soumis » (di_soumettre()).
+    $hist = $soumettre ? [] : [['action' => 'brouillon', 'par' => $user['id'], 'nom' => $nom, 'date' => $now]];
 
-    $statut  = $soumettre ? 'en_attente' : 'brouillon';
-    $etape   = $soumettre ? 0 : -1;
-    $hist    = [['action' => $soumettre ? 'soumis' : 'brouillon', 'par' => $user['id'], 'nom' => $nom, 'date' => $now]];
-
-    // Résoudre le N+1 du département du demandeur au moment de la soumission
-    $n1UserId = null;
-    if ($soumettre) {
-        $n1Row = db_fetch_one(
-            "SELECT user_id FROM user_departements
-             WHERE departement_id = (SELECT departement_id FROM user_departements WHERE user_id = ? LIMIT 1)
-               AND is_n1 = 1 AND user_id != ?
-             LIMIT 1",
-            [$user['id'], $user['id']]
-        );
-        $n1UserId = $n1Row ? (int)$n1Row['user_id'] : null;
-    }
-
-    $numero       = di_generate_numero();
-    $demandeur_site_id = $user['site_id'] ? (int)$user['site_id'] : null;
-    db_query(
-        "INSERT INTO di_demandes
-         (numero, type_code, statut, etape_actuelle, demandeur_id, n1_user_id, site_id, champs, historique, signatures,
-          workflow_snapshot, priorite, submitted_at, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        [$numero, $typeCode, $statut, $etape, $user['id'], $n1UserId, $demandeur_site_id,
-         json_encode($champs, JSON_UNESCAPED_UNICODE),
-         json_encode($hist, JSON_UNESCAPED_UNICODE),
-         '[]',
-         json_encode($workflow, JSON_UNESCAPED_UNICODE),
-         $priorite, $soumettre ? $now : null, $now, $now]
-    );
-    $id = (int) db_last_id();
-
-    if ($soumettre && $workflow) {
-        // Si le demandeur est lui-même N+1 de son département et que l'étape 0 est 'n1',
-        // l'étape est validée d'office : il n'a pas besoin de sa propre approbation.
-        if ($workflow[0]['role'] === 'n1') {
-            $submitter_is_n1 = (bool)db_fetch_value(
-                "SELECT COUNT(*) FROM user_departements WHERE user_id=? AND is_n1=1",
-                [(int)$user['id']]
+    $id = 0;
+    for ($essai = 0; $essai < 5 && !$id; $essai++) {
+        try {
+            db_query(
+                "INSERT INTO di_demandes
+                 (numero, type_code, statut, etape_actuelle, demandeur_id, n1_user_id, site_id, champs, historique, signatures,
+                  workflow_snapshot, priorite, submitted_at, created_at, updated_at)
+                 VALUES (?,?,'brouillon',-1,?,NULL,?,?,?,'[]',?,?,NULL,?,?)",
+                [di_generate_numero(), $typeCode, $user['id'], $user['site_id'] ? (int)$user['site_id'] : null,
+                 json_encode($champs, JSON_UNESCAPED_UNICODE), json_encode($hist, JSON_UNESCAPED_UNICODE),
+                 json_encode(di_workflow($typeCode), JSON_UNESCAPED_UNICODE), $priorite, $now, $now]
             );
-            if ($submitter_is_n1) {
-                $autoSig  = [['etape' => 0, 'etape_label' => $workflow[0]['label'],
-                    'user_id' => $user['id'], 'nom' => $nom,
-                    'action' => 'approuve', 'commentaire' => "Validé d'office — demandeur est N+1", 'date' => $now]];
-                $autoHist = $hist;
-                $autoHist[] = ['action' => 'valide', 'etape' => $workflow[0]['label'],
-                    'par' => $user['id'], 'nom' => $nom,
-                    'commentaire' => "Validé d'office — demandeur est N+1", 'date' => $now];
-                $next = di_next_step($workflow, 0);
-                if ($next === null) {
-                    $newStatut = !empty($type['traitement_it']) ? 'approuve_traitement' : 'approuve';
-                    $newEtape  = 0;
-                } else {
-                    $newStatut = 'en_cours';
-                    $newEtape  = $next;
-                }
-                db_query(
-                    "UPDATE di_demandes SET statut=?, etape_actuelle=?, signatures=?, historique=? WHERE id=?",
-                    [$newStatut, $newEtape, json_encode($autoSig, JSON_UNESCAPED_UNICODE),
-                     json_encode($autoHist, JSON_UNESCAPED_UNICODE), $id]
-                );
-                if ($next === null) {
-                    if (!empty($type['traitement_it'])) {
-                        di_notify((int)$user['id'], "Votre demande « {$type['label']} » est approuvée et en cours de traitement IT.", $id);
-                        di_notify_role('it', "Demande « {$type['label']} » approuvée — à traiter ($numero)", $id);
-                    } else {
-                        di_notify((int)$user['id'], "Votre demande « {$type['label']} » a été approuvée.", $id);
-                    }
-                } else {
-                    di_notify_role($workflow[$next]['role'],
-                        "Demande « {$type['label']} » en attente — étape : {$workflow[$next]['label']} ($numero)", $id);
-                }
-                return $id;
-            }
+            $id = (int) db_last_id();
+        } catch (PDOException $e) {
+            // Numéro pris entre-temps (index unique) : on réessaie avec le suivant.
+            if ($essai === 4 || !in_array((string)$e->getCode(), ['23505', '23000'], true)) throw $e;
         }
-        // Notification normale pour la première étape
-        if ($workflow[0]['role'] === 'n1' && $n1UserId) {
-            di_notify($n1UserId, "Nouvelle demande « {$type['label']} » de $nom ($numero) à valider", $id);
-        } else {
-            di_notify_role($workflow[0]['role'],
-                "Nouvelle demande « {$type['label']} » de $nom ($numero)", $id);
-        }
+    }
+    if ($soumettre) {
+        // Soumission directe refusée : pas de brouillon fantôme laissé derrière.
+        try { di_soumettre($id, $user); }
+        catch (Exception $e) { db_query("DELETE FROM di_demandes WHERE id=? AND statut='brouillon'", [$id]); throw $e; }
     }
     return $id;
+}
+
+// ── Reprendre un brouillon : met à jour ses champs, et le soumet si demandé.
+function di_maj_brouillon(int $id, array $user, array $champs, bool $soumettre): void {
+    $d = di_get($id);
+    if (!$d || (int)$d['demandeur_id'] !== (int)$user['id'] || $d['statut'] !== 'brouillon') {
+        throw new Exception("Ce brouillon est introuvable ou n'est plus modifiable.");
+    }
+    if ($soumettre) di_verifier_champs($d['type_code'], $champs);
+    $maj = db_query("UPDATE di_demandes SET champs=?, updated_at=? WHERE id=? AND statut='brouillon'",
+        [json_encode($champs, JSON_UNESCAPED_UNICODE), date('Y-m-d H:i:s'), $id]);
+    if ($maj->rowCount() !== 1) throw new Exception("Ce brouillon n'est plus modifiable.");
+    if ($soumettre) di_soumettre($id, $user);
+}
+
+// ── Soumission d'un brouillon : fige le circuit et le N+1, ouvre l'étape 0.
+function di_soumettre(int $id, array $user): void {
+    $d = di_get($id);
+    if (!$d || (int)$d['demandeur_id'] !== (int)$user['id'] || $d['statut'] !== 'brouillon') {
+        throw new Exception("Cette demande n'est plus un brouillon.");
+    }
+    $type = di_type($d['type_code']);
+    if (!$type || empty($type['actif'])) throw new Exception('Ce type de demande est désactivé.');
+    $workflow = di_workflow($d['type_code']);
+    $numero   = $d['numero'];
+    $now = date('Y-m-d H:i:s');
+    $nom = trim(($user['prenom'] ?? '') . ' ' . ($user['nom'] ?? ''));
+    $uid = (int)$user['id'];
+
+    // N+1 : celui du département du demandeur, hors lui-même.
+    $dept = di_departement_demandeur($uid);
+    $n1UserId = null;
+    if ($dept) {
+        $n1 = db_fetch_value(
+            "SELECT ud.user_id FROM user_departements ud JOIN users u ON u.id=ud.user_id AND u.actif=1
+              WHERE ud.departement_id=? AND ud.is_n1=1 AND ud.user_id<>? ORDER BY ud.user_id LIMIT 1",
+            [(int)$dept['departement_id'], $uid]);
+        $n1UserId = $n1 ? (int)$n1 : null;
+    }
+    // Validé d'office seulement s'il est N+1 de SON département, pas d'un autre.
+    $auto_n1 = $workflow && $workflow[0]['role'] === 'n1' && $dept && (int)$dept['is_n1'] === 1;
+
+    $hist = $d['historique'];
+    $hist[] = ['action' => 'soumis', 'par' => $uid, 'nom' => $nom, 'date' => $now];
+    $sigs = [];
+    $statut = 'en_attente'; $etape = $workflow ? 0 : -1;
+    if (!$workflow) $statut = !empty($type['traitement_it']) ? 'approuve_traitement' : 'approuve';
+    if ($auto_n1) {
+        $sigs[] = ['etape' => 0, 'etape_label' => $workflow[0]['label'], 'user_id' => $uid, 'nom' => $nom,
+                   'action' => 'approuve', 'commentaire' => "Validé d'office — demandeur est N+1", 'date' => $now];
+        $hist[] = ['action' => 'valide', 'etape' => $workflow[0]['label'], 'par' => $uid, 'nom' => $nom,
+                   'commentaire' => "Validé d'office — demandeur est N+1", 'date' => $now];
+        $next = di_next_step($workflow, 0);
+        if ($next === null) { $statut = !empty($type['traitement_it']) ? 'approuve_traitement' : 'approuve'; $etape = 0; }
+        else                { $statut = 'en_cours'; $etape = $next; }
+    }
+
+    $maj = db_query(
+        "UPDATE di_demandes SET statut=?, etape_actuelle=?, n1_user_id=?, workflow_snapshot=?, signatures=?, historique=?,
+                submitted_at=?, updated_at=? WHERE id=? AND statut='brouillon'",
+        [$statut, $etape, $n1UserId, json_encode($workflow, JSON_UNESCAPED_UNICODE), json_encode($sigs, JSON_UNESCAPED_UNICODE),
+         json_encode($hist, JSON_UNESCAPED_UNICODE), $now, $now, $id]);
+    if ($maj->rowCount() !== 1) throw new Exception("Cette demande vient d'être soumise.");
+
+    // Notifications
+    if (in_array($statut, ['approuve', 'approuve_traitement'], true)) {
+        if ($statut === 'approuve_traitement') {
+            di_notify($uid, "Votre demande « {$type['label']} » est approuvée et en cours de traitement IT.", $id);
+            di_notify_role('it', "Demande « {$type['label']} » approuvée — à traiter ($numero)", $id);
+        } else {
+            di_notify($uid, "Votre demande « {$type['label']} » a été approuvée.", $id);
+        }
+        return;
+    }
+    $role = $workflow[$etape]['role'];
+    if ($role === 'n1' && !$n1UserId) {
+        // Aucun N+1 désigné pour le département : les administrateurs, qui
+        // peuvent viser à sa place, sont prévenus, et le demandeur aussi.
+        foreach (di_admins() as $a) {
+            if ($a !== $uid) di_notify($a, "Demande « {$type['label']} » de $nom ($numero) : aucun N+1 désigné pour son département — visa N+1 à donner par un administrateur.", $id);
+        }
+        di_notify($uid, "Aucun N+1 n'est désigné pour votre département : votre demande « {$type['label']} » ($numero) est transmise aux administrateurs pour le visa N+1.", $id);
+    } elseif ($role === 'n1') {
+        di_notify($n1UserId, "Nouvelle demande « {$type['label']} » de $nom ($numero) à valider", $id);
+    } else {
+        di_notify_role($role, $etape === 0
+            ? "Nouvelle demande « {$type['label']} » de $nom ($numero)"
+            : "Demande « {$type['label']} » en attente — étape : {$workflow[$etape]['label']} ($numero)", $id);
+    }
 }
 
 // ── Charge une demande (décode les colonnes JSON)
@@ -459,85 +533,115 @@ function di_workflow_of(array $demande): array {
     return !empty($demande['workflow_snapshot']) ? $demande['workflow_snapshot'] : di_workflow($demande['type_code']);
 }
 
+// ── Verrouille la demande et la relit, dans la transaction de l'appelant :
+//    une décision se prend sur l'état réel, pas sur une lecture d'avant.
+function di_verrouiller(int $id): ?array {
+    db_query("SELECT id FROM di_demandes WHERE id=? FOR UPDATE", [$id]);
+    return di_get($id);
+}
+
 // ── Valider l'étape courante
 function di_valider(array $demande, array $user, string $commentaire = ''): void {
-    $wf = di_workflow_of($demande);
-    $cur = (int)$demande['etape_actuelle'];
-    $n1Id = isset($demande['n1_user_id']) && $demande['n1_user_id'] ? (int)$demande['n1_user_id'] : null;
-    if (!di_can_validate(di_user_roles((int)$user['id']), (int)$user['id'], $wf, $cur, (int)$demande['demandeur_id'], $n1Id)) {
-        throw new Exception("Vous ne pouvez pas valider cette étape.");
-    }
-    if (!in_array($demande['statut'], ['en_attente','en_cours'], true)) {
-        throw new Exception("Cette demande ne peut plus être validée.");
-    }
-    $type = di_type($demande['type_code']);
-    $stepLabel = $wf[$cur]['label'];
-    $next = di_next_step($wf, $cur);
-    $now = date('Y-m-d H:i:s');
-    $nom = trim(($user['prenom'] ?? '') . ' ' . ($user['nom'] ?? ''));
-
-    $signatures = $demande['signatures'];
-    $signatures[] = ['etape' => $cur, 'etape_label' => $stepLabel, 'user_id' => $user['id'],
-        'nom' => $nom, 'action' => 'approuve', 'commentaire' => $commentaire, 'date' => $now];
-    $historique = $demande['historique'];
-    $historique[] = ['action' => 'valide', 'etape' => $stepLabel, 'par' => $user['id'],
-        'nom' => $nom, 'commentaire' => $commentaire, 'date' => $now];
-
-    if ($next === null) {
-        $statut = !empty($type['traitement_it']) ? 'approuve_traitement' : 'approuve';
-        $etape  = $cur;
-    } else {
-        $statut = 'en_cours';
-        $etape  = $next;
-    }
-
-    db_query(
-        "UPDATE di_demandes SET statut=?, etape_actuelle=?, signatures=?, historique=?, updated_at=? WHERE id=?",
-        [$statut, $etape, json_encode($signatures, JSON_UNESCAPED_UNICODE),
-         json_encode($historique, JSON_UNESCAPED_UNICODE), $now, $demande['id']]
-    );
-
-    if ($next === null) {
-        if (!empty($type['traitement_it'])) {
-            di_notify((int)$demande['demandeur_id'], "Votre demande « {$type['label']} » est approuvée et en cours de traitement IT.", (int)$demande['id']);
-            di_notify_role('it', "Demande « {$type['label']} » approuvée — à traiter ({$demande['numero']})", (int)$demande['id']);
-        } else {
-            di_notify((int)$demande['demandeur_id'], "Votre demande « {$type['label']} » a été approuvée.", (int)$demande['id']);
+    db_begin();
+    try {
+        // Relue sous verrou : deux visas simultanés s'écrasaient (signature
+        // perdue, étape sautée par un double clic).
+        $demande = di_verrouiller((int)$demande['id']);
+        if (!$demande) throw new Exception('Demande introuvable.');
+        if (!in_array($demande['statut'], ['en_attente','en_cours'], true)) {
+            throw new Exception("Cette demande ne peut plus être validée.");
         }
-    } else {
-        di_notify((int)$demande['demandeur_id'], "Étape « $stepLabel » validée pour votre demande « {$type['label']} ».", (int)$demande['id']);
-        di_notify_role($wf[$next]['role'], "Demande « {$type['label']} » en attente — étape : {$wf[$next]['label']} ({$demande['numero']})", (int)$demande['id']);
-    }
+        $wf = di_workflow_of($demande);
+        $cur = (int)$demande['etape_actuelle'];
+        $n1Id = isset($demande['n1_user_id']) && $demande['n1_user_id'] ? (int)$demande['n1_user_id'] : null;
+        if (!di_can_validate(di_user_roles((int)$user['id']), (int)$user['id'], $wf, $cur, (int)$demande['demandeur_id'], $n1Id)) {
+            throw new Exception("Vous ne pouvez pas valider cette étape.");
+        }
+        $type = di_type($demande['type_code']);
+        $stepLabel = $wf[$cur]['label'];
+        $next = di_next_step($wf, $cur);
+        $now = date('Y-m-d H:i:s');
+        $nom = trim(($user['prenom'] ?? '') . ' ' . ($user['nom'] ?? ''));
+
+        $signatures = $demande['signatures'];
+        $signatures[] = ['etape' => $cur, 'etape_label' => $stepLabel, 'user_id' => $user['id'],
+            'nom' => $nom, 'action' => 'approuve', 'commentaire' => $commentaire, 'date' => $now];
+        $historique = $demande['historique'];
+        $historique[] = ['action' => 'valide', 'etape' => $stepLabel, 'par' => $user['id'],
+            'nom' => $nom, 'commentaire' => $commentaire, 'date' => $now];
+
+        if ($next === null) {
+            $statut = !empty($type['traitement_it']) ? 'approuve_traitement' : 'approuve';
+            $etape  = $cur;
+        } else {
+            $statut = 'en_cours';
+            $etape  = $next;
+        }
+
+        db_query(
+            "UPDATE di_demandes SET statut=?, etape_actuelle=?, signatures=?, historique=?, updated_at=? WHERE id=?",
+            [$statut, $etape, json_encode($signatures, JSON_UNESCAPED_UNICODE),
+             json_encode($historique, JSON_UNESCAPED_UNICODE), $now, $demande['id']]
+        );
+
+        if ($next === null) {
+            if (!empty($type['traitement_it'])) {
+                di_notify((int)$demande['demandeur_id'], "Votre demande « {$type['label']} » est approuvée et en cours de traitement IT.", (int)$demande['id']);
+                di_notify_role('it', "Demande « {$type['label']} » approuvée — à traiter ({$demande['numero']})", (int)$demande['id']);
+            } else {
+                di_notify((int)$demande['demandeur_id'], "Votre demande « {$type['label']} » a été approuvée.", (int)$demande['id']);
+            }
+        } else {
+            di_notify((int)$demande['demandeur_id'], "Étape « $stepLabel » validée pour votre demande « {$type['label']} ».", (int)$demande['id']);
+            if ($wf[$next]['role'] === 'n1' && empty($demande['n1_user_id'])) {
+                foreach (di_admins() as $a) di_notify($a, "Demande « {$type['label']} » ({$demande['numero']}) : aucun N+1 désigné — visa N+1 à donner par un administrateur.", (int)$demande['id']);
+            } else {
+                di_notify_role($wf[$next]['role'], "Demande « {$type['label']} » en attente — étape : {$wf[$next]['label']} ({$demande['numero']})", (int)$demande['id']);
+            }
+        }
+        db_commit();
+    } catch (Exception $e) { db_rollback(); throw $e; }
 }
 
 // ── Rejeter l'étape courante
 function di_rejeter(array $demande, array $user, string $motif): void {
-    $wf = di_workflow_of($demande);
-    $cur = (int)$demande['etape_actuelle'];
-    $n1Id = isset($demande['n1_user_id']) && $demande['n1_user_id'] ? (int)$demande['n1_user_id'] : null;
-    if (!di_can_validate(di_user_roles((int)$user['id']), (int)$user['id'], $wf, $cur, (int)$demande['demandeur_id'], $n1Id)) {
-        throw new Exception("Vous ne pouvez pas rejeter cette étape.");
-    }
     if (trim($motif) === '') throw new Exception('Le motif de rejet est obligatoire.');
-    $type = di_type($demande['type_code']);
-    $stepLabel = $wf[$cur]['label'];
-    $now = date('Y-m-d H:i:s');
-    $nom = trim(($user['prenom'] ?? '') . ' ' . ($user['nom'] ?? ''));
+    db_begin();
+    try {
+        $demande = di_verrouiller((int)$demande['id']);
+        if (!$demande) throw new Exception('Demande introuvable.');
+        // Une demande approuvée garde son étape finale comme étape courante :
+        // sans ce contrôle, le valideur de cette étape pouvait encore la rejeter.
+        if (!in_array($demande['statut'], ['en_attente','en_cours'], true)) {
+            throw new Exception("Cette demande n'est plus en cours de validation : elle ne peut plus être rejetée.");
+        }
+        $wf = di_workflow_of($demande);
+        $cur = (int)$demande['etape_actuelle'];
+        $n1Id = isset($demande['n1_user_id']) && $demande['n1_user_id'] ? (int)$demande['n1_user_id'] : null;
+        if (!di_can_validate(di_user_roles((int)$user['id']), (int)$user['id'], $wf, $cur, (int)$demande['demandeur_id'], $n1Id)) {
+            throw new Exception("Vous ne pouvez pas rejeter cette étape.");
+        }
+        $type = di_type($demande['type_code']);
+        $stepLabel = $wf[$cur]['label'];
+        $now = date('Y-m-d H:i:s');
+        $nom = trim(($user['prenom'] ?? '') . ' ' . ($user['nom'] ?? ''));
 
-    $signatures = $demande['signatures'];
-    $signatures[] = ['etape' => $cur, 'etape_label' => $stepLabel, 'user_id' => $user['id'],
-        'nom' => $nom, 'action' => 'rejete', 'motif' => $motif, 'date' => $now];
-    $historique = $demande['historique'];
-    $historique[] = ['action' => 'rejete', 'etape' => $stepLabel, 'par' => $user['id'],
-        'nom' => $nom, 'motif' => $motif, 'date' => $now];
+        $signatures = $demande['signatures'];
+        $signatures[] = ['etape' => $cur, 'etape_label' => $stepLabel, 'user_id' => $user['id'],
+            'nom' => $nom, 'action' => 'rejete', 'motif' => $motif, 'date' => $now];
+        $historique = $demande['historique'];
+        $historique[] = ['action' => 'rejete', 'etape' => $stepLabel, 'par' => $user['id'],
+            'nom' => $nom, 'motif' => $motif, 'date' => $now];
 
-    db_query(
-        "UPDATE di_demandes SET statut='rejete', etape_rejet=?, signatures=?, historique=?, updated_at=? WHERE id=?",
-        [$cur, json_encode($signatures, JSON_UNESCAPED_UNICODE),
-         json_encode($historique, JSON_UNESCAPED_UNICODE), $now, $demande['id']]
-    );
-    di_notify((int)$demande['demandeur_id'],
-        "Votre demande « {$type['label']} » a été rejetée à l'étape « $stepLabel » : $motif", (int)$demande['id']);
+        db_query(
+            "UPDATE di_demandes SET statut='rejete', etape_rejet=?, signatures=?, historique=?, updated_at=? WHERE id=?",
+            [$cur, json_encode($signatures, JSON_UNESCAPED_UNICODE),
+             json_encode($historique, JSON_UNESCAPED_UNICODE), $now, $demande['id']]
+        );
+        di_notify((int)$demande['demandeur_id'],
+            "Votre demande « {$type['label']} » a été rejetée à l'étape « $stepLabel » : $motif", (int)$demande['id']);
+        db_commit();
+    } catch (Exception $e) { db_rollback(); throw $e; }
 }
 
 // ── Qui peut déposer une demande

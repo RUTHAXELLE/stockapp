@@ -190,7 +190,7 @@ function di_render_field(array $f, $value = ''): string {
            ? ' <abbr class="di-req" title="Champ obligatoire">*</abbr>' : '';
     $reqA  = !empty($f['required']) ? ' required' : '';
     $type     = $f['type'] ?? 'text';
-    $v        = h((string)$value);
+    $v        = is_scalar($value) ? h((string)$value) : '';
     $editable = !empty($f['editable_after_autofill']) ? ' data-editable="1"' : '';
 
     // Seul le contenu réellement haut pose son libellé au-dessus : sinon la

@@ -52,7 +52,9 @@ if (($_GET['export'] ?? '') === 'pdf' && !empty($_GET['id'])) {
     require_once $autoload;
     $html = di_pdf_html($d);
     $options = new \Dompdf\Options();
-    $options->set('isRemoteEnabled', true);
+    // Aucune ressource distante (signatures en data:) : le chargement distant
+    // ne servirait qu'à faire appeler une adresse par le serveur.
+    $options->set('isRemoteEnabled', false);
     $options->set('defaultFont', 'DejaVu Sans');
     $dompdf = new \Dompdf\Dompdf($options);
     $dompdf->loadHtml($html, 'UTF-8');
@@ -390,7 +392,18 @@ include __DIR__ . '/../templates/header.php';
   <div class="di-topbar">
     <a href="<?= APP_URL ?>/pages/demandes.php" class="di-btn di-btn-back"><i class="ph-duotone ph-arrow-left"></i> Retour</a>
     <a href="<?= APP_URL ?>/pages/demandes.php?export=pdf&id=<?= (int)$detail['id'] ?>" target="_blank" class="di-btn di-btn-pdf"><i class="ph-duotone ph-file-pdf"></i> PDF</a>
+    <?php if ($detail['statut'] === 'brouillon' && (int)$detail['demandeur_id'] === (int)$user['id']): ?>
+    <a href="<?= APP_URL ?>/pages/demandes_new.php?id=<?= (int)$detail['id'] ?>" class="di-btn di-btn-primary"><i class="ph-duotone ph-pencil-simple"></i> Reprendre le brouillon</a>
+    <?php endif; ?>
   </div>
+  <?php
+    $_wf_det = di_workflow_of($detail);
+    if (in_array($detail['statut'], ['en_attente','en_cours'], true) && empty($detail['n1_user_id'])
+        && (($_wf_det[(int)$detail['etape_actuelle']]['role'] ?? '') === 'n1')): ?>
+  <div style="margin:0 0 14px;padding:10px 14px;border-radius:10px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:13px">
+    <i class="ph-duotone ph-warning"></i> Aucun N+1 n'est désigné pour le département du demandeur : le visa N+1 est attendu d'un administrateur.
+  </div>
+  <?php endif; ?>
 
   <div class="di-card">
     <div style="display:flex;justify-content:space-between;align-items:start;gap:12px">
