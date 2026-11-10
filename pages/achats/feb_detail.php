@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../includes/session.php';
 require_once __DIR__ . '/../../includes/helpers.php';
 require_once __DIR__ . '/../../includes/notifications.php';
 require_once __DIR__ . '/../../includes/achats.php';
+require_once __DIR__ . '/../../includes/upload.php';
 
 require_auth();
 $user = current_user();
@@ -175,7 +176,7 @@ include __DIR__ . '/../../templates/header.php';
       <?php foreach ($pieces as $p): ?>
       <li class="feb-piece-row">
         <i class="ph ph-paperclip" aria-hidden="true"></i>
-        <a class="feb-piece-nom" href="/uploads/feb/<?= rawurlencode($p['fichier']) ?>" target="_blank"><?= h($p['nom_origine']) ?></a>
+        <a class="feb-piece-nom" href="<?= h(upload_url($p['fichier'], 'feb')) ?>" target="_blank"><?= h($p['nom_origine']) ?></a>
       </li>
       <?php endforeach; ?>
     </ul>

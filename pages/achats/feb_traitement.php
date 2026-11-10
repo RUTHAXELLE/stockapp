@@ -63,6 +63,14 @@ if (is_ajax() && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $feb = feb_charger_pour_traitement($post_feb_id, $uid);
     if (!$feb) json_response(false, "Cette FEB n'est pas (ou plus) en cours de traitement par vous.");
 
+    // Après la bascule (permise une seule fois), l'arbitrage est figé : une
+    // ligne passée en « stock » ne serait jamais servie, une ligne basculée
+    // repassée en « achat » serait achetée ET livrée par la commande interne.
+    if (in_array($action, ['arbitrer', 'arbitrer_partiel', 'tout_servir_stock'], true)
+        && db_fetch_value("SELECT id FROM commandes WHERE feb_id=?", [$post_feb_id])) {
+        json_response(false, "L'arbitrage est figé : cette FEB a déjà été basculée vers une commande interne.");
+    }
+
     if ($action === 'arbitrer') {
         $ligne_id = (int)($_POST['ligne_id'] ?? 0);
         $choix    = $_POST['choix'] ?? '';

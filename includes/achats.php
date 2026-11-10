@@ -79,6 +79,16 @@ function ach_require_acheteur(?array $user = null): void {
     }
 }
 
+// ── Qui lit une FEB (fiche, PDF) : son demandeur, son N+1, le service
+//    Achats, le suivi (achats_suivi) et les signataires du circuit
+//    (achats.can_update porte les visas). achats.can_read seul ne suffit
+//    pas : tout demandeur l'a, et lisait la FEB des autres par son id.
+function ach_peut_lire_feb(array $user, array $feb): bool {
+    $uid = (int)$user['id'];
+    if ((int)($feb['demandeur_id'] ?? 0) === $uid || (int)($feb['n1_user_id'] ?? 0) === $uid) return true;
+    return ach_est_acheteur($user) || can('achats_suivi', 'can_read') || can('achats', 'can_update');
+}
+
 // ── Lecture d'un paramètre achat_parametres, avec valeur par défaut ──
 function ach_param(string $cle, $defaut = null) {
     $v = db_fetch_value("SELECT valeur FROM achat_parametres WHERE cle = ?", [$cle]);
@@ -492,7 +502,11 @@ function ach_creer_feb(array $user, ?int $feb_id, array $entete, array $lignes, 
         $statut = 'brouillon';
         $numero = null;
         if ($soumettre) {
-            $numero = ach_numero_feb($exercice);
+            // Une FEB refusée par le N+1 revient en brouillon avec son numéro :
+            // elle le garde à la resoumission, sinon le numéro déjà cité dans
+            // les notifications et l'audit ne désignerait plus rien et la
+            // séquence aurait un trou.
+            $numero = db_fetch_value("SELECT numero FROM feb WHERE id=?", [$feb_id]) ?: ach_numero_feb($exercice);
             $montant_total = (int) db_fetch_value("SELECT COALESCE(SUM(montant_ttc),0) FROM feb_lignes WHERE feb_id=?", [$feb_id]);
 
             // Visa du supérieur hiérarchique AVANT prise en charge par les
@@ -665,11 +679,6 @@ function ach_basculer_vers_commande(int $feb_id, array $user): ?int {
     if ($feb['statut'] !== 'prise_en_charge') throw new AchValidationException("Cette FEB n'est plus en cours de traitement.");
     if (!$feb['site_id']) throw new AchValidationException('Impossible de créer la commande : aucun site renseigné sur la FEB.');
 
-    // Garde-fou : une FEB ne peut être basculée qu'une fois — contrôle sur
-    // l'existence d'une commandes portant déjà ce feb_id.
-    $deja = db_fetch_value("SELECT id FROM commandes WHERE feb_id=?", [$feb_id]);
-    if ($deja) throw new AchValidationException('Cette FEB a déjà été basculée vers une commande interne.');
-
     // article_id IS NOT NULL par sécurité redondante : une ligne en saisie
     // libre n'est jamais arbitrable côté écran, mais ne doit jamais pouvoir
     // atteindre ce point si un choix « stock » s'y glissait quand même.
@@ -686,6 +695,16 @@ function ach_basculer_vers_commande(int $feb_id, array $user): ?int {
     $transaction_locale = !$pdo->inTransaction();
     if ($transaction_locale) db_begin();
     try {
+        // Garde-fou : une FEB ne peut être basculée qu'une fois. Verrou sur la
+        // FEB puis contrôle DANS la transaction : fait avant, deux clics
+        // lisaient tous deux « aucune commande » et en créaient chacun une.
+        $verrou = db_fetch_one("SELECT statut, acheteur_id FROM feb WHERE id=? FOR UPDATE", [$feb_id]);
+        if (!$verrou || $verrou['statut'] !== 'prise_en_charge' || (int)$verrou['acheteur_id'] !== $uid) {
+            throw new AchValidationException("Cette FEB n'est plus en cours de traitement par vous.");
+        }
+        if (db_fetch_value("SELECT id FROM commandes WHERE feb_id=?", [$feb_id])) {
+            throw new AchValidationException('Cette FEB a déjà été basculée vers une commande interne.');
+        }
         $num   = ach_numero_commande();
         $notes = "Issue de la FEB {$feb['numero']} — demandeur $nom_demandeur";
         db_query(
@@ -857,7 +876,9 @@ function ach_retenir_offre_lot(int $offre_id, array $user): array {
         // un simple report proportionnel arrondi laisserait échouer ce
         // contrôle par un XOF ici ou là sans cette dernière ligne de rattrapage.
         $lignes_a_reporter = db_fetch_all(
-            "SELECT id, quantite FROM feb_lignes WHERE feb_id=? AND lot=? AND fournisseur_derogation=0 ORDER BY numero_ligne",
+            // Hors lignes servies sur stock : on ne les achète pas, et
+            // ach_verifier_comparatif() ne les compte pas non plus.
+            "SELECT id, quantite FROM feb_lignes WHERE feb_id=? AND lot=? AND fournisseur_derogation=0 AND arbitrage <> 'stock' ORDER BY numero_ligne",
             [$feb_id, $lot]
         );
         $reportees = count($lignes_a_reporter);
@@ -876,7 +897,7 @@ function ach_retenir_offre_lot(int $offre_id, array $user): array {
             }
         }
         $derogees  = (int) db_fetch_value(
-            "SELECT COUNT(*) FROM feb_lignes WHERE feb_id=? AND lot=? AND fournisseur_derogation=1",
+            "SELECT COUNT(*) FROM feb_lignes WHERE feb_id=? AND lot=? AND fournisseur_derogation=1 AND arbitrage <> 'stock'",
             [$feb_id, $lot]
         );
         ach_recalculer_montant_total($feb_id);
@@ -1323,13 +1344,18 @@ function ach_lancer_validation(int $feb_id, array $user): array {
     if ($transaction_locale) db_begin();
     try {
         $controle = ach_controle_budget($feb_id);
-        db_query(
+        $stmt_lancement = db_query(
             "UPDATE feb SET workflow_snapshot=?, etape_actuelle=0, statut='en_validation',
                     date_lancement_validation=?, signatures='[]', historique=?,
                     etape_rejet=NULL, motif_rejet=NULL, n1_user_id=?
-              WHERE id=?",
-            [json_encode($workflow, JSON_UNESCAPED_UNICODE), $now, json_encode($historique, JSON_UNESCAPED_UNICODE), $n1_user_id, $feb_id]
+              WHERE id=? AND statut='prise_en_charge' AND acheteur_id=?",
+            [json_encode($workflow, JSON_UNESCAPED_UNICODE), $now, json_encode($historique, JSON_UNESCAPED_UNICODE), $n1_user_id, $feb_id, $uid]
         );
+        // Double clic ou renvoi : le second lancement effaçait une signature
+        // déjà posée et ramenait la FEB à l'étape 0.
+        if ($stmt_lancement->rowCount() === 0) {
+            throw new AchValidationException('La validation de cette FEB est déjà lancée.');
+        }
         // Les avertissements budgétaires (mode "alerte", non bloquant) sont
         // ajoutés au message d'audit : c'est cette trace que le dashboard
         // (J9, Bloc 4) relit pour l'alerte "dépassements budgétaires".
@@ -1534,8 +1560,11 @@ function ach_viser(int $feb_id, array $user, bool $accepte, string $commentaire 
 
     if (!$accepte) {
         $stmt = db_query(
+            // statut repris dans le verrou : à la dernière étape etape_actuelle
+            // n'avance pas, et un second signataire rejetait (ou confirmait de
+            // nouveau) une FEB déjà confirmée.
             "UPDATE feb SET statut='rejetee', etape_rejet=?, motif_rejet=?, signatures=?, historique=?
-              WHERE id=? AND etape_actuelle=?",
+              WHERE id=? AND etape_actuelle=? AND statut='en_validation'",
             [$cur, $commentaire, $sigJson, $histJson, $feb_id, $cur]
         );
         if ($stmt->rowCount() === 0) return false;
@@ -1557,7 +1586,7 @@ function ach_viser(int $feb_id, array $user, bool $accepte, string $commentaire 
             $controle = ach_controle_budget($feb_id);
             $stmt = db_query(
                 "UPDATE feb SET statut='confirmee', date_confirmation=?, signatures=?, historique=?
-                  WHERE id=? AND etape_actuelle=?",
+                  WHERE id=? AND etape_actuelle=? AND statut='en_validation'",
                 [$now, $sigJson, $histJson, $feb_id, $cur]
             );
             if ($stmt->rowCount() === 0) { db_rollback(); return false; }
@@ -1600,7 +1629,7 @@ function ach_viser(int $feb_id, array $user, bool $accepte, string $commentaire 
     }
 
     $stmt = db_query(
-        "UPDATE feb SET etape_actuelle=?, signatures=?, historique=? WHERE id=? AND etape_actuelle=?",
+        "UPDATE feb SET etape_actuelle=?, signatures=?, historique=? WHERE id=? AND etape_actuelle=? AND statut='en_validation'",
         [$next, $sigJson, $histJson, $feb_id, $cur]
     );
     if ($stmt->rowCount() === 0) return false;
@@ -1837,7 +1866,7 @@ function ach_viser_affectation(int $affectation_id, array $user, bool $accepte, 
     if (!$accepte) {
         $stmt = db_query(
             "UPDATE equipement_affectations SET statut='rejetee', etape_rejet=?, motif_rejet=?, signatures=?, historique=?
-              WHERE id=? AND etape_actuelle=?",
+              WHERE id=? AND etape_actuelle=? AND statut='en_validation'",
             [$cur, $commentaire, $sigJson, $histJson, $affectation_id, $cur]
         );
         if ($stmt->rowCount() === 0) return false;
@@ -1867,7 +1896,7 @@ function ach_viser_affectation(int $affectation_id, array $user, bool $accepte, 
         // confirmation, pas ici.
         $stmt = db_query(
             "UPDATE equipement_affectations SET statut='validee', valide_le=?, signatures=?, historique=?
-              WHERE id=? AND etape_actuelle=?",
+              WHERE id=? AND etape_actuelle=? AND statut='en_validation'",
             [$now, $sigJson, $histJson, $affectation_id, $cur]
         );
         if ($stmt->rowCount() === 0) return false;
@@ -1897,7 +1926,7 @@ function ach_viser_affectation(int $affectation_id, array $user, bool $accepte, 
 
     $stmt = db_query(
         "UPDATE equipement_affectations SET etape_actuelle=?, signatures=?, historique=?
-          WHERE id=? AND etape_actuelle=?",
+          WHERE id=? AND etape_actuelle=? AND statut='en_validation'",
         [$next, $sigJson, $histJson, $affectation_id, $cur]
     );
     if ($stmt->rowCount() === 0) return false;
@@ -2177,17 +2206,22 @@ function ach_receptionner(int $suivi_id, int $quantite, string $date, ?string $b
     if (!empty($ligne['cloture_reliquat'])) throw new AchValidationException('Ce reliquat est clôturé — aucune réception supplémentaire possible.');
 
     $commandee = (int)$ligne['quantite_commandee'];
-    $recue     = (int)$ligne['quantite_recue'];
-    $reste     = $commandee - $recue;
-    // Message chiffré (point 8) : pas une saisie corrigée en silence.
-    if ($quantite > $reste) {
-        throw new AchValidationException("Quantité reçue supérieure au reste à recevoir (reste $reste, saisi $quantite).");
-    }
 
     $pdo = get_db();
     $transaction_locale = !$pdo->inTransaction();
     if ($transaction_locale) db_begin();
     try {
+        // Reçu relu SOUS VERROU : lu avant la transaction, deux réceptions
+        // simultanées (double clic) passaient toutes deux le contrôle du
+        // reste, créditaient le stock deux fois et écrasaient le cumul.
+        $verrou = db_fetch_one("SELECT quantite_recue, cloture_reliquat FROM feb_suivi WHERE id=? FOR UPDATE", [$suivi_id]);
+        if (!empty($verrou['cloture_reliquat'])) throw new AchValidationException('Ce reliquat est clôturé — aucune réception supplémentaire possible.');
+        $recue = (int)$verrou['quantite_recue'];
+        $reste = $commandee - $recue;
+        // Message chiffré (point 8) : pas une saisie corrigée en silence.
+        if ($quantite > $reste) {
+            throw new AchValidationException("Quantité reçue supérieure au reste à recevoir (reste $reste, saisi $quantite).");
+        }
         $cumul = $recue + $quantite;
         $ecart = $commandee - $cumul;  // positif = reliquat ouvert, zéro = ligne soldée
 
@@ -2240,7 +2274,10 @@ function ach_receptionner(int $suivi_id, int $quantite, string $date, ?string $b
             // réception si elle n'est que partielle.
             $prix_unitaire = $ligne_quantite > 0 ? (int) round(((int)$ligne['ligne_montant_ttc']) / $ligne_quantite) : 0;
             $nomenclature  = db_fetch_one("SELECT categorie, duree_amortissement_mois FROM nomenclatures WHERE id=?", [(int)$ligne['nomenclature_id']]);
-            $chrono = (int) db_fetch_value("SELECT COALESCE(MAX(numero_chrono),0) FROM equipements");
+            // Dernier exemplaire verrouillé : deux réceptions DAI de lignes
+            // différentes ne doivent pas repartir du même numéro chrono.
+            $chrono = (int) (db_fetch_value("SELECT numero_chrono FROM equipements WHERE numero_chrono IS NOT NULL
+                                             ORDER BY numero_chrono DESC LIMIT 1 FOR UPDATE") ?? 0);
             for ($i = 1; $i <= $quantite; $i++) {
                 $chrono++;
                 // Numéro de série interne provisoire, unique et traçable
@@ -2296,7 +2333,7 @@ function ach_expedier_departement(int $suivi_id, int $quantite, string $date, st
     if ($quantite <= 0) throw new AchValidationException('La quantité expédiée doit être strictement positive.');
 
     $ligne = db_fetch_one(
-        "SELECT fs.*, fl.article_id, fl.designation, fl.type_achat, f.numero AS feb_numero
+        "SELECT fs.*, fl.article_id, fl.designation, fl.type_achat, f.numero AS feb_numero, f.departement_id
          FROM feb_suivi fs
          JOIN feb_lignes fl ON fl.id = fs.feb_ligne_id
          JOIN feb f         ON f.id  = fs.feb_id
@@ -2314,17 +2351,19 @@ function ach_expedier_departement(int $suivi_id, int $quantite, string $date, st
         throw new AchValidationException("Ligne DAI — le transfert vers le département se fait par la file d'attente équipements, pas ici.");
     }
 
-    $recue     = (int)$ligne['quantite_recue'];
-    $expediee  = (int)$ligne['quantite_expediee'];
-    $reste     = $recue - $expediee;
-    if ($quantite > $reste) {
-        throw new AchValidationException("Quantité expédiée supérieure au reste disponible au magasin (reste $reste, saisi $quantite).");
-    }
-
     $pdo = get_db();
     $transaction_locale = !$pdo->inTransaction();
     if ($transaction_locale) db_begin();
     try {
+        // Sous verrou, comme la réception magasin (cf. ach_receptionner()).
+        $verrou   = db_fetch_one("SELECT quantite_recue, quantite_expediee FROM feb_suivi WHERE id=? FOR UPDATE", [$suivi_id]);
+        $recue    = (int)$verrou['quantite_recue'];
+        $expediee = (int)$verrou['quantite_expediee'];
+        $ligne['quantite_expediee'] = $expediee;
+        $reste    = $recue - $expediee;
+        if ($quantite > $reste) {
+            throw new AchValidationException("Quantité expédiée supérieure au reste disponible au magasin (reste $reste, saisi $quantite).");
+        }
         db_query(
             "INSERT INTO feb_expeditions (feb_suivi_id, quantite, date_expedition, observation, expedie_par)
              VALUES (?,?,?,?,?)",
@@ -2393,17 +2432,18 @@ function ach_receptionner_departement(int $suivi_id, int $quantite, string $date
         throw new AchValidationException("Seul le supérieur hiérarchique du département peut confirmer cette réception.");
     }
 
-    $expediee = (int)$ligne['quantite_expediee'];
-    $recue_dept = (int)$ligne['quantite_receptionnee_departement'];
-    $reste = $expediee - $recue_dept;
-    if ($quantite > $reste) {
-        throw new AchValidationException("Quantité supérieure à ce qui a été expédié et pas encore confirmé (reste $reste, saisi $quantite).");
-    }
-
     $pdo = get_db();
     $transaction_locale = !$pdo->inTransaction();
     if ($transaction_locale) db_begin();
     try {
+        // Sous verrou, comme la réception magasin (cf. ach_receptionner()).
+        $verrou     = db_fetch_one("SELECT quantite_expediee, quantite_receptionnee_departement FROM feb_suivi WHERE id=? FOR UPDATE", [$suivi_id]);
+        $expediee   = (int)$verrou['quantite_expediee'];
+        $recue_dept = (int)$verrou['quantite_receptionnee_departement'];
+        $reste = $expediee - $recue_dept;
+        if ($quantite > $reste) {
+            throw new AchValidationException("Quantité supérieure à ce qui a été expédié et pas encore confirmé (reste $reste, saisi $quantite).");
+        }
         db_query(
             "INSERT INTO feb_receptions_departement (feb_suivi_id, quantite, date_reception, observation, recu_par, bon_transfert)
              VALUES (?,?,?,?,?,?)",

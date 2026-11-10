@@ -35,6 +35,98 @@ function upload_ensure_dirs(): void {
 }
 
 /**
+ * ── Archivage des fichiers déposés dans la base (table fichiers_archives) ──
+ *
+ * uploads/ n'est pas un stockage durable : Render l'efface à chaque
+ * déploiement, deploy.sh (VPS) ne le sauvegarde pas, et un fichier s'y ouvre
+ * sans connexion par son adresse. Chaque fichier déposé est donc copié dans
+ * la base, servi par pages/fichier.php (connexion exigée), et la copie du
+ * disque est supprimée en fin de requête. Sans la migration
+ * (fichiers_archives absente), tout reste sur le disque comme avant.
+ */
+const UPLOAD_SOUS_DOSSIERS = ['bl' => 'bl', 'fiche' => 'fiches', 'feb' => 'feb',
+                              'validation' => 'validation', 'fournisseur' => 'fournisseurs'];
+
+function upload_dossier(string $type): string {
+    return UPLOAD_DIR . (UPLOAD_SOUS_DOSSIERS[$type] ?? 'bl') . '/';
+}
+
+function upload_archive_dispo(): bool {
+    static $ok = null;
+    if ($ok === null) {
+        try { $ok = function_exists('db_colonne_existe') && db_colonne_existe('fichiers_archives', 'contenu'); }
+        catch (Throwable $e) { $ok = false; }
+    }
+    return $ok;
+}
+
+/** Copie en base le fichier présent sur le disque. Faux si l'archivage est indisponible ou échoue. */
+function upload_archiver(string $type, string $filename): bool {
+    if (!upload_archive_dispo()) return false;
+    $filename = basename($filename);
+    $contenu  = @file_get_contents(upload_dossier($type) . $filename);
+    if ($contenu === false || $contenu === '') return false;
+    try {
+        db_query("DELETE FROM fichiers_archives WHERE type=? AND nom=?", [$type, $filename]);
+        // Binaire : PDO::PARAM_LOB (bytea / LONGBLOB) — db_query() lie tout en texte.
+        $st = get_db()->prepare("INSERT INTO fichiers_archives (type, nom, taille, contenu) VALUES (?, ?, ?, ?)");
+        $st->bindValue(1, $type);
+        $st->bindValue(2, $filename);
+        $st->bindValue(3, strlen($contenu), PDO::PARAM_INT);
+        $st->bindValue(4, $contenu, PDO::PARAM_LOB);
+        $st->execute();
+        return true;
+    } catch (Throwable $e) {
+        error_log("Archivage du fichier $type/$filename impossible : " . $e->getMessage());
+        return false;
+    }
+}
+
+/** Supprime la copie du disque en fin de requête (l'appelant peut encore la lire d'ici là). */
+function upload_purger_disque(string $type, string $filename): void {
+    $chemin = upload_dossier($type) . basename($filename);
+    register_shutdown_function(static function () use ($chemin) { if (is_file($chemin)) @unlink($chemin); });
+}
+
+/** Où se trouve le fichier : 'base', 'disque' ou null (perdu). */
+function upload_etat(string $type, ?string $filename): ?string {
+    if (!$filename) return null;
+    $filename = basename($filename);
+    if (upload_archive_dispo() && db_fetch_value("SELECT 1 FROM fichiers_archives WHERE type=? AND nom=?", [$type, $filename])) return 'base';
+    return is_file(upload_dossier($type) . $filename) ? 'disque' : null;
+}
+
+/** Contenu du fichier, lu en base, sinon sur le disque (il est alors archivé au passage). Null s'il est perdu. */
+function upload_contenu(string $type, ?string $filename): ?string {
+    if (!$filename) return null;
+    $filename = basename($filename);
+    if (upload_archive_dispo()) {
+        $c = db_fetch_value("SELECT contenu FROM fichiers_archives WHERE type=? AND nom=?", [$type, $filename]);
+        if (is_resource($c)) $c = stream_get_contents($c);   // bytea (PostgreSQL)
+        if (is_string($c) && $c !== '') return $c;
+    }
+    $chemin = upload_dossier($type) . $filename;
+    if (!is_file($chemin)) return null;
+    $c = file_get_contents($chemin);
+    if ($c === false) return null;
+    if (upload_archiver($type, $filename)) upload_purger_disque($type, $filename);
+    return $c;
+}
+
+/** Archive en base tous les fichiers encore sur le disque, puis les supprime. → nombre de fichiers archivés. */
+function upload_importer_disque(): int {
+    if (!upload_archive_dispo()) return 0;
+    $n = 0;
+    foreach (array_keys(UPLOAD_SOUS_DOSSIERS) as $type) {
+        foreach (glob(upload_dossier($type) . '*') ?: [] as $chemin) {
+            if (!is_file($chemin) || str_starts_with(basename($chemin), '.')) continue;
+            if (upload_archiver($type, basename($chemin))) { @unlink($chemin); $n++; }
+        }
+    }
+    return $n;
+}
+
+/**
  * Traite l'upload d'un fichier BL ou fiche signée.
  *
  * @param string $field_name   Nom du champ input file ($_FILES key)
@@ -111,6 +203,9 @@ function upload_document(string $field_name, string $type, string $prefix, bool 
                 'message' => 'Impossible de déplacer le fichier. Vérifiez les permissions du dossier uploads/.'];
     }
 
+    // Copie durable en base ; la copie du disque part en fin de requête.
+    if (upload_archiver($type, $filename)) upload_purger_disque($type, $filename);
+
     return ['success' => true, 'filename' => $filename, 'message' => 'Fichier uploadé avec succès.'];
 }
 
@@ -129,20 +224,24 @@ function upload_delete(string $filename, string $type): void {
     if (file_exists($path)) {
         unlink($path);
     }
+    if (upload_archive_dispo()) {
+        try { db_query("DELETE FROM fichiers_archives WHERE type=? AND nom=?", [$type, basename($filename)]); }
+        catch (Throwable $e) { error_log('Suppression archive : ' . $e->getMessage()); }
+    }
 }
 
 /**
- * Retourne l'URL publique d'un fichier uploadé.
+ * Retourne l'URL d'un fichier uploadé : pages/fichier.php le lit en base (ou
+ * sur le disque) après contrôle de la connexion — plus l'adresse directe dans
+ * uploads/, lisible sans connexion et vide après un déploiement.
  */
 function upload_url(string $filename, string $type): string {
-    $sub = match ($type) {
-        'fiche'       => 'fiches',
-        'feb'         => 'feb',
-        'validation'  => 'validation',
-        'fournisseur' => 'fournisseurs',
-        default       => 'bl',
-    };
-    return UPLOAD_URL . $sub . '/' . rawurlencode($filename);
+    return upload_url_base($type) . rawurlencode($filename);
+}
+
+/** Préfixe d'URL d'un type de fichier : le nom du fichier (encodé) s'y ajoute. */
+function upload_url_base(string $type): string {
+    return APP_URL . '/pages/fichier.php?d=' . (UPLOAD_SOUS_DOSSIERS[$type] ?? 'bl') . '&f=';
 }
 
 /**

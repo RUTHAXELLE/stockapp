@@ -14,8 +14,10 @@ $user = current_user();
 require_permission('achats', 'can_read');
 
 $feb_id = (int)($_GET['id'] ?? 0);
-$feb_numero = db_fetch_value("SELECT numero FROM feb WHERE id=?", [$feb_id]);
-if ($feb_numero === false) { http_response_code(404); echo 'FEB introuvable.'; exit; }
+$_feb = db_fetch_one("SELECT numero, demandeur_id, n1_user_id FROM feb WHERE id=?", [$feb_id]);
+if (!$_feb) { http_response_code(404); echo 'FEB introuvable.'; exit; }
+if (!ach_peut_lire_feb($user, $_feb)) { http_response_code(403); include __DIR__ . '/../../templates/403.php'; exit; }
+$feb_numero = $_feb['numero'];
 
 require_once __DIR__ . '/../../vendor/autoload.php';
 

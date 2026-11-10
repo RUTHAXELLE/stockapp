@@ -40,6 +40,8 @@ if (isset($_GET['id'])) {
         }
         $doc ??= ['nom' => basename($p), 'contenu' => file_get_contents($p)];
     }
+    // Ni dans commande_bl ni sur le disque : archive générique des fichiers.
+    if (!$doc && ($c = upload_contenu('bl', $cmd['bl_reception'])) !== null) $doc = ['nom' => basename($cmd['bl_reception']), 'contenu' => $c];
     if (!$doc) {
         http_response_code(404);
         header('Content-Type: text/html; charset=UTF-8');
@@ -65,10 +67,11 @@ if (is_ajax() && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$is_admin) json_response(false, 'Action réservée à l\'administration.');
     if (!$pret) json_response(false, 'Migration commande_bl_archive non jouée sur cette base.');
     session_write_close();
-    try { $n = blc_importer_disque((int)$user['id']); }
+    try { $n = blc_importer_disque((int)$user['id']); $n_autres = upload_importer_disque(); }
     catch (Throwable $e) { json_response(false, 'Import interrompu : ' . $e->getMessage()); }
     audit_log((int)$user['id'], 'UPDATE', 'commandes', null, "Archives BL : {$n['importes']} BL importé(s) en base, {$n['perdus']} fichier(s) introuvable(s)");
-    json_response(true, "{$n['importes']} BL importé(s) en base" . ($n['perdus'] ? ", {$n['perdus']} fichier(s) déjà perdu(s)." : '.'));
+    json_response(true, "{$n['importes']} BL importé(s) en base" . ($n['perdus'] ? ", {$n['perdus']} fichier(s) déjà perdu(s)." : '.')
+        . ($n_autres ? " $n_autres autre(s) pièce(s) du disque archivée(s) (FEB, réceptions, fournisseurs…)." : ''));
 }
 
 // Filtres
@@ -100,7 +103,7 @@ if (isset($_GET['zip'])) {
     foreach ($ids as $id) {
         $c = db_fetch_one("SELECT numero_commande, bl_reception FROM commandes WHERE id=?", [$id]);
         $doc = $pret ? blc_lire($id) : null;
-        $contenu = $doc['contenu'] ?? (($fp = blc_fichier_disque($c['bl_reception'])) ? file_get_contents($fp) : null);
+        $contenu = $doc['contenu'] ?? upload_contenu('bl', $c['bl_reception']);
         if ($contenu === null) continue;
         $zip->addFromString('BL-signe-' . preg_replace('/[^A-Za-z0-9_-]/', '', $c['numero_commande']) . '.pdf', $contenu);
         $nb++;

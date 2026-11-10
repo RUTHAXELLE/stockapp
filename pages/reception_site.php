@@ -537,7 +537,7 @@ function openDetail(id){
           <strong>🔧 Traitement :</strong> ${rec.remplacement_notes}</div>`;
       }
       if(rec.fichier_fiche){
-        html += `<div style="margin-bottom:12px"><a href="<?= APP_URL ?>/uploads/fiches/${encodeURIComponent(rec.fichier_fiche)}" target="_blank" style="color:var(--blue-mid,#1a56a0);font-size:13px">📄 Voir la fiche signée</a></div>`;
+        html += `<div style="margin-bottom:12px"><a href="<?= h(upload_url_base('fiche')) ?>${encodeURIComponent(rec.fichier_fiche)}" target="_blank" style="color:var(--blue-mid,#1a56a0);font-size:13px">📄 Voir la fiche signée</a></div>`;
       }
 
       document.getElementById('detailContent').innerHTML = html;

@@ -16,16 +16,17 @@ $user = current_user();
 require_permission('achats', 'can_read');
 
 $feb_id = (int)($_GET['id'] ?? 0);
-$feb = db_fetch_one("SELECT numero, fiche_validation_path FROM feb WHERE id=?", [$feb_id]);
+$feb = db_fetch_one("SELECT numero, fiche_validation_path, demandeur_id, n1_user_id FROM feb WHERE id=?", [$feb_id]);
 if (!$feb) { http_response_code(404); echo 'FEB introuvable.'; exit; }
+if (!ach_peut_lire_feb($user, $feb)) { http_response_code(403); include __DIR__ . '/../../templates/403.php'; exit; }
 if (empty($feb['fiche_validation_path'])) {
     http_response_code(404);
     echo "Cette FEB n'a pas encore de fiche de validation — elle n'est générée qu'à la confirmation.";
     exit;
 }
 
-$path = UPLOAD_VALIDATION_DIR . basename($feb['fiche_validation_path']);
-if (!file_exists($path)) {
+$contenu = upload_contenu('validation', $feb['fiche_validation_path']);
+if ($contenu === null) {
     // Jamais régénérée en silence : la pièce est opposable, un document
     // manquant est une anomalie à signaler, pas à recalculer à la volée.
     http_response_code(404);
@@ -36,5 +37,5 @@ if (!file_exists($path)) {
 $filename = 'Validation_' . preg_replace('/[^A-Za-z0-9_-]/', '', $feb['numero'] ?: "feb$feb_id") . '.pdf';
 header('Content-Type: application/pdf');
 header('Content-Disposition: inline; filename="' . $filename . '"');
-header('Content-Length: ' . filesize($path));
-readfile($path);
+header('Content-Length: ' . strlen($contenu));
+echo $contenu;

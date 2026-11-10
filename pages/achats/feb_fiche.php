@@ -333,7 +333,7 @@ let lignes = <?= json_encode(array_map(fn($l) => [
 ], $feb_lignes), JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 let pieces = <?= json_encode(array_map(fn($p) => [
     'id' => (int)$p['id'], 'nom_origine' => $p['nom_origine'], 'taille' => (int)$p['taille'],
-    'url' => '/uploads/feb/' . rawurlencode($p['fichier']),
+    'url' => upload_url($p['fichier'], 'feb'),
 ], $feb_pieces), JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 
 // ── Composition du code analytique (RG-05) — même schéma que

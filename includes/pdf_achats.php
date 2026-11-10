@@ -195,6 +195,9 @@ function ach_generer_fiche_validation(int $feb_id): string {
     $safe   = preg_replace('/[^A-Za-z0-9_-]/', '', $numero);
     $filename = "validation_{$safe}_" . date('Ymd_His') . '.pdf';
     file_put_contents(UPLOAD_VALIDATION_DIR . $filename, $dompdf->output());
+    // Pièce opposable, générée une seule fois : copie durable en base (le
+    // disque de Render est effacé à chaque déploiement).
+    if (upload_archiver('validation', $filename)) upload_purger_disque('validation', $filename);
 
     db_query("UPDATE feb SET fiche_validation_path=? WHERE id=?", [$filename, $feb_id]);
     return $filename;

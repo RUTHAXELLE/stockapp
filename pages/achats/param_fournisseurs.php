@@ -373,7 +373,7 @@ include __DIR__ . '/../../templates/header.php';
 
 <script>
 const ACH_DOCS = <?= json_encode(array_map(fn($col, $meta) => ['col' => $col, 'field' => $meta['field'], 'label' => $meta['label'], 'required' => $meta['required']], array_keys(FOURN_DOCS), FOURN_DOCS)) ?>;
-const ACH_DOC_URL = <?= json_encode(UPLOAD_URL . 'fournisseurs/') ?>;
+const ACH_DOC_URL = <?= json_encode(upload_url_base('fournisseur')) ?>;
 
 function achOuvrirDocs(f) {
   document.getElementById('docs-modal-nom').textContent = f.raison_sociale || '';

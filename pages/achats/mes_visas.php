@@ -10,6 +10,7 @@ require_once __DIR__ . '/../../includes/helpers.php';
 require_once __DIR__ . '/../../includes/notifications.php';
 require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/achats.php';
+require_once __DIR__ . '/../../includes/upload.php';
 
 require_auth();
 $user = current_user();
@@ -95,7 +96,7 @@ if (is_ajax() && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'offres'         => $offres_par_lot,
             'budget'         => $budget,
             'pieces'         => array_map(fn($p) => [
-                'nom_origine' => $p['nom_origine'], 'url' => '/uploads/feb/' . rawurlencode($p['fichier']),
+                'nom_origine' => $p['nom_origine'], 'url' => upload_url($p['fichier'], 'feb'),
             ], $pieces),
         ]);
     }

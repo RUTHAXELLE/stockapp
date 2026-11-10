@@ -60,7 +60,8 @@ function blc_fichier_disque(?string $filename): ?string {
 function blc_etat(array $cmd, bool $en_base): ?string {
     if ($en_base) return 'base';
     if (empty($cmd['bl_reception'])) return null;
-    return blc_fichier_disque($cmd['bl_reception']) ? 'disque' : 'perdu';
+    // Disque, ou archive générique des fichiers (includes/upload.php).
+    return upload_etat('bl', $cmd['bl_reception']) !== null ? 'disque' : 'perdu';
 }
 
 /**
