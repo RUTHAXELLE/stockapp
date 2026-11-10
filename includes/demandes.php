@@ -376,6 +376,51 @@ function di_departement_demandeur(int $userId): ?array {
     );
 }
 
+// ── Département du BÉNÉFICIAIRE de la demande (l'agent saisi dans le
+//    formulaire), dont le N+1 vise — règle retenue le 10/11/2026 : c'est le
+//    responsable de l'agent concerné qui valide, pas celui du demandeur.
+//    Cherché dans l'ordre : compte ERP de l'agent (même e-mail) → son
+//    département ERP ; sinon département de l'annuaire des agents, sinon
+//    champ « Département » du formulaire, rapprochés du code ou du libellé
+//    d'un département ERP. Null si rien ne correspond (pas d'agent saisi,
+//    ou département inconnu de l'ERP) : l'appelant revient au demandeur.
+function di_norm_dept(string $s): string {
+    $s = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s) ?: $s;
+    return preg_replace('/[^A-Z0-9]/', '', strtoupper($s));
+}
+function di_departement_beneficiaire(array $champs): ?array {
+    $email = trim((string)($champs['agent_email'] ?? ''));
+    $nom   = trim((string)($champs['agent_nom'] ?? ''));
+    if ($email === '' && $nom === '') return null;
+
+    if ($email !== '') {
+        $uid = db_fetch_value("SELECT id FROM users WHERE LOWER(email)=LOWER(?) AND actif=1 LIMIT 1", [$email]);
+        if ($uid && ($d = di_departement_demandeur((int)$uid))) {
+            return ['departement_id' => (int)$d['departement_id'], 'source' => 'compte ERP de l\'agent'];
+        }
+    }
+    $texte = null;
+    try {
+        $agent = $email !== ''
+            ? db_fetch_one("SELECT departement FROM agents WHERE LOWER(email)=LOWER(?) LIMIT 1", [$email])
+            : null;
+        if (!$agent && $nom !== '') {
+            $agent = db_fetch_one("SELECT departement FROM agents WHERE UPPER(TRIM(CONCAT(nom,' ',prenom)))=UPPER(?) LIMIT 1", [$nom]);
+        }
+        $texte = $agent['departement'] ?? null;
+    } catch (Throwable $e) { /* annuaire absent : on s'en passe */ }
+    $source = 'annuaire des agents';
+    if (trim((string)$texte) === '') { $texte = $champs['departement'] ?? null; $source = 'formulaire'; }
+    $cible = di_norm_dept((string)$texte);
+    if ($cible === '') return null;
+    foreach (db_fetch_all("SELECT id, code, label FROM departements") as $d) {
+        if ($cible === di_norm_dept((string)$d['code']) || $cible === di_norm_dept((string)$d['label'])) {
+            return ['departement_id' => (int)$d['id'], 'source' => $source];
+        }
+    }
+    return null;
+}
+
 // ── Champs obligatoires du type, contrôlés côté serveur à la soumission
 //    (le navigateur seul ne suffit pas). Mêmes champs que l'attribut
 //    required du formulaire : les plages de dates et les plateformes n'en
@@ -456,21 +501,37 @@ function di_soumettre(int $id, array $user): void {
     $nom = trim(($user['prenom'] ?? '') . ' ' . ($user['nom'] ?? ''));
     $uid = (int)$user['id'];
 
-    // N+1 : celui du département du demandeur, hors lui-même.
-    $dept = di_departement_demandeur($uid);
+    // N+1 : celui du département du BÉNÉFICIAIRE (l'agent concerné) ; à
+    // défaut — pas d'agent saisi, ou département introuvable dans l'ERP —
+    // celui du demandeur. Jamais le demandeur lui-même.
+    $benef = di_departement_beneficiaire($d['champs']);
+    $dept_id = $benef['departement_id'] ?? null;
+    $note_n1 = null;
+    if ($dept_id === null) {
+        $dd = di_departement_demandeur($uid);
+        $dept_id = $dd ? (int)$dd['departement_id'] : null;
+        if (trim((string)($d['champs']['agent_nom'] ?? '')) !== '') {
+            $note_n1 = "Département du bénéficiaire introuvable dans l'ERP : N+1 du département du demandeur.";
+        }
+    }
     $n1UserId = null;
-    if ($dept) {
+    if ($dept_id) {
         $n1 = db_fetch_value(
             "SELECT ud.user_id FROM user_departements ud JOIN users u ON u.id=ud.user_id AND u.actif=1
               WHERE ud.departement_id=? AND ud.is_n1=1 AND ud.user_id<>? ORDER BY ud.user_id LIMIT 1",
-            [(int)$dept['departement_id'], $uid]);
+            [(int)$dept_id, $uid]);
         $n1UserId = $n1 ? (int)$n1 : null;
     }
-    // Validé d'office seulement s'il est N+1 de SON département, pas d'un autre.
-    $auto_n1 = $workflow && $workflow[0]['role'] === 'n1' && $dept && (int)$dept['is_n1'] === 1;
+    // Validé d'office seulement si le demandeur est lui-même N+1 du
+    // département retenu, pas d'un autre.
+    $auto_n1 = $workflow && $workflow[0]['role'] === 'n1' && $dept_id && (bool)db_fetch_value(
+        "SELECT COUNT(*) FROM user_departements WHERE user_id=? AND departement_id=? AND is_n1=1", [$uid, (int)$dept_id]);
 
     $hist = $d['historique'];
-    $hist[] = ['action' => 'soumis', 'par' => $uid, 'nom' => $nom, 'date' => $now];
+    $dept_lbl = $dept_id ? db_fetch_value("SELECT label FROM departements WHERE id=?", [(int)$dept_id]) : null;
+    $hist[] = ['action' => 'soumis', 'par' => $uid, 'nom' => $nom, 'date' => $now,
+               'commentaire' => $note_n1 ?? ($dept_lbl ? "Visa N+1 : département $dept_lbl"
+                   . ($benef ? " (bénéficiaire, " . $benef['source'] . ')' : ' (demandeur)') : null)];
     $sigs = [];
     $statut = 'en_attente'; $etape = $workflow ? 0 : -1;
     if (!$workflow) $statut = !empty($type['traitement_it']) ? 'approuve_traitement' : 'approuve';
@@ -506,9 +567,9 @@ function di_soumettre(int $id, array $user): void {
         // Aucun N+1 désigné pour le département : les administrateurs, qui
         // peuvent viser à sa place, sont prévenus, et le demandeur aussi.
         foreach (di_admins() as $a) {
-            if ($a !== $uid) di_notify($a, "Demande « {$type['label']} » de $nom ($numero) : aucun N+1 désigné pour son département — visa N+1 à donner par un administrateur.", $id);
+            if ($a !== $uid) di_notify($a, "Demande « {$type['label']} » de $nom ($numero) : aucun N+1 désigné pour le département concerné — visa N+1 à donner par un administrateur.", $id);
         }
-        di_notify($uid, "Aucun N+1 n'est désigné pour votre département : votre demande « {$type['label']} » ($numero) est transmise aux administrateurs pour le visa N+1.", $id);
+        di_notify($uid, "Aucun N+1 n'est désigné pour le département concerné : votre demande « {$type['label']} » ($numero) est transmise aux administrateurs pour le visa N+1.", $id);
     } elseif ($role === 'n1') {
         di_notify($n1UserId, "Nouvelle demande « {$type['label']} » de $nom ($numero) à valider", $id);
     } else {

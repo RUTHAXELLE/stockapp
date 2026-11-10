@@ -401,7 +401,7 @@ include __DIR__ . '/../templates/header.php';
     if (in_array($detail['statut'], ['en_attente','en_cours'], true) && empty($detail['n1_user_id'])
         && (($_wf_det[(int)$detail['etape_actuelle']]['role'] ?? '') === 'n1')): ?>
   <div style="margin:0 0 14px;padding:10px 14px;border-radius:10px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:13px">
-    <i class="ph-duotone ph-warning"></i> Aucun N+1 n'est désigné pour le département du demandeur : le visa N+1 est attendu d'un administrateur.
+    <i class="ph-duotone ph-warning"></i> Aucun N+1 n'est désigné pour le département concerné : le visa N+1 est attendu d'un administrateur.
   </div>
   <?php endif; ?>
 
