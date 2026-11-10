@@ -107,7 +107,7 @@ function vs_causes_ecart(int $site_id, string $date, array $l): array {
          FROM op_films_utilises fu JOIN op_points_journaliers p ON p.id = fu.point_id
          WHERE fu.bobine_id=? AND p.date_point > ? AND "
         . ($regle_18h ? "p.stock_deduit >= 1" : "p.statut <> 'rejete'"), [$bobine_id, $date]);
-    if ($apres > 0)
+    if ($apres > 0 && empty($l['reconstitue']))
         $causes[] = ['films' => -$apres, 'texte' =>
             "$apres film(s) déjà retiré(s) de cette bobine par des points postérieurs au $jj : le stock ERP comparé est celui d'aujourd'hui."];
 
@@ -140,7 +140,24 @@ function vs_causes_ecart(int $site_id, string $date, array $l): array {
     return $causes;
 }
 
-function vsm_calculer(int $site_id, string $date): array {
+// Films retirés d'une bobine par les points postérieurs à $date (cause n°3).
+function vsm_films_retires_apres(int $bobine_id, string $date): int {
+    $regle_18h = db_colonne_existe('op_points_journaliers', 'stock_deduit');
+    return (int)db_fetch_value(
+        "SELECT COALESCE(SUM(fu.films_utilises + fu.films_endommages),0)
+         FROM op_films_utilises fu JOIN op_points_journaliers p ON p.id = fu.point_id
+         WHERE fu.bobine_id=? AND p.date_point > ? AND "
+        . ($regle_18h ? "p.stock_deduit >= 1" : "p.statut <> 'rejete'"), [$bobine_id, $date]);
+}
+
+// $reconstituer : des points postérieurs ont déjà retiré des films. Le stock
+// ERP du soir de $date est alors reconstitué (restant actuel + films retirés
+// depuis par ces points, même règle que la cause n°3 de vs_causes_ecart()),
+// au lieu de comparer le stock d'aujourd'hui à l'import de $date.
+function vsm_calculer(int $site_id, string $date, ?bool $reconstituer = null): array {
+    // Sans précision : reconstitué dès qu'un point postérieur a retiré des films.
+    $reconstituer ??= (int)db_fetch_value(
+        "SELECT COUNT(*) FROM op_points_journaliers WHERE site_id=? AND date_point > ?", [$site_id, $date]) > 0;
     $point  = vsm_point_18h($site_id, $date);
     $import = vsm_import_du($site_id, $date);
     $res = [
@@ -174,6 +191,7 @@ function vsm_calculer(int $site_id, string $date): array {
         // point : c'est le stock ERP du soir (le coordinateur ne peut rien
         // saisir de plus tant que ce stock n'est pas validé).
         $erp   = (int)$b['films_restants'];
+        if ($reconstituer) $erp += vsm_films_retires_apres((int)$b['bobine_id'], $date);
         $emuci = $b['qte_import'] !== null ? (int)$b['qte_import'] : (int)$b['stock_systeme'];
         $ecart = $import !== null ? $erp - $emuci : 0;
         $ligne = [
@@ -188,6 +206,7 @@ function vsm_calculer(int $site_id, string $date): array {
             'stock_systeme'    => $emuci,
             'ecart'            => $ecart,
             'has_ecart'        => $import !== null && $ecart !== 0,
+            'reconstitue'      => $reconstituer,
         ];
         if ($ligne['has_ecart']) $ligne['causes'] = vs_causes_ecart($site_id, $date, $ligne);
         $res['bobines_detail'][] = $ligne;
@@ -255,15 +274,21 @@ function vsm_evaluer_site(int $site_id, string $date, ?int $user_id, string $ori
     );
     if ($exist && $exist['statut'] !== 'valide_auto') return ['statut' => 'decision_gsb', 'nb_ecarts' => 0];
 
-    $calc = vsm_calculer($site_id, $date);
+    $posterieurs = (int)db_fetch_value(
+        "SELECT COUNT(*) FROM op_points_journaliers WHERE site_id=? AND date_point > ?", [$site_id, $date]) > 0;
+    // La relance du GSB passe outre « périmé » (il l'a voulue en connaissance
+    // de cause) : sans cela, un site dont un point postérieur existait déjà
+    // ne pouvait plus jamais être comparé, donc validé, et son coordinateur
+    // restait bloqué (constaté le 10/11/2026, CASERNE AKOUEDO FDS, 06/11).
+    // Le stock du soir est alors reconstitué pour comparer juste.
+    $forcer = $origine === 'relance_gsb';
+    $calc = vsm_calculer($site_id, $date, $posterieurs);
     if (!$calc['chaine_complete']) return ['statut' => 'en_attente', 'nb_ecarts' => 0];
     if (empty($calc['bobines_detail'])) return ['statut' => 'sans_bobine', 'nb_ecarts' => 0];
     // Un point postérieur a déjà déduit d'autres films : le stock ERP n'est
     // plus celui du soir de $date, une comparaison automatique serait
     // fausse (réimport tardif d'une ancienne date). Laissé au GSB.
-    if ((int)db_fetch_value(
-            "SELECT COUNT(*) FROM op_points_journaliers WHERE site_id=? AND date_point > ?",
-            [$site_id, $date]) > 0) {
+    if ($posterieurs && !$forcer) {
         return ['statut' => 'perime', 'nb_ecarts' => $calc['nb_ecarts']];
     }
 
