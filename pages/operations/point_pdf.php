@@ -25,6 +25,12 @@ $point = db_fetch_one(
 );
 if (!$point) { http_response_code(404); exit('Point introuvable.'); }
 
+// Droit sur le module, et un coordinateur ne voit que les points de son site.
+if (!can('operations', 'can_read')) { http_response_code(403); exit('Accès refusé.'); }
+if (($user['role_slug'] ?? '') === 'coordinateur_site' && (int)$point['site_id'] !== (int)($user['site_id'] ?? 0)) {
+    http_response_code(403); exit('Accès refusé.');
+}
+
 // Restriction brouillon : seul l'auteur peut consulter son brouillon
 if ($point['statut'] === 'brouillon' && $point['created_by'] != $user['id']) {
     http_response_code(403); exit('Accès refusé.');

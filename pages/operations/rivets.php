@@ -32,6 +32,9 @@ $appro_restreint = ($user['role_slug'] ?? '') === 'gestionnaire_stock';
 $sites_appro = $appro_restreint
     ? db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 AND type IN ('entrepot','magasin') ORDER BY nom")
     : $sites_list;
+// Droit d'approvisionner / ajuster : même règle que l'affichage des boutons,
+// appliquée aussi côté serveur (une requête directe passait avec can_read).
+$can_appro_srv = in_array($role_slug_r, ['admin','superadmin','gestionnaire_stock','superviseur_operation'], true);
 $site_appro_ok = fn(int $id): bool => in_array($id, array_map('intval', array_column($sites_appro, 'id')), true);
 
 // ── IMPORT EN MASSE (Excel/CSV) — remplace le stock (photo exacte), pas
@@ -129,6 +132,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     // les gonflables, même pour des rivets éclatés.
     $types_ok = ['gonflable' => 'gonflables', 'eclate' => 'éclatés'];
 
+    if (in_array($action, ['approvisionner','ajuster'], true) && !$can_appro_srv)
+        json_response(false,'Accès refusé.');
+
     if ($action==='approvisionner') {
         $site_id = (int)($_POST['site_id'] ?? 0);
         $type    = trim($_POST['type_rivet'] ?? '');
@@ -152,6 +158,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $new_qte = (int)($_POST['new_qte']  ?? 0);
         $motif   = trim($_POST['motif']      ?? '');
         if (!$site_id) json_response(false,'Site obligatoire.');
+        if (!$site_appro_ok($site_id)) json_response(false,"Le gestionnaire de stock n'ajuste que l'entrepôt et le magasin.");
         if (!isset($types_ok[$type])) json_response(false,'Type de rivet obligatoire (gonflables ou éclatés).');
         if ($new_qte < 0) json_response(false,'Le stock ne peut pas être négatif.');
         $old     = (int)db_fetch_value("SELECT COALESCE(quantite,0) FROM op_stock_rivets WHERE site_id=? AND type_rivet=?",[$site_id,$type]);
@@ -187,7 +194,8 @@ $stocks = db_fetch_all(
                                                     WHEN 'eclate'    THEN p.rivets_eclates
                                                     ELSE p.rivets_utilises+p.rivets_endommages END)
                       FROM op_points_journaliers p
-                      WHERE p.site_id=s.id AND DATE_FORMAT(p.date_point,'%Y-%m')=DATE_FORMAT(CURRENT_DATE,'%Y-%m')),0) AS utilises_mois
+                      WHERE p.site_id=s.id AND p.statut='valide' AND p.type_point IN ('point_18h','historique')
+                        AND DATE_FORMAT(p.date_point,'%Y-%m')=DATE_FORMAT(CURRENT_DATE,'%Y-%m')),0) AS utilises_mois
      FROM sites s
      JOIN op_stock_rivets sr ON sr.site_id=s.id
      WHERE $stocks_wsql
@@ -217,7 +225,7 @@ $recap = db_fetch_all(
             COALESCE(p.rivets_eclates,0)    AS rivets_eclates,
             p.rivets_utilises+p.rivets_endommages AS total_sortis
      FROM op_points_journaliers p JOIN sites s ON s.id=p.site_id
-     WHERE p.date_point BETWEEN ? AND ? $ws_r
+     WHERE p.date_point BETWEEN ? AND ? AND p.statut='valide' AND p.type_point IN ('point_18h','historique') $ws_r
      ORDER BY p.date_point DESC",
     [$f_from, $f_to]
 );

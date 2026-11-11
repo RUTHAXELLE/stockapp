@@ -73,6 +73,13 @@ $types_bobines = array_column(
     'code'
 );
 
+// Un coordinateur n'agit que sur les bobines de son site.
+function _bob_site_ok(?array $bob): bool {
+    global $is_coord, $site_force;
+    if (!$bob) return false;
+    return !$is_coord || ($site_force > 0 && (int)$bob['site_id'] === $site_force);
+}
+
 // ============================================================
 //  AJAX
 // ============================================================
@@ -123,6 +130,12 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $site_id = (int)($_POST['site_id'] ?? 0);
         $bob = db_fetch_one("SELECT * FROM op_bobines WHERE id=?",[$id]);
         if (!$bob) json_response(false,'Bobine introuvable.');
+        if (!_bob_site_ok($bob)) json_response(false,'Accès refusé.');
+        if ($is_coord) json_response(false,"L'affectation d'une bobine à un site est réservée au gestionnaire.");
+        if (!$site_id || !db_fetch_value("SELECT 1 FROM sites WHERE id=? AND actif=1",[$site_id])) json_response(false,'Site introuvable.');
+        if (!in_array($bob['statut'],['en_stock','en_cours'],true)) json_response(false,"Une bobine « {$bob['statut']} » ne peut pas être affectée.");
+        if ($bob['statut']==='en_cours' && (int)$bob['site_id'] !== $site_id)
+            json_response(false,'Cette bobine est en utilisation : elle ne peut pas changer de site.');
         // Arrive EN STOCK sur le site : elle passe en utilisation par une demande d'utilisation.
         db_query("UPDATE op_bobines SET site_id=?,statut='en_stock' WHERE id=?",[$site_id,$id]);
         db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by) VALUES (?,?,?,?,?,?,?)",
@@ -171,24 +184,29 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     // ── SAISIE CONSOMMATION JOURNALIÈRE
     if ($action==='consommation') {
         require_permission($perm_module_bob,'can_create');
+        // Hors point journalier : réservé aux administrateurs (correction exceptionnelle).
+        if (!in_array($role_slug,['admin','superadmin'],true)) json_response(false,'Accès refusé : la consommation se déclare dans le point journalier.');
         $bobine_id = (int)($_POST['bobine_id'] ?? 0);
         $qte       = (int)($_POST['quantite']  ?? 0);
         $date_conso= trim($_POST['date_conso'] ?? date('Y-m-d'));
         $notes     = trim($_POST['notes']      ?? '');
         if (!$bobine_id || $qte <= 0) json_response(false,'Bobine et quantité (>0) obligatoires.');
-        $bob = db_fetch_one("SELECT b.*,s.nom AS site_nom FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id WHERE b.id=?",[$bobine_id]);
-        if (!$bob) json_response(false,'Bobine introuvable.');
-        if ($is_coord && $bob['site_id'] != $site_force) json_response(false,"Cette bobine n'est pas sur votre site.");
-        $stock_avant = (int)$bob['stock_systeme'];
-        if ($qte > $stock_avant) json_response(false,"Stock insuffisant. Stock actuel : $stock_avant films.");
-        $stock_apres = $stock_avant - $qte;
-        $nouveau_statut = $stock_apres === 0 ? 'epuisee' : 'en_cours';
         db_begin();
         try {
+            // Verrou puis relecture : deux saisies simultanées ne partent plus du même stock.
+            $bob = db_fetch_one("SELECT b.*,s.nom AS site_nom FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id WHERE b.id=? FOR UPDATE",[$bobine_id]);
+            if (!$bob) { db_rollback(); json_response(false,'Bobine introuvable.'); }
+            if (!in_array($bob['statut'],['en_stock','en_cours'],true)) { db_rollback(); json_response(false,"Bobine « {$bob['statut']} » : consommation impossible."); }
+            // Stock ERP (films_restants) : seule référence retirée par les points ;
+            // la valeur EMUCI (stock_systeme) baisse du même nombre sans la remplacer.
+            $stock_avant = (int)$bob['films_restants'];
+            if ($qte > $stock_avant) { db_rollback(); json_response(false,"Stock insuffisant. Stock actuel : $stock_avant films."); }
+            $stock_apres = $stock_avant - $qte;
+            $nouveau_statut = $stock_apres === 0 ? 'epuisee' : 'en_cours';
             db_query("INSERT INTO consommations_bobines (bobine_id,site_id,date_conso,quantite,stock_avant,stock_apres,notes,created_by) VALUES (?,?,?,?,?,?,?,?)",
                 [$bobine_id,$bob['site_id'],$date_conso,$qte,$stock_avant,$stock_apres,$notes,$user['id']]);
             $conso_id = (int)db_last_id();
-            db_query("UPDATE op_bobines SET stock_systeme=?,statut=?,films_restants=? WHERE id=?",[$stock_apres,$nouveau_statut,$stock_apres,$bobine_id]);
+            db_query("UPDATE op_bobines SET stock_systeme=GREATEST(0,stock_systeme-?),statut=?,films_restants=? WHERE id=?",[$qte,$nouveau_statut,$stock_apres,$bobine_id]);
             db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,ref_id,created_by) VALUES (?,?,?,?,?,?,?,?)",
                 [$bobine_id,'sortie',-$qte,$stock_avant,$stock_apres,"Consommation du $date_conso",$conso_id,$user['id']]);
             audit_log($user['id'],'UPDATE','operations',$bobine_id,"Consommation {$bob['numero']}: -$qte (stock: $stock_avant -> $stock_apres)");
@@ -204,6 +222,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         require_permission($perm_module_bob,'can_update');
         $id = (int)($_POST['id'] ?? 0);
         $bob = db_fetch_one("SELECT * FROM op_bobines WHERE id=?",[$id]);
+        if (!$bob) json_response(false,'Bobine introuvable.');
+        if (!_bob_site_ok($bob)) json_response(false,'Accès refusé.');
+        if (!in_array($bob['statut'],['en_stock','en_cours','absente'],true)) json_response(false,"Une bobine « {$bob['statut']} » ne peut pas être retirée.");
         db_query("UPDATE op_bobines SET statut='retiree' WHERE id=?",[$id]);
         audit_log($user['id'],'DELETE','operations',$id,"Retrait bobine {$bob['numero']}");
         json_response(true,'Bobine retirée.');
@@ -219,6 +240,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         if (!in_array($statut, $allowed)) json_response(false,'Statut invalide.');
         $bob = db_fetch_one("SELECT * FROM op_bobines WHERE id=?",[$id]);
         if (!$bob) json_response(false,'Bobine introuvable.');
+        if (!_bob_site_ok($bob)) json_response(false,'Accès refusé.');
+        // Seules les bobines en stock / en utilisation changent entre ces deux états :
+        // une bobine perdue, retirée, épuisée ou absente ne « revient » pas ainsi.
+        if (!in_array($bob['statut'],['en_stock','en_cours'],true))
+            json_response(false,"Une bobine « {$bob['statut']} » ne peut pas changer de statut ainsi.");
         // En utilisation → En stock : libre avec motif
         // En stock → En utilisation : réservé aux non-coordinateurs (coordinateurs doivent demander)
         if ($statut==='en_cours' && ($role_slug==='coordinateur_site')) {
@@ -237,6 +263,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         if (!$motif) json_response(false,'Le motif est obligatoire pour déclarer une perte.');
         $bob = db_fetch_one("SELECT * FROM op_bobines WHERE id=?",[$id]);
         if (!$bob) json_response(false,'Bobine introuvable.');
+        if (!_bob_site_ok($bob)) json_response(false,'Accès refusé.');
         if (!in_array($bob['statut'],['en_cours','en_stock','absente'])) json_response(false,'Cette bobine ne peut pas être déclarée perdue.');
         if ($bob['statut'] === 'absente' && $is_coord) json_response(false,'Une bobine absente est déclarée perdue par le gestionnaire de stock bobines.');
         db_query("UPDATE op_bobines SET statut='perdue', notes_perte=? WHERE id=?",[$motif,$id]);
@@ -707,7 +734,9 @@ endif;
     <i class="ph ph-warning" aria-hidden="true"></i> Écarts <?= $nb_ecarts_ouverts>0?"<span style='background:var(--danger);color:white;border-radius:10px;padding:1px 7px;font-size:12px;margin-left:4px'>$nb_ecarts_ouverts</span>":'' ?>
   </button>
   <?php if(can($perm_module_bob,'can_create') && !$is_coord): ?>
+  <?php if(in_array($role_slug,['admin','superadmin'],true)): ?>
   <button class="tab-btn" onclick="showTab('conso',this)"><i class="ph ph-chart-line-down" aria-hidden="true"></i> Consommation</button>
+  <?php endif; ?>
   <?php endif; ?>
   <?php if(can($perm_module_bob,'can_create') && !$is_coord): ?>
   <button class="tab-btn" onclick="showTab('nouvelle',this)"><i class="ph ph-plus" aria-hidden="true"></i> Nouvelle</button>
@@ -818,7 +847,7 @@ endif;
             <td style="text-align:center;white-space:nowrap">
               <button class="btn btn-secondary btn-sm" onclick="viewBobine(<?= $b['id'] ?>)" title="Détail"><i class="ph ph-magnifying-glass" aria-hidden="true"></i></button>
               <?php if(can($perm_module_bob,'can_create') && $b['statut']!=='retiree' && $b['statut']!=='epuisee'): ?>
-              <button class="btn btn-sm" style="background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;padding:4px 8px;border-radius:6px;cursor:pointer;margin-left:2px" onclick="openConso(<?= $b['id'] ?>,'<?= h($b['numero']) ?>',<?= $b['stock_systeme'] ?>)" title="Saisir consommation"><i class="ph ph-chart-line-down" aria-hidden="true"></i></button>
+              <?php if(in_array($role_slug,['admin','superadmin'],true)): ?><button class="btn btn-sm" style="background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;padding:4px 8px;border-radius:6px;cursor:pointer;margin-left:2px" onclick="openConso(<?= $b['id'] ?>,'<?= h($b['numero']) ?>',<?= $b['stock_systeme'] ?>)" title="Saisir consommation"><i class="ph ph-chart-line-down" aria-hidden="true"></i></button><?php endif; ?>
               <?php endif; ?>
               <?php if(can($perm_module_bob,'can_create') && $b['statut']!=='retiree'): ?>
               <button class="btn btn-sm" style="background:#fff8e7;color:#b7791f;border:1px solid #f6d860;padding:4px 8px;border-radius:6px;cursor:pointer;margin-left:2px" onclick="openDeclarerEcart(<?= $b['id'] ?>,'<?= h($b['numero']) ?>',<?= $b['stock_systeme'] ?>)" title="Déclarer un écart"><i class="ph ph-warning" aria-hidden="true"></i></button>

@@ -32,6 +32,12 @@ if (!$can_valider && !$is_coord) {
 
 $sites_list = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
 
+// Un coordinateur ne consulte ni ne modifie que son site.
+function _vsm_site_ok(int $site_id): bool {
+    global $is_coord, $site_force;
+    return !$is_coord || ($site_force > 0 && $site_id === $site_force);
+}
+
 // ============================================================
 // AJAX
 // ============================================================
@@ -45,6 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             $site_id = (int)($_POST['site_id'] ?? 0);
             $date    = trim($_POST['date'] ?? date('Y-m-d'));
             if (!$site_id) json_response(false, 'Site obligatoire.');
+            if (!_vsm_site_ok($site_id)) json_response(false, 'Accès refusé.');
 
             // ── Comparaison : seulement sur le point 18h VALIDÉ, contre
             //    l'import EMUCI de cette date (includes/validation_stock.php).
@@ -192,6 +199,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
     // ── VALIDER AUTO (écart = 0)
     if ($action === 'valider_auto') {
+        if (!$can_valider) json_response(false, 'Accès refusé.');
         $site_id = (int)($_POST['site_id'] ?? 0);
         $date    = trim($_POST['date'] ?? date('Y-m-d'));
         // Une décision du GSB (dont un réajustement en attente de la réponse
@@ -324,9 +332,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         try {
             // Si réajustement : aligner films_restants sur la valeur EMUCI (stock_systeme)
             if ($decision === 'reajuste') {
+                // Valeurs relues côté serveur : l'écran peut être resté ouvert
+                // avant un nouvel import ou un nouveau point.
+                $calc_reaj = [];
+                foreach (vsm_calculer($site_id, $date)['bobines_detail'] as $bl)
+                    $calc_reaj[(int)$bl['bobine_id']] = $bl;
                 foreach ($ecarts as $e) {
-                    $stock_av = max(0, (int)$e['films_restants']); // ERP EMUCI avant ajust.
-                    $nouveau  = max(0, (int)$e['stock_systeme']);   // cible = valeur EMUCI
+                    $bid_r    = (int)$e['bobine_id'];
+                    $stock_av = (int)db_fetch_value("SELECT films_restants FROM op_bobines WHERE id=? FOR UPDATE", [$bid_r]);
+                    $emuci_r  = isset($calc_reaj[$bid_r]) ? (int)$calc_reaj[$bid_r]['stock_systeme'] : (int)$e['stock_systeme'];
+                    // Cible = valeur EMUCI du soir de $date, moins les films que des
+                    // points plus récents ont déjà retirés (sans quoi ils
+                    // réapparaîtraient en stock).
+                    $nouveau  = max(0, $emuci_r - vsm_films_retires_apres($bid_r, $date));
                     $diff     = $nouveau - $stock_av;
                     // Statut recalculé : une bobine « épuisée » remise à 19 films
                     // restait épuisée, invisible des points journaliers.
@@ -334,11 +352,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                          statut = CASE WHEN statut='epuisee' AND ? > 0 THEN 'en_cours'
                                        WHEN statut='en_cours' AND ? <= 0 THEN 'epuisee'
                                        ELSE statut END WHERE id=?",
-                        [$nouveau, $nouveau, $nouveau, $e['bobine_id']]);
+                        [$nouveau, $nouveau, $nouveau, $bid_r]);
                     db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
                               VALUES (?,?,?,?,?,?,?)",
-                        [$e['bobine_id'],'ajustement_gsb',$diff,$stock_av,$nouveau,
-                         "Réajustement GSB matin $date (ERP EMUCI $stock_av → EMUCI $nouveau) : $commentaire",
+                        [$bid_r,'ajustement_gsb',$diff,$stock_av,$nouveau,
+                         "Réajustement GSB matin $date (ERP $stock_av → EMUCI $emuci_r" . ($emuci_r !== $nouveau ? ", moins " . ($emuci_r - $nouveau) . " retirés depuis" : '') . " = $nouveau) : $commentaire",
                          $user['id']]);
                 }
             }
@@ -508,7 +526,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         try {
             foreach ($corrections as $c) {
                 $stock_av = (int)db_fetch_value("SELECT films_restants FROM op_bobines WHERE id=?", [$c['bobine_id']]);
-                $nouveau  = $inv_recompte !== null ? $stock_av : (int)$c['films_final'];
+                $nouveau  = $inv_recompte !== null ? $stock_av
+                          : max(0, (int)$c['films_final'] - vsm_films_retires_apres((int)$c['bobine_id'], $date));
                 $diff     = $nouveau - $stock_av;
                 db_query("UPDATE op_bobines SET films_restants=?,
                          statut = CASE WHEN statut='epuisee' AND ? > 0 THEN 'en_cours'
@@ -607,7 +626,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
                 if ($action_bob === 'valider') {
                     $stock_av = (int)db_fetch_value("SELECT films_restants FROM op_bobines WHERE id=?", [$bobine_id]);
-                    $nouveau  = $inv_recompte !== null ? $stock_av : (int)$corr['films_final'];
+                    $nouveau  = $inv_recompte !== null ? $stock_av
+                              : max(0, (int)$corr['films_final'] - vsm_films_retires_apres($bobine_id, $date));
                     $diff     = $nouveau - $stock_av;
                     // Appliquer la valeur corrigée au stock physique
                     db_query("UPDATE op_bobines SET films_restants=?,
@@ -729,6 +749,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     if ($action === 'coord_repond_reajust') {
         if (!$is_coord) json_response(false, 'Accès refusé.');
         $site_id     = (int)($_POST['site_id'] ?? 0);
+        if (!_vsm_site_ok($site_id)) json_response(false, 'Accès refusé : ce site n\'est pas le vôtre.');
         $date        = trim($_POST['date'] ?? date('Y-m-d'));
         $bobines_raw = $_POST['bobines_json'] ?? '[]';
         $bobines     = json_decode($bobines_raw, true) ?: [];
@@ -741,6 +762,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 $films_correct = (int)($b['films_correct'] ?? 0);
                 $motif_coord   = trim($b['motif_coord'] ?? '');
                 if (!$bobine_id) continue;
+                if ($films_correct < 0) json_response(false, 'Le nombre de films ne peut pas être négatif.');
+                if (!db_fetch_value("SELECT 1 FROM op_bobines WHERE id=? AND site_id=?", [$bobine_id, $site_id]))
+                    json_response(false, 'Bobine introuvable sur votre site.');
                 if (!$motif_coord) json_response(false, 'Le motif est obligatoire pour chaque bobine.');
 
                 // Ne pas re-soumettre une bobine déjà validée par le GSB
@@ -815,6 +839,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     if ($action === 'get_bobines_detail') {
         $site_id = (int)($_POST['site_id'] ?? 0);
         if (!$site_id) json_response(false,'Site obligatoire.');
+        if (!_vsm_site_ok($site_id)) json_response(false, 'Accès refusé.');
         $bobines = db_fetch_all(
             "SELECT b.id, b.numero, b.type_code, b.serie,
                     b.films_restants, b.stock_systeme, b.statut, b.format

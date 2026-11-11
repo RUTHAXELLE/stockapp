@@ -197,7 +197,7 @@ function _pj_deduire_stock(array $point): void {
     $films_recomptes = inv_bobines_recompte_apres($site_id, (string)$point['date_point']) !== null;
 
     $films = db_fetch_all(
-        "SELECT fu.*, b.numero, b.films_restants FROM op_films_utilises fu
+        "SELECT fu.*, b.numero, b.films_restants, b.site_id AS bobine_site FROM op_films_utilises fu
          JOIN op_bobines b ON b.id = fu.bobine_id WHERE fu.point_id=? FOR UPDATE", [$point_id]);
     $besoin_bob = [];
     foreach ($films as $f) {
@@ -206,7 +206,9 @@ function _pj_deduire_stock(array $point): void {
     }
     foreach ($films as $f) {
         $b = (int)$f['bobine_id'];
-        if (!$films_recomptes && isset($besoin_bob[$b]) && $besoin_bob[$b] > (int)$f['films_restants'])
+        if ((int)$f['bobine_site'] !== $site_id)
+            $manques[$b] = "bobine {$f['numero']} : elle n'appartient pas au site du point";
+        elseif (!$films_recomptes && isset($besoin_bob[$b]) && $besoin_bob[$b] > (int)$f['films_restants'])
             $manques[$b] = "bobine {$f['numero']} : {$f['films_restants']} films restants, {$besoin_bob[$b]} demandés";
     }
     // Garde-fou inventaire (rivets, PMMA) : un inventaire validé daté du
@@ -323,6 +325,14 @@ function _site_bloque_ecart(int $site_id, string $date_today): ?string {
     return null;
 }
 
+// Un coordinateur n'agit que sur son site ; les autres rôles autorisés voient tout.
+function _pj_site_autorise(int $site_id): bool {
+    $u = current_user();
+    if (($u['role_slug'] ?? '') === 'coordinateur_site')
+        return $site_id > 0 && $site_id === (int)($u['site_id'] ?? 0);
+    return true;
+}
+
 // ── AJAX
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     header('Content-Type: application/json');
@@ -343,7 +353,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // Primo. Les rivets/films consommés restent dans les champs partagés
         // ci-dessous (stock unique, saisie globale).
         $nb_vp_dup      = (int)($_POST['nb_vp_duplicata']     ?? 0);
-        $nb_camion_dup  = (int)($_POST['nb_camion_duplicata'] ?? 0);
+        $nb_camion_dup  = max(0, (int)($_POST['nb_camion_duplicata'] ?? 0));
         $nb_semi_dup    = (int)($_POST['nb_semi_duplicata']   ?? 0);
         $nb_moto_dup    = (int)($_POST['nb_moto_duplicata']   ?? 0);
         // Un duplicata VP / camion peut ne remplacer qu'une des deux plaques :
@@ -351,20 +361,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $plq_vp_dup     = (isset($_POST['plaques_vp_duplicata'])     && $_POST['plaques_vp_duplicata']     !== '') ? (int)$_POST['plaques_vp_duplicata']     : $nb_vp_dup * 2;
         $plq_camion_dup = (isset($_POST['plaques_camion_duplicata']) && $_POST['plaques_camion_duplicata'] !== '') ? (int)$_POST['plaques_camion_duplicata'] : $nb_camion_dup * 2;
         $nb_vp_pi       = (int)($_POST['nb_vp_postimmat']     ?? 0);
-        $nb_camion_pi   = (int)($_POST['nb_camion_postimmat'] ?? 0);
+        $nb_camion_pi   = max(0, (int)($_POST['nb_camion_postimmat'] ?? 0));
         $nb_semi_pi     = (int)($_POST['nb_semi_postimmat']   ?? 0);
         $nb_moto_pi     = (int)($_POST['nb_moto_postimmat']   ?? 0);
         $riv_gonfl      = (int)($_POST['rivets_gonflables']     ?? 0);
-        $riv_gonfl_end  = (int)($_POST['rivets_gonflables_end'] ?? 0);
+        $riv_gonfl_end  = max(0, (int)($_POST['rivets_gonflables_end'] ?? 0));
         $riv_eclate     = (int)($_POST['rivets_eclates']         ?? 0);
         $riv_eclate_end = (int)($_POST['rivets_eclates_end']    ?? 0);
         $riv_endomm     = $riv_gonfl_end + $riv_eclate_end;
         $total_gonfl    = $riv_gonfl  + $riv_gonfl_end;
         $total_eclate   = $riv_eclate + $riv_eclate_end;
         $rivets_util    = $riv_gonfl  + $riv_eclate;
-        $np_conc    = (int)($_POST['non_poses_concessionnaires'] ?? 0);
-        $np_usag    = (int)($_POST['non_poses_usagers'] ?? 0);
-        $heures     = (float)($_POST['nb_heures'] ?? 8);
+        $np_conc    = max(0, (int)($_POST['non_poses_concessionnaires'] ?? 0));
+        $np_usag    = max(0, (int)($_POST['non_poses_usagers'] ?? 0));
+        $heures     = max(0.0, min(24.0, (float)($_POST['nb_heures'] ?? 8)));
         $obs        = trim($_POST['observations'] ?? '');
         $films_data = json_decode($_POST['films_data'] ?? '[]', true);
         $pmma_data  = json_decode($_POST['pmma_data']  ?? '[]', true);
@@ -405,6 +415,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!$site_id)                              json_response(false, 'Veuillez sélectionner un site.');
         if (!$date_point)                           json_response(false, 'Veuillez saisir une date.');
         if (!in_array($type_point, $types_valides)) json_response(false, 'Veuillez sélectionner un type de point (9h, 13h ou 18h).');
+        if (!can('operations', 'can_create')) json_response(false, 'Accès refusé.');
+        if (!_pj_site_autorise($site_id)) json_response(false, "Accès refusé : ce site n'est pas le vôtre.");
+        // Date réelle et jamais dans le futur : un point daté d'un jour à venir
+        // rendait « périmées » toutes les comparaisons de stock du site.
+        $dt_pt = DateTime::createFromFormat('Y-m-d', $date_point);
+        if (!$dt_pt || $dt_pt->format('Y-m-d') !== $date_point) json_response(false, 'Date invalide.');
+        if ($date_point > date('Y-m-d')) json_response(false, 'Un point ne peut pas être daté dans le futur.');
 
         // ── Blocage coordinateur si écart non résolu par GSB
         if (($user['role_slug'] ?? '') === 'coordinateur_site') {
@@ -575,8 +592,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             $pmma_total_endomm = 0;
             foreach ($pmma_data as $pd) {
                 $type_pmma  = trim($pd['type_pmma'] ?? '');
-                $pm_util    = (int)($pd['utilises']    ?? 0);
-                $pm_endomm  = (int)($pd['endommages']  ?? 0);
+                $pm_util    = max(0, (int)($pd['utilises']    ?? 0));
+                $pm_endomm  = max(0, (int)($pd['endommages']  ?? 0));
                 // Non conformes : PMMA reçus qui ne respectent pas les règles,
                 // sortis du stock utilisable comme les endommagés. Ignorés si
                 // la colonne n'existe pas encore (migration non passée).
@@ -607,16 +624,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             foreach ($films_data as $fd) {
                 $bobine_id    = (int)($fd['bobine_id'] ?? 0);
                 $tv_id = max(1, (int)($fd['type_vehicule_id'] ?? 1));
-                $f_util       = (int)($fd['films_utilises'] ?? 0);
-                $f_endomm     = (int)($fd['films_endommages'] ?? 0);
+                $f_util       = max(0, (int)($fd['films_utilises'] ?? 0));
+                $f_endomm     = max(0, (int)($fd['films_endommages'] ?? 0));
                 // Films non conformes (reçus hors règles) : déclarés et tracés,
                 // mais ne sortent PAS du stock de la bobine (décision du
                 // 22/10/2026) — seuls utilisés + endommagés sont retirés.
                 $f_nc         = _pj_films_nc() ? max(0, (int)($fd['films_non_conformes'] ?? 0)) : 0;
                 if (!$bobine_id || ($f_util + $f_endomm + $f_nc) === 0) continue;
 
-                $bobine = db_fetch_one("SELECT * FROM op_bobines WHERE id=?", [$bobine_id]);
+                $bobine = db_fetch_one("SELECT * FROM op_bobines WHERE id=? FOR UPDATE", [$bobine_id]);
                 if (!$bobine) continue;
+                // Une bobine d'un autre site, perdue, retirée ou absente ne se déclare pas.
+                if ((int)$bobine['site_id'] !== $site_id)
+                    throw new Exception("Bobine {$bobine['numero']} : elle n'appartient pas à ce site.");
+                if (in_array($bobine['statut'], ['perdue', 'retiree', 'absente'], true))
+                    throw new Exception("Bobine {$bobine['numero']} : statut « {$bobine['statut']} », elle ne peut pas être utilisée.");
 
                 $total_sortis = $f_util + $f_endomm;
                 if ($inv_recompte === null && $bobine['films_restants'] < $total_sortis)
@@ -863,6 +885,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $site_id    = (int)($_POST['site_id']   ?? 0);
         $date_point = trim($_POST['date_point'] ?? '');
         $type_point = trim($_POST['type_point'] ?? 'final');
+        if (!_pj_site_autorise($site_id)) json_response(false, 'Accès refusé.');
         $point = db_fetch_one(
             "SELECT p.*, CONCAT(u.prenom,' ',u.nom) AS agent
              FROM op_points_journaliers p
@@ -871,6 +894,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             [$site_id, $date_point, $type_point]
         );
         if (!$point) json_response(false, 'Aucun point pour cette date.');
+        if (!_pj_site_autorise((int)$point['site_id'])) json_response(false, 'Accès refusé.');
         $point['films'] = db_fetch_all(
             "SELECT fu.*, b.numero AS bobine_num, b.type_code, tv.libelle AS type_veh
              FROM op_films_utilises fu
@@ -892,6 +916,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     // ── DÉTAIL POINT (PMMA + films pour la vue détail)
     if ($action === 'get_point_detail') {
         $point_id = (int)($_POST['point_id'] ?? 0);
+        $site_pt  = (int)db_fetch_value("SELECT site_id FROM op_points_journaliers WHERE id=?", [$point_id]);
+        if (!_pj_site_autorise($site_pt)) json_response(false, 'Accès refusé.');
         $pmma  = db_fetch_all("SELECT * FROM op_pmma_utilises WHERE point_id=? ORDER BY type_pmma", [$point_id]);
         $films = db_fetch_all(
             "SELECT fu.*, b.numero AS bobine_num, b.type_code, tv.libelle AS type_veh
@@ -909,6 +935,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $point_id = (int)($_POST['point_id'] ?? 0);
         $point = db_fetch_one("SELECT * FROM op_points_journaliers WHERE id=?", [$point_id]);
         if (!$point) json_response(false, 'Point introuvable.');
+        if (!_pj_site_autorise((int)$point['site_id'])) json_response(false, 'Accès refusé.');
         $point['films'] = db_fetch_all("SELECT * FROM op_films_utilises WHERE point_id=?", [$point_id]);
         // Lignes PMMA et déclarations d'endommagement : rechargées dans le
         // formulaire, sinon une simple mise à jour du point effaçait la
@@ -998,6 +1025,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $justification = trim($_POST['justification_superviseur'] ?? '');
         $point = db_fetch_one("SELECT * FROM op_points_journaliers WHERE id=?", [$point_id]);
         if (!$point) json_response(false, 'Point introuvable.');
+        if (!in_array($point['statut'], ['en_attente_validation', 'suivi'], true))
+            json_response(false, 'Ce point ne peut pas être validé (statut : ' . $point['statut'] . ').');
         if ($manque = _pj_elements_manquants($point))
             json_response(false, "Impossible de valider : ce point ne comporte aucun " . implode(', ', $manque) . ". Demandez une modification pour correction.");
 
@@ -1014,6 +1043,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         db_begin();
         try {
+            // Verrou sur le point puis relecture : deux validations simultanées
+            // (double clic, deux superviseurs) ne retirent le stock qu'une fois.
+            $verrou = db_fetch_one("SELECT statut, stock_deduit FROM op_points_journaliers WHERE id=? FOR UPDATE", [$point_id]);
+            if (!$verrou || !in_array($verrou['statut'], ['en_attente_validation', 'suivi'], true)) {
+                db_rollback();
+                json_response(false, 'Ce point vient d\'être traité par quelqu\'un d\'autre.');
+            }
+            $point['stock_deduit'] = $verrou['stock_deduit'];
             // Règle 18h : la validation du point 18h retire le stock (une seule
             // fois — un point enregistré avant la règle l'a déjà retiré). Les
             // autres types ne retirent rien ; s'ils avaient retiré, on remet.
@@ -1410,9 +1447,12 @@ $points = db_fetch_all(
 );
 
 // KPIs du mois
-$kpi_engins  = array_sum(array_column($points, 'total_engins'));
-$kpi_plaques = array_sum(array_column($points, 'total_plaques'));
-$kpi_rivets  = array_sum(array_column($points, 'rivets_utilises'));
+// Chiffres du mois : points 18h validés seulement (comme le tableau de bord) —
+// les 9h/13h, brouillons et points rejetés doublaient ou faussaient les totaux.
+$points_kpi  = array_filter($points, fn($p) => $p['statut'] === 'valide' && in_array($p['type_point'], ['point_18h', 'historique'], true));
+$kpi_engins  = array_sum(array_column($points_kpi, 'total_engins'));
+$kpi_plaques = array_sum(array_column($points_kpi, 'total_plaques'));
+$kpi_rivets  = array_sum(array_column($points_kpi, 'rivets_utilises'));
 $kpi_valides = count(array_filter($points, fn($p) => $p['statut'] === 'valide'));
 
 // Stock rivets — chips : coordinateur voit uniquement son site
