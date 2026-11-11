@@ -21,6 +21,32 @@ $role_slug   = $user['role_slug'] ?? '';
 $page_title  = 'Articles';
 $active_page = 'consommables';
 
+// Stock central (articles.stock_global) = stock des dépôts : sites de type
+// « magasin » et « entrepôt ». Les commandes internes expédient déjà depuis ces
+// deux types de sites ; les sites terrain ne comptent pas.
+function _art_est_depot(int $site_id): bool {
+    return (bool)db_fetch_value("SELECT COUNT(*) FROM sites WHERE id=? AND type IN ('magasin','entrepot')", [$site_id]);
+}
+
+// Débite l'entrepôt de la part que le magasin n'a pas pu fournir. Retourne la
+// quantité restée sans stock (non bloquant, comme ach_debiter_stock_magasin).
+function _art_debiter_entrepot(int $article_id, int $qte): int {
+    if ($qte <= 0) return 0;
+    $sites = db_fetch_all(
+        "SELECT ss.site_id, ss.quantite FROM stock_site ss JOIN sites s ON s.id = ss.site_id
+          WHERE ss.article_id = ? AND s.type = 'entrepot' AND s.actif = 1 AND ss.quantite > 0
+          ORDER BY ss.quantite DESC, ss.site_id FOR UPDATE", [$article_id]);
+    $reste = $qte;
+    foreach ($sites as $st) {
+        if ($reste <= 0) break;
+        $q = min($reste, (int)$st['quantite']);
+        db_query("UPDATE stock_site SET quantite = quantite - ? WHERE article_id = ? AND site_id = ?",
+            [$q, $article_id, (int)$st['site_id']]);
+        $reste -= $q;
+    }
+    return $reste;
+}
+
 $TYPES_ARTICLE = [
     'papeterie'   => 'Papeterie',
     'encre'       => 'Encre / Cartouche',
@@ -149,12 +175,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
                                  ON DUPLICATE KEY UPDATE quantite=VALUES(quantite)",
                                 [$article_id, $site_id, $qte_site]
                             );
-                            // Un stock posé au magasin est du stock central
-                            // distribuable : sans ce report, l'article restait
-                            // à 0 dans la liste et la Distribution le refusait.
-                            $est_magasin = (bool)db_fetch_value(
-                                "SELECT COUNT(*) FROM sites WHERE id=? AND type='magasin'", [$site_id]);
-                            if ($est_magasin && $qte_site !== $ancienne) {
+                            // Un stock posé au magasin ou à l'entrepôt est du stock
+                            // central distribuable : sans ce report, l'article
+                            // restait à 0 (ou en dessous) dans la liste et la
+                            // Distribution le refusait.
+                            if (_art_est_depot($site_id) && $qte_site !== $ancienne) {
                                 db_query("UPDATE articles SET stock_global = GREATEST(0, stock_global + ?) WHERE id=?",
                                     [$qte_site - $ancienne, $article_id]);
                             }
@@ -385,6 +410,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             // que l'expédition d'une commande, pages/commandes.php). Un
             // manque n'est pas bloquant : il est signalé dans l'audit.
             $deb = ach_debiter_stock_magasin($article_id, $qte);
+            // Ce que le magasin ne couvre pas sort de l'entrepôt (le stock central
+            // comptant les deux) ; sans cela le stock central baissait sans que
+            // l'entrepôt bouge.
+            $deb['manquant'] = _art_debiter_entrepot($article_id, (int)$deb['manquant']);
             // Stock site + — sauf le matériel et outillage industriel et les
             // consommables informatiques, qui deviennent des équipements
             // (opérationnels / informatiques) du site, une fiche par unité.
@@ -421,7 +450,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             }
             audit_log($user['id'], 'CREATE', 'articles', $article_id,
                 "Distribution $qte {$article['unite']}(s) → site:$site_id (BL:{$upload_bl['filename']})"
-                . ($deb['manquant'] > 0 ? " — {$deb['manquant']} non couvert(s) par le stock magasin" : ''));
+                . ($deb['manquant'] > 0 ? " — {$deb['manquant']} non couvert(s) par les stocks magasin et entrepôt" : ''));
             db_commit();
             json_response(true, "Distribution de $qte {$article['unite']}(s) enregistrée. Stock restant : $new_stock."
                 . ($equip_op ? " Équipements créés sur le site : " . count($nums_op) . '.' : ''));
@@ -492,9 +521,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             }
             db_query("UPDATE stock_site SET quantite = quantite - ? WHERE article_id=? AND site_id=?",
                 [$qte, $article_id, $site_id]);
-            // Le stock central n'agrège que ce qui est distribuable (magasin) :
-            // il ne bouge que si la sortie se fait au magasin lui-même.
-            if ((bool)db_fetch_value("SELECT COUNT(*) FROM sites WHERE id=? AND type='magasin'", [$site_id])) {
+            // Le stock central n'agrège que les dépôts (magasin et entrepôt) :
+            // il ne bouge que si la sortie se fait dans l'un d'eux.
+            if (_art_est_depot($site_id)) {
                 db_query("UPDATE articles SET stock_global = GREATEST(0, stock_global - ?) WHERE id=?", [$qte, $article_id]);
             }
             $libelle_motif = $motifs_ok[$motif] . ($note !== '' ? " — $note" : '');
@@ -528,7 +557,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         try {
             db_query("INSERT INTO stock_site (article_id,site_id,quantite) VALUES (?,?,?) ON DUPLICATE KEY UPDATE quantite=VALUES(quantite)",
                 [$article_id,$site_id,$new_qte]);
-            db_query("UPDATE articles SET stock_global = stock_global + ? WHERE id=?", [$diff, $article_id]);
+            // Un site terrain n'entre pas dans le stock central.
+            if (_art_est_depot($site_id))
+                db_query("UPDATE articles SET stock_global = GREATEST(0, stock_global + ?) WHERE id=?", [$diff, $article_id]);
             audit_log($user['id'],'UPDATE','articles',$article_id,
                 "Ajustement site:$site_id : $old_qte → $new_qte ($motif)");
             db_commit();
@@ -1328,7 +1359,7 @@ function viewArticle(id){
     document.getElementById('adB').innerHTML=`
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px 18px;margin-bottom:20px">
         ${[['Code',r.code],['Unité',r.unite],['Type',r.type_article||'—'],
-           ['Stock central','<strong style="font-size:20px;font-family:\'Plus Jakarta Sans\',sans-serif;color:var(--navy)">'+r.stock_global+' '+r.unite+'</strong>'],
+           ['Stock central (magasin + entrepôt)','<strong style="font-size:20px;font-family:\'Plus Jakarta Sans\',sans-serif;color:var(--navy)">'+r.stock_global+' '+r.unite+'</strong>'],
            ['Prix unitaire',r.prix_unitaire>0?r.prix_unitaire.toLocaleString('fr-FR')+' FCFA':'—'],
            ['Seuil alerte',r.seuil_alerte]
           ].map(([l,v])=>`<div style="padding:6px 0;border-bottom:1px solid var(--border)">
