@@ -1045,12 +1045,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         try {
             // Verrou sur le point puis relecture : deux validations simultanées
             // (double clic, deux superviseurs) ne retirent le stock qu'une fois.
-            $verrou = db_fetch_one("SELECT statut, stock_deduit FROM op_points_journaliers WHERE id=? FOR UPDATE", [$point_id]);
+            $verrou = db_fetch_one("SELECT statut" . (_pj_regle_18h() ? ", stock_deduit" : "") . " FROM op_points_journaliers WHERE id=? FOR UPDATE", [$point_id]);
             if (!$verrou || !in_array($verrou['statut'], ['en_attente_validation', 'suivi'], true)) {
                 db_rollback();
                 json_response(false, 'Ce point vient d\'être traité par quelqu\'un d\'autre.');
             }
-            $point['stock_deduit'] = $verrou['stock_deduit'];
+            if (isset($verrou['stock_deduit'])) $point['stock_deduit'] = $verrou['stock_deduit'];
             // Règle 18h : la validation du point 18h retire le stock (une seule
             // fois — un point enregistré avant la règle l'a déjà retiré). Les
             // autres types ne retirent rien ; s'ils avaient retiré, on remet.
