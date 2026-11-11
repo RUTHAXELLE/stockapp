@@ -38,6 +38,58 @@ function _vsm_site_ok(int $site_id): bool {
     return !$is_coord || ($site_force > 0 && $site_id === $site_force);
 }
 
+// Date d'une action : une vraie date Y-m-d, jamais dans le futur.
+function _vsm_date_post(): string {
+    $d  = trim($_POST['date'] ?? date('Y-m-d'));
+    $dt = DateTime::createFromFormat('Y-m-d', $d);
+    if (!$dt || $dt->format('Y-m-d') !== $d) json_response(false, 'Date invalide.');
+    if ($d > date('Y-m-d')) json_response(false, 'La date ne peut pas être dans le futur.');
+    return $d;
+}
+
+function _vsm_site_existe(int $site_id): void {
+    if ($site_id <= 0 || !db_fetch_value("SELECT 1 FROM sites WHERE id=?", [$site_id]))
+        json_response(false, 'Site introuvable.');
+}
+
+// Applique une correction du coordinateur au stock (verrou, mouvement, trace
+// dans ecarts_bobines, correction passée à « valide »). Commun à la validation
+// en bloc et à la décision bobine par bobine.
+function _vsm_appliquer_correction(array $corr, string $date, $inv_recompte, int $uid): void {
+    $bobine_id = (int)$corr['bobine_id'];
+    // Verrou : un point validé en même temps ne doit pas voir sa déduction écrasée.
+    $stock_av = (int)db_fetch_value("SELECT films_restants FROM op_bobines WHERE id=? FOR UPDATE", [$bobine_id]);
+    $nouveau  = $inv_recompte !== null ? $stock_av
+              : max(0, (int)$corr['films_final'] - vsm_films_retires_apres($bobine_id, $date));
+    $diff     = $nouveau - $stock_av;
+    db_query("UPDATE op_bobines SET films_restants=?,
+         statut = CASE WHEN statut='epuisee' AND ? > 0 THEN 'en_cours'
+                       WHEN statut='en_cours' AND ? <= 0 THEN 'epuisee'
+                       ELSE statut END WHERE id=?",
+        [$nouveau, $nouveau, $nouveau, $bobine_id]);
+    if ($diff !== 0) {
+        db_query(
+            "INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
+             VALUES (?,?,?,?,?,?,?)",
+            [$bobine_id,'correction_coord',$diff,$stock_av,$nouveau,
+             "Correction coordinateur validée ($date) : ".($corr['reponse_coord']??''),$uid]
+        );
+    }
+    // Réconcilie ecarts_bobines : sans cette ligne, _decisions_bobines_site
+    // renverrait encore les valeurs de l'écart initial.
+    db_query(
+        "INSERT INTO ecarts_bobines
+         (bobine_id,date_constat,stock_systeme,stock_physique,ecart,motif,source,statut,resolu_at,resolu_par,resolution_notes,created_by)
+         VALUES (?,?,?,?,0,?,'validation_stock','resolu',NOW(),?,'Correction coordinateur appliquée',?)",
+        [$bobine_id, $date, $nouveau, $nouveau,
+         $inv_recompte !== null
+            ? "Correction close sans modifier le stock : " . inv_bobines_msg_recompte($inv_recompte)
+            : "Stock réconcilié : $nouveau films (correction coord. validée par GSB)",
+         $uid, $uid]
+    );
+    db_query("UPDATE corrections_bobines SET statut='valide',traite_at=NOW() WHERE id=?", [(int)$corr['id']]);
+}
+
 // ============================================================
 // AJAX
 // ============================================================
@@ -49,7 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     if ($action === 'calculer_ecarts') {
         try {
             $site_id = (int)($_POST['site_id'] ?? 0);
-            $date    = trim($_POST['date'] ?? date('Y-m-d'));
+            $date    = _vsm_date_post();
             if (!$site_id) json_response(false, 'Site obligatoire.');
             if (!_vsm_site_ok($site_id)) json_response(false, 'Accès refusé.');
 
@@ -180,8 +232,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     if ($action === 'relancer_comparaison') {
         if (!$can_valider) json_response(false, 'Accès refusé.');
         $site_id = (int)($_POST['site_id'] ?? 0);
-        $date    = trim($_POST['date'] ?? '');
-        if (!$site_id || $date === '') json_response(false, 'Site et date obligatoires.');
+        $date    = _vsm_date_post();
+        _vsm_site_existe($site_id);
         $r = vsm_evaluer_site($site_id, $date, (int)$user['id'], 'relance_gsb');
         audit_log($user['id'], 'UPDATE', 'validations_stock_matin', 0,
             "Relance de la comparaison du stock site:$site_id $date → {$r['statut']}");
@@ -201,14 +253,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     if ($action === 'valider_auto') {
         if (!$can_valider) json_response(false, 'Accès refusé.');
         $site_id = (int)($_POST['site_id'] ?? 0);
-        $date    = trim($_POST['date'] ?? date('Y-m-d'));
+        $date    = _vsm_date_post();
+        _vsm_site_existe($site_id);
         // Une décision du GSB (dont un réajustement en attente de la réponse
-        // du coordinateur) n'est jamais écrasée par une validation automatique.
+        // du coordinateur ou un blocage) n'est jamais écrasée par une
+        // validation automatique.
         $statut_exist = db_fetch_value(
             "SELECT statut FROM validations_stock_matin WHERE site_id=? AND date_validation=?",
             [$site_id, $date]
         );
-        if (in_array($statut_exist, ['reajuste', 'valide_gsb', 'autorise_ecart'], true))
+        if ($statut_exist && $statut_exist !== 'valide_auto')
             json_response(false, $statut_exist === 'reajuste'
                 ? 'Stock réajusté : la validation attend la réponse du coordinateur.'
                 : 'Ce site a déjà une décision du gestionnaire pour cette date.');
@@ -256,9 +310,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     if ($action === 'valider_sans_import') {
         if (!$can_valider) json_response(false, 'Accès refusé.');
         $site_id     = (int)($_POST['site_id'] ?? 0);
-        $date        = trim($_POST['date'] ?? date('Y-m-d'));
+        $date        = _vsm_date_post();
         $commentaire = trim($_POST['commentaire'] ?? '');
-        if (!$site_id) json_response(false, 'Site obligatoire.');
+        _vsm_site_existe($site_id);
         if (!$commentaire) json_response(false, 'Un commentaire est obligatoire pour valider sans import EMUCI.');
 
         $snap = _calculer_ecarts_site($site_id, $date);
@@ -299,7 +353,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     if ($action === 'decision_gsb') {
         if (!$can_valider) json_response(false,'Accès refusé.');
         $site_id    = (int)($_POST['site_id'] ?? 0);
-        $date       = trim($_POST['date'] ?? date('Y-m-d'));
+        $date       = _vsm_date_post();
         $decision   = trim($_POST['decision'] ?? '');
         $commentaire= trim($_POST['commentaire'] ?? '');
         $ecarts_json= $_POST['ecarts_json'] ?? '[]';
@@ -327,6 +381,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             fn($e) => in_array((int)($e['bobine_id'] ?? 0), $ids_site, true)
         ));
         if (empty($ecarts)) json_response(false,'Bobine(s) introuvable(s) sur ce site.');
+
+        // Contrôles serveur : l'écran a pu rester ouvert avant un nouvel import ou
+        // un nouveau point, et le navigateur ne fait pas foi pour les chiffres.
+        _vsm_site_existe($site_id);
+        if (db_fetch_value("SELECT statut FROM validations_stock_matin WHERE site_id=? AND date_validation=?", [$site_id, $date]) === 'valide_gsb')
+            json_response(false, 'Ce site est déjà validé par le gestionnaire pour cette date.');
+        $calc_dec = vsm_calculer($site_id, $date);
+        if (!$calc_dec['chaine_complete'])
+            json_response(false, 'Comparaison impossible : ' . vsm_attente($calc_dec['point'], $calc_dec['dernier_import'])['libelle'] . '.');
+        $decisions_prec = _decisions_bobines_site($site_id, $date);
+        $ecarts_srv = [];
+        foreach ($calc_dec['ecarts'] as $x) $ecarts_srv[(int)$x['bobine_id']] = $x;
+        $ecarts_ok = [];
+        foreach ($ecarts as $e) {
+            $bid = (int)$e['bobine_id'];
+            // Bobine en écart aujourd'hui, ou déjà tranchée (révision) : valeurs du serveur.
+            $src = $ecarts_srv[$bid] ?? $decisions_prec[$bid] ?? null;
+            if (!$src) continue;
+            $ecarts_ok[$bid] = [
+                'bobine_id'      => $bid,
+                'numero'         => $src['numero'],
+                'films_restants' => (int)$src['films_restants'],
+                'stock_systeme'  => (int)$src['stock_systeme'],
+                'ecart'          => (int)$src['ecart'],
+            ];
+        }
+        if (empty($ecarts_ok)) json_response(false, "Aucune des bobines sélectionnées n'est en écart pour cette date.");
+        $ecarts = array_values($ecarts_ok);
 
         db_begin();
         try {
@@ -508,8 +590,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     if ($action === 'valider_corrections_coord') {
         if (!$can_valider) json_response(false, 'Accès refusé.');
         $site_id     = (int)($_POST['site_id'] ?? 0);
-        $date        = trim($_POST['date'] ?? date('Y-m-d'));
+        $date        = _vsm_date_post();
         $commentaire = trim($_POST['commentaire'] ?? '');
+        _vsm_site_existe($site_id);
+
+        $val_c = db_fetch_one("SELECT statut, details_ecarts FROM validations_stock_matin WHERE site_id=? AND date_validation=?", [$site_id, $date]);
+        if (!$val_c || $val_c['statut'] !== 'reajuste')
+            json_response(false, "Ce site n'est pas en attente de corrections du coordinateur.");
 
         $corrections = db_fetch_all(
             "SELECT cb.*, b.numero FROM corrections_bobines cb
@@ -518,38 +605,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             [$site_id, $date]
         );
         if (empty($corrections)) json_response(false, 'Aucune correction de coordinateur trouvée.');
+
+        // Toutes les bobines réajustées doivent avoir une correction (en attente
+        // ou déjà validée) : sinon le site serait validé avec des valeurs manquantes.
+        $reaj_bids = array_map('intval', array_column(array_filter(
+            json_decode($val_c['details_ecarts'] ?? '[]', true) ?: [],
+            fn($d) => ($d['decision'] ?? '') === 'reajuste'), 'bobine_id'));
+        $couvertes = array_map('intval', array_column($corrections, 'bobine_id'));
+        foreach (db_fetch_all("SELECT DISTINCT bobine_id FROM corrections_bobines WHERE site_id=? AND date_point=? AND statut='valide'", [$site_id, $date]) as $r)
+            $couvertes[] = (int)$r['bobine_id'];
+        $manquantes = array_diff($reaj_bids, $couvertes);
+        if ($manquantes) {
+            $nums = array_column(db_fetch_all(
+                "SELECT numero FROM op_bobines WHERE id IN (" . implode(',', array_map('intval', $manquantes)) . ")"), 'numero');
+            json_response(false, 'Le coordinateur n\'a pas encore corrigé : ' . implode(', ', $nums) . '. Validation impossible tant qu\'il manque une bobine.');
+        }
         // Garde-fou inventaire : jour d'avant le comptage — les corrections
         // sont closes, la quantité comptée reste (pas de valeur antérieure).
         $inv_recompte = inv_bobines_recompte_apres($site_id, $date);
 
         db_begin();
         try {
-            foreach ($corrections as $c) {
-                $stock_av = (int)db_fetch_value("SELECT films_restants FROM op_bobines WHERE id=?", [$c['bobine_id']]);
-                $nouveau  = $inv_recompte !== null ? $stock_av
-                          : max(0, (int)$c['films_final'] - vsm_films_retires_apres((int)$c['bobine_id'], $date));
-                $diff     = $nouveau - $stock_av;
-                db_query("UPDATE op_bobines SET films_restants=?,
-                         statut = CASE WHEN statut='epuisee' AND ? > 0 THEN 'en_cours'
-                                       WHEN statut='en_cours' AND ? <= 0 THEN 'epuisee'
-                                       ELSE statut END WHERE id=?",
-                         [$nouveau, $nouveau, $nouveau, $c['bobine_id']]);
-                if ($diff !== 0) {
-                    db_query(
-                        "INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
-                         VALUES (?,?,?,?,?,?,?)",
-                        [$c['bobine_id'],'correction_coord',$diff,$stock_av,$nouveau,
-                         "Correction coordinateur validée par GSB ($date) : ".($c['reponse_coord']??''),$user['id']]
-                    );
-                }
-                db_query("UPDATE corrections_bobines SET statut='valide',traite_at=NOW() WHERE id=?", [(int)$c['id']]);
-            }
+            foreach ($corrections as $c) _vsm_appliquer_correction($c, $date, $inv_recompte, (int)$user['id']);
             $final_comment = ($commentaire ?: 'Corrections coordinateur validées')
                            . ' (' . count($corrections) . ' bobine(s) corrigée(s))';
             db_query(
-                "UPDATE validations_stock_matin SET statut='valide_gsb',commentaire=?,gsb_user_id=?,gsb_at=NOW()
+                "UPDATE validations_stock_matin SET statut='valide_gsb',nb_ecarts=0,commentaire=?,gsb_user_id=?,gsb_at=NOW(),details_ecarts=?
                  WHERE site_id=? AND date_validation=?",
-                [$final_comment,$user['id'],$site_id,$date]
+                [$final_comment,$user['id'],json_encode(array_values(_decisions_bobines_site($site_id, $date))),$site_id,$date]
             );
             $coords = db_fetch_all("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug='coordinateur_site' AND u.site_id=? AND u.actif=1",[$site_id]);
             foreach ($coords as $c_user) {
@@ -570,9 +653,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     if ($action === 'demander_nouvelles_modifs') {
         if (!$can_valider) json_response(false, 'Accès refusé.');
         $site_id     = (int)($_POST['site_id'] ?? 0);
-        $date        = trim($_POST['date'] ?? date('Y-m-d'));
+        $date        = _vsm_date_post();
         $commentaire = trim($_POST['commentaire'] ?? '');
         if (!$commentaire) json_response(false, 'Un commentaire explicatif est obligatoire.');
+        _vsm_site_existe($site_id);
+        if (db_fetch_value("SELECT statut FROM validations_stock_matin WHERE site_id=? AND date_validation=?", [$site_id, $date]) !== 'reajuste')
+            json_response(false, "Ce site n'est pas en attente de corrections du coordinateur.");
 
         // Annuler les corrections en attente pour permettre une nouvelle soumission
         db_query(
@@ -599,10 +685,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     if ($action === 'traiter_corrections_coord') {
         if (!$can_valider) json_response(false, 'Accès refusé.');
         $site_id       = (int)($_POST['site_id'] ?? 0);
-        $date          = trim($_POST['date'] ?? date('Y-m-d'));
+        $date          = _vsm_date_post();
         $decisions_raw = $_POST['decisions_json'] ?? '[]';
         $decisions     = json_decode($decisions_raw, true) ?: [];
         if (!$site_id || empty($decisions)) json_response(false, 'Données manquantes.');
+        _vsm_site_existe($site_id);
+        if (db_fetch_value("SELECT statut FROM validations_stock_matin WHERE site_id=? AND date_validation=?", [$site_id, $date]) !== 'reajuste')
+            json_response(false, "Ce site n'est pas en attente de corrections du coordinateur.");
         // Garde-fou inventaire, cf. valider_corrections_coord.
         $inv_recompte = inv_bobines_recompte_apres($site_id, $date);
 
@@ -625,38 +714,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 if (!$corr) continue;
 
                 if ($action_bob === 'valider') {
-                    $stock_av = (int)db_fetch_value("SELECT films_restants FROM op_bobines WHERE id=?", [$bobine_id]);
-                    $nouveau  = $inv_recompte !== null ? $stock_av
-                              : max(0, (int)$corr['films_final'] - vsm_films_retires_apres($bobine_id, $date));
-                    $diff     = $nouveau - $stock_av;
-                    // Appliquer la valeur corrigée au stock physique
-                    db_query("UPDATE op_bobines SET films_restants=?,
-                         statut = CASE WHEN statut='epuisee' AND ? > 0 THEN 'en_cours'
-                                       WHEN statut='en_cours' AND ? <= 0 THEN 'epuisee'
-                                       ELSE statut END WHERE id=?",
-                        [$nouveau, $nouveau, $nouveau, $bobine_id]);
-                    if ($diff !== 0) {
-                        db_query(
-                            "INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
-                             VALUES (?,?,?,?,?,?,?)",
-                            [$bobine_id,'correction_coord',$diff,$stock_av,$nouveau,
-                             "Correction coordinateur validée ($date) : ".($corr['reponse_coord']??''),$user['id']]
-                        );
-                    }
-                    // Réconcilier ecarts_bobines avec les nouvelles valeurs pour que l'affichage
-                    // montre le stock à jour (ecart=0, films_restants=nouveau) — sans cette entrée,
-                    // _decisions_bobines_site renverrait encore les anciennes valeurs de l'écart initial.
-                    db_query(
-                        "INSERT INTO ecarts_bobines
-                         (bobine_id,date_constat,stock_systeme,stock_physique,ecart,motif,source,statut,resolu_at,resolu_par,resolution_notes,created_by)
-                         VALUES (?,?,?,?,0,?,'validation_stock','resolu',NOW(),?,'Correction coordinateur appliquée',?)",
-                        [$bobine_id, $date, $nouveau, $nouveau,
-                         $inv_recompte !== null
-                            ? "Correction close sans modifier le stock : " . inv_bobines_msg_recompte($inv_recompte)
-                            : "Stock réconcilié : $nouveau films (correction coord. validée par GSB)",
-                         $user['id'], $user['id']]
-                    );
-                    db_query("UPDATE corrections_bobines SET statut='valide',traite_at=NOW() WHERE id=?", [(int)$corr['id']]);
+                    _vsm_appliquer_correction($corr, $date, $inv_recompte, (int)$user['id']);
                     $nb_valides++;
                 } else {
                     // refuser → annuler cette correction, le coord devra re-soumettre pour cette bobine
@@ -668,6 +726,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     $bob_refuses[] = $bob_num ?: "bobine #$bobine_id";
                     $nb_refuses++;
                 }
+            }
+
+            if ($nb_valides + $nb_refuses === 0) {
+                db_rollback();
+                json_response(false, 'Aucune correction à traiter (déjà traitée ou retirée par le coordinateur).');
             }
 
             if ($nb_refuses === 0) {
@@ -750,10 +813,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!$is_coord) json_response(false, 'Accès refusé.');
         $site_id     = (int)($_POST['site_id'] ?? 0);
         if (!_vsm_site_ok($site_id)) json_response(false, 'Accès refusé : ce site n\'est pas le vôtre.');
-        $date        = trim($_POST['date'] ?? date('Y-m-d'));
+        $date        = _vsm_date_post();
         $bobines_raw = $_POST['bobines_json'] ?? '[]';
         $bobines     = json_decode($bobines_raw, true) ?: [];
         if (!$site_id || empty($bobines)) json_response(false, 'Données manquantes.');
+
+        // Seulement en réponse à un réajustement du GSB, et pour les bobines réajustées.
+        $val_cr = db_fetch_one("SELECT statut, details_ecarts FROM validations_stock_matin WHERE site_id=? AND date_validation=?", [$site_id, $date]);
+        if (!$val_cr || $val_cr['statut'] !== 'reajuste')
+            json_response(false, "Aucun réajustement n'attend votre réponse pour cette date.");
+        $reaj_ok = array_map('intval', array_column(array_filter(
+            json_decode($val_cr['details_ecarts'] ?? '[]', true) ?: [],
+            fn($d) => ($d['decision'] ?? '') === 'reajuste'), 'bobine_id'));
 
         db_begin();
         try {
@@ -762,10 +833,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 $films_correct = (int)($b['films_correct'] ?? 0);
                 $motif_coord   = trim($b['motif_coord'] ?? '');
                 if (!$bobine_id) continue;
-                if ($films_correct < 0) json_response(false, 'Le nombre de films ne peut pas être négatif.');
+                if (!in_array($bobine_id, $reaj_ok, true)) { db_rollback(); json_response(false, "Cette bobine n'a pas été réajustée par le gestionnaire."); }
+                if ($films_correct > 10000) { db_rollback(); json_response(false, 'Nombre de films invraisemblable.'); }
+                if ($films_correct < 0) { db_rollback(); json_response(false, 'Le nombre de films ne peut pas être négatif.'); }
                 if (!db_fetch_value("SELECT 1 FROM op_bobines WHERE id=? AND site_id=?", [$bobine_id, $site_id]))
-                    json_response(false, 'Bobine introuvable sur votre site.');
-                if (!$motif_coord) json_response(false, 'Le motif est obligatoire pour chaque bobine.');
+                    { db_rollback(); json_response(false, 'Bobine introuvable sur votre site.'); }
+                if (!$motif_coord) { db_rollback(); json_response(false, 'Le motif est obligatoire pour chaque bobine.'); }
 
                 // Ne pas re-soumettre une bobine déjà validée par le GSB
                 if ((int)db_fetch_value("SELECT COUNT(*) FROM corrections_bobines WHERE site_id=? AND date_point=? AND bobine_id=? AND statut='valide'", [$site_id, $date, $bobine_id])) continue;
@@ -778,7 +851,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                      ORDER BY pj.id DESC LIMIT 1",
                     [$bobine_id, $site_id, $date]
                 );
-                if (!$point_id) json_response(false, "Point journalier introuvable pour une bobine.");
+                if (!$point_id) { db_rollback(); json_response(false, "Point journalier introuvable pour une bobine."); }
 
                 // Récupérer valeurs GSB depuis ecarts_bobines
                 $ecart_row = db_fetch_one(
@@ -862,23 +935,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $films_proposes = (int)($_POST['films_proposes'] ?? 0);
         if (!$bobine_id || !$site_id) json_response(false, 'Données manquantes.');
         if (!$notes) json_response(false, 'Le motif est obligatoire.');
+        if ($films_proposes < 0) json_response(false, 'Le nombre de films proposé ne peut pas être négatif.');
+        _vsm_site_existe($site_id);
 
         try {
             $bobine_info = db_fetch_one(
-                "SELECT numero, type_code, format FROM op_bobines WHERE id=?",
-                [$bobine_id]
+                "SELECT numero, type_code, format FROM op_bobines WHERE id=? AND site_id=?",
+                [$bobine_id, $site_id]
             );
-            $bobine_num = $bobine_info['numero'] ?? "bobine #$bobine_id";
-
-            db_begin();
+            if (!$bobine_info) json_response(false, 'Bobine introuvable sur ce site.');
+            $bobine_num = $bobine_info['numero'];
 
             // 1. Remettre le site en réajustement et mettre à jour details_ecarts
             $current_val = db_fetch_one(
                 "SELECT statut, details_ecarts FROM validations_stock_matin WHERE site_id=? AND date_validation=?",
                 [$site_id, $date]
             );
-
             if (!$current_val) json_response(false, 'Aucune validation trouvée pour ce site à cette date.');
+
+            // Valeur ERP du soir relue côté serveur (pas celle de l'écran).
+            $calc_cb = vsm_calculer($site_id, $date);
+            $films_pj = null;
+            foreach ($calc_cb['bobines_detail'] as $l)
+                if ((int)$l['bobine_id'] === $bobine_id) { $films_pj = (int)$l['films_restants']; break; }
+            if ($films_pj === null) json_response(false, "Cette bobine ne figure pas dans le point 18h de cette date.");
+
+            db_begin();
 
             // Mettre à jour details_ecarts pour que la bobine apparaisse dans le formulaire coordinateur
             $all_decs = json_decode($current_val['details_ecarts'] ?? '[]', true) ?: [];
@@ -1990,8 +2072,9 @@ $nb_total_bobines = count($coord_reajust_details);
 </div>
 
 <script>
+function esc(t){return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function ap(d){return fetch(window.location.href,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(d)}).then(r=>r.json());}
-function toast(m,t='success'){const bg={success:'#27ae60',error:'#e74c3c',info:'#1B75BC'}[t]||'#27ae60';let el=document.getElementById('toast-live');if(!el){el=document.createElement('div');el.id='toast-live';el.setAttribute('role','status');el.setAttribute('aria-live','polite');el.setAttribute('aria-atomic','true');document.body.appendChild(el);}clearTimeout(el._hideTimer);el.style.cssText=`position:fixed;top:20px;right:20px;z-index:9999;padding:12px 20px;border-radius:12px;font-size:13px;font-weight:600;background:${bg};color:white;max-width:320px`;el.textContent=m;el._hideTimer=setTimeout(()=>{el.style.display='none';},4000);}
+function toast(m,t='success'){const bg={success:'#27ae60',error:'#e74c3c',info:'#1B75BC'}[t]||'#27ae60';let el=document.getElementById('toast-live');if(!el){el=document.createElement('div');el.id='toast-live';el.setAttribute('role','status');el.setAttribute('aria-live','polite');el.setAttribute('aria-atomic','true');document.body.appendChild(el);}clearTimeout(el._hideTimer);el.style.cssText=`position:fixed;top:20px;right:20px;z-index:9999;padding:12px 20px;border-radius:12px;font-size:13px;font-weight:600;background:${bg};color:white;max-width:320px`;el.textContent=String(m).replace(/<[^>]+>/g,'').trim();el._hideTimer=setTimeout(()=>{el.style.display='none';},4000);}
 
 // ── ONGLETS
 function switchTab(tab) {
@@ -2147,7 +2230,7 @@ async function verifierSite(siteId, siteNom) {
     bobines.forEach((b, i) => {
       const bg = b.has_ecart ? '#FFF7ED' : (i%2===0 ? 'white' : '#F8FAFC');
       html += `<tr style="background:${bg}">
-        <td style="padding:9px 10px;font-family:monospace;font-weight:800;color:#06033A;font-size:12px">${b.numero}${causesEcartHtml(b)}</td>
+        <td style="padding:9px 10px;font-family:monospace;font-weight:800;color:#06033A;font-size:12px">${esc(b.numero)}${causesEcartHtml(b)}</td>
         <td style="padding:9px 10px;font-size:12px;color:var(--muted)">${b.type_code||b.format||'—'}</td>
         ${d.dernier_import ? `
         <td style="padding:9px 10px;text-align:center;font-weight:600;color:#1B75BC">${b.stock_systeme??'—'}</td>` : ''}
@@ -2232,7 +2315,7 @@ async function verifierSite(siteId, siteNom) {
       ccValides.forEach(c => {
         panelRows += `
           <tr style="background:#F0FDF4;border-bottom:1px solid #E2E8F0">
-            <td style="padding:9px 12px;font-family:monospace;font-weight:700;color:#065F46">${c.numero}</td>
+            <td style="padding:9px 12px;font-family:monospace;font-weight:700;color:#065F46">${esc(c.numero)}</td>
             <td style="padding:9px 12px;text-align:center;color:#065F46;font-weight:800">${c.films_final}</td>
             <td style="padding:9px 12px;font-size:12px;color:#065F46">—</td>
             <td style="padding:9px 12px"></td>
@@ -2246,7 +2329,7 @@ async function verifierSite(siteId, siteNom) {
       ccAttente.forEach(c => {
         panelRows += `
           <tr style="background:#FFFBEB;border-bottom:1px solid #E2E8F0">
-            <td style="padding:9px 12px;font-family:monospace;font-weight:700;color:#92400E">${c.numero}</td>
+            <td style="padding:9px 12px;font-family:monospace;font-weight:700;color:#92400E">${esc(c.numero)}</td>
             <td style="padding:9px 12px;text-align:center;color:#92400E">—</td>
             <td style="padding:9px 12px;font-size:12px;color:#92400E">—</td>
             <td style="padding:9px 12px"></td>
@@ -2260,9 +2343,9 @@ async function verifierSite(siteId, siteNom) {
       ccNew.forEach((c, i) => {
         panelRows += `
           <tr id="ccrow-${i}" style="border-bottom:1px solid #E2E8F0;transition:background .2s">
-            <td style="padding:9px 12px;font-family:monospace;font-weight:700;color:#06033A">${c.numero}</td>
+            <td style="padding:9px 12px;font-family:monospace;font-weight:700;color:#06033A">${esc(c.numero)}</td>
             <td style="padding:9px 12px;text-align:center;font-weight:800;color:#1D4ED8;font-size:15px">${c.films_final}</td>
-            <td style="padding:9px 12px;font-size:12px;color:#475569">${c.reponse_coord || '—'}</td>
+            <td style="padding:9px 12px;font-size:12px;color:#475569">${esc(c.reponse_coord || '—')}</td>
             <td style="padding:9px 12px">
               <input type="text" id="cc-comment-${i}" placeholder="Motif GSB (requis si refus)"
                      style="width:100%;box-sizing:border-box;padding:5px 8px;border:1.5px solid #E2E8F0;border-radius:6px;font-size:12px;min-width:130px">
@@ -2325,7 +2408,7 @@ async function verifierSite(siteId, siteNom) {
         html += `
           <div style="background:#FEF3C7;border:1.5px solid #F59E0B;border-radius:10px;padding:14px 18px;margin-top:14px;font-size:13px;color:#92400E">
             <strong>🔄 Stock réajusté</strong>
-            ${d.validation.commentaire ? `<div style="margin-top:4px">💬 ${d.validation.commentaire}</div>` : ''}
+            ${d.validation.commentaire ? `<div style="margin-top:4px">💬 ${esc(d.validation.commentaire)}</div>` : ''}
             <div style="margin-top:8px;font-size:12px;opacity:.85">
               ⏳ En attente des corrections du coordinateur — il sera notifié de fournir les valeurs correctes.
             </div>
@@ -2336,7 +2419,7 @@ async function verifierSite(siteId, siteNom) {
       html += `
         <div style="background:${vBg[d.validation.statut]||'#F0F9FF'};border-radius:10px;padding:14px 18px;font-size:13px;margin-top:14px">
           <strong>${vStatuts[d.validation.statut]||d.validation.statut}</strong>
-          ${d.validation.commentaire ? `<div style="color:var(--muted);margin-top:4px">💬 ${d.validation.commentaire}</div>` : ''}
+          ${d.validation.commentaire ? `<div style="color:var(--muted);margin-top:4px">💬 ${esc(d.validation.commentaire)}</div>` : ''}
         </div>`;
       if (canValider) {
         html += `<div style="margin-top:12px;text-align:right">
@@ -2387,7 +2470,6 @@ function causesEcartHtml(b) {
   const bilan = chiffre && somme === Number(b.ecart)
     ? '<div style="color:#065F46;font-weight:700;margin-top:3px">Écart entièrement expliqué par ces causes.</div>'
     : '';
-  const esc = t => String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
   return `<div style="margin-top:6px;padding:6px 8px;background:#F1F5F9;border-radius:8px;font-family:inherit;font-weight:400;font-size:11.5px;line-height:1.45;color:#334155;white-space:normal;text-align:left;max-width:420px">
     <div style="font-weight:700;color:#06033A;margin-bottom:2px">Causes possibles</div>
     ${c.map(x => `<div>• ${x.films !== null && x.films !== undefined ? `<strong>${x.films>0?'+':''}${x.films}</strong> ` : ''}${esc(x.texte)}</div>`).join('')}${bilan}
@@ -2397,7 +2479,7 @@ function causesEcartHtml(b) {
 function celluleDecision(b) {
   if (b.decision) {
     const m = DEC_META[b.decision.decision] || {icon:'•', court:b.decision.decision, bg:'#F1F5F9', color:'#475569'};
-    return `<span class="vsm-dec-badge" style="background:${m.bg};color:${m.color}" title="${(b.decision.commentaire||'').replace(/"/g,'&quot;')}">${m.icon} ${m.court}</span>
+    return `<span class="vsm-dec-badge" style="background:${m.bg};color:${m.color}" title="${esc(b.decision.commentaire||'')}">${m.icon} ${m.court}</span>
             <button class="vsm-dec-edit" onclick="ouvrirDecisionBobine(${b.bobine_id})">Modifier</button>`;
   }
   if (!b.has_ecart) return '<span style="color:var(--muted);font-size:12px">—</span>';
@@ -2422,7 +2504,7 @@ function ouvrirDecisionBobine(bobineId, decision) {
 
   document.getElementById('decBobTitle').textContent    = `${m.icon} ${m.label}`;
   document.getElementById('decBobSubtitle').innerHTML   =
-    `Bobine <strong style="color:var(--navy);font-family:monospace">${b.numero}</strong> — ${currentSiteNom}`;
+    `Bobine <strong style="color:var(--navy);font-family:monospace">${esc(b.numero)}</strong> — ${esc(currentSiteNom)}`;
   document.getElementById('decBobInfo').innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
       <div style="background:#f0f4ff;border-radius:10px;padding:11px;text-align:center">
@@ -2461,11 +2543,11 @@ function ouvrirDecisionGroupee(decision) {
 
   document.getElementById('decBobTitle').textContent  = `${m.icon} ${m.label}`;
   document.getElementById('decBobSubtitle').innerHTML =
-    `<strong style="color:var(--navy)">${restantes.length} bobine(s)</strong> en écart — ${currentSiteNom}`;
+    `<strong style="color:var(--navy)">${restantes.length} bobine(s)</strong> en écart — ${esc(currentSiteNom)}`;
   document.getElementById('decBobInfo').innerHTML = `
     <div style="border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:14px;max-height:150px;overflow-y:auto;font-size:12px">
       ${restantes.map(e => `<div style="display:flex;justify-content:space-between;padding:3px 0">
-        <span style="font-family:monospace;font-weight:700;color:var(--navy)">${e.numero}</span>
+        <span style="font-family:monospace;font-weight:700;color:var(--navy)">${esc(e.numero)}</span>
         <span style="color:${e.ecart>0?'#DC2626':'#D97706'};font-weight:700">${e.ecart>0?'+':''}${e.ecart}</span>
       </div>`).join('')}
     </div>`;
@@ -2615,7 +2697,7 @@ async function voirDetails(siteId, siteNom, nbEcarts, detailsJson, statut, comme
     <div style="background:${statutColors[statut]||'#f8fafc'};border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between">
       <div>
         <div style="font-weight:800;font-size:15px;color:${statutTextColors[statut]||'var(--navy)'}">${statutLabels[statut]||statut}</div>
-        ${commentaire?`<div style="font-size:12.5px;margin-top:4px;color:${statutTextColors[statut]||'var(--muted)'}"><i class="ph ph-chat-circle" aria-hidden="true"></i> ${commentaire}</div>`:''}
+        ${commentaire?`<div style="font-size:12.5px;margin-top:4px;color:${statutTextColors[statut]||'var(--muted)'}"><i class="ph ph-chat-circle" aria-hidden="true"></i> ${esc(commentaire)}</div>`:''}
       </div>
       <div style="text-align:right;font-size:12px;color:var(--muted)">
         <div>${gsbNom}</div><div>${gsbAt}</div>
@@ -2682,7 +2764,7 @@ async function voirDetails(siteId, siteNom, nbEcarts, detailsJson, statut, comme
       const ecartColor = b.ecart > 0 ? '#DC2626' : '#D97706';
 
       html += `<tr style="background:${rowBg}">
-        <td style="padding:9px 12px;font-family:monospace;font-weight:800;color:#06033A">${b.numero}${causesEcartHtml(b)}</td>
+        <td style="padding:9px 12px;font-family:monospace;font-weight:800;color:#06033A">${esc(b.numero)}${causesEcartHtml(b)}</td>
         <td style="padding:9px 12px;font-size:11.5px;color:var(--muted)">${b.type_code||b.format||'—'}</td>
         ${hasImport ? `
         <td style="padding:9px 12px;text-align:center;font-weight:600;color:#1B75BC">${b.stock_systeme}</td>` : ''}
@@ -2697,11 +2779,11 @@ async function voirDetails(siteId, siteNom, nbEcarts, detailsJson, statut, comme
             : '<span style="background:#D1FAE5;color:#065F46;padding:3px 9px;border-radius:8px;font-size:10.5px;font-weight:700">✅ OK</span>'}
           ${b.decision ? (() => {
             const dm = DEC_META[b.decision.decision] || {icon:'•', court:b.decision.decision, bg:'#F1F5F9', color:'#475569'};
-            return `<div style="margin-top:4px"><span class="vsm-dec-badge" style="background:${dm.bg};color:${dm.color}" title="${(b.decision.commentaire||'').replace(/"/g,'&quot;')}">${dm.icon} ${dm.court}</span></div>`;
+            return `<div style="margin-top:4px"><span class="vsm-dec-badge" style="background:${dm.bg};color:${dm.color}" title="${esc(b.decision.commentaire||'')}">${dm.icon} ${dm.court}</span></div>`;
           })() : ''}
         </td>
         ${<?= $can_valider ? 'true' : 'false' ?> ? `<td style="padding:7px 12px;text-align:center">
-          <button onclick="demanderModifBobine(${b.bobine_id},'${b.numero}',${siteId},'<?= h($f_date) ?>',${b.films_restants||0},${b.stock_systeme||0},${b.ecart||0})"
+          <button onclick="demanderModifBobine(${b.bobine_id},'${esc(String(b.numero).replace(/[^A-Za-z0-9._-]/g,''))}',${siteId},'<?= h($f_date) ?>',${b.films_restants||0},${b.stock_systeme||0},${b.ecart||0})"
             style="background:#fff7ed;color:#c2410c;border:1.5px solid #fed7aa;padding:4px 9px;border-radius:7px;font-size:10.5px;font-weight:700;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:4px">
             ✏️ Demander modif
           </button>

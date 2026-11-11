@@ -101,12 +101,7 @@ function vs_causes_ecart(int $site_id, string $date, array $l): array {
 
     // 3. Films retirés par des points postérieurs : le restant ERP comparé est
     //    celui d'aujourd'hui, pas celui du soir de la date contrôlée.
-    $regle_18h = db_colonne_existe('op_points_journaliers', 'stock_deduit');
-    $apres = (int)db_fetch_value(
-        "SELECT COALESCE(SUM(fu.films_utilises + fu.films_endommages),0)
-         FROM op_films_utilises fu JOIN op_points_journaliers p ON p.id = fu.point_id
-         WHERE fu.bobine_id=? AND p.date_point > ? AND "
-        . ($regle_18h ? "p.stock_deduit >= 1" : "p.statut <> 'rejete'"), [$bobine_id, $date]);
+    $apres = vsm_films_retires_apres($bobine_id, $date);
     if ($apres > 0 && empty($l['reconstitue']))
         $causes[] = ['films' => -$apres, 'texte' =>
             "$apres film(s) déjà retiré(s) de cette bobine par des points postérieurs au $jj : le stock ERP comparé est celui d'aujourd'hui."];
@@ -140,14 +135,22 @@ function vs_causes_ecart(int $site_id, string $date, array $l): array {
     return $causes;
 }
 
+// Condition SQL « ce point a réellement retiré du stock » (règle 18h : seul un
+// point validé avec stock_deduit >= 1 ; sans la colonne, tout point non rejeté).
+// Définie ici une seule fois : films retirés, points postérieurs et causes
+// d'écart doivent toujours s'accorder.
+function _vsm_cond_deduit(string $alias = ''): string {
+    $p = $alias !== '' ? "$alias." : '';
+    return db_colonne_existe('op_points_journaliers', 'stock_deduit')
+        ? "{$p}stock_deduit >= 1" : "{$p}statut <> 'rejete'";
+}
+
 // Films retirés d'une bobine par les points postérieurs à $date (cause n°3).
 function vsm_films_retires_apres(int $bobine_id, string $date): int {
-    $regle_18h = db_colonne_existe('op_points_journaliers', 'stock_deduit');
     return (int)db_fetch_value(
         "SELECT COALESCE(SUM(fu.films_utilises + fu.films_endommages),0)
          FROM op_films_utilises fu JOIN op_points_journaliers p ON p.id = fu.point_id
-         WHERE fu.bobine_id=? AND p.date_point > ? AND "
-        . ($regle_18h ? "p.stock_deduit >= 1" : "p.statut <> 'rejete'"), [$bobine_id, $date]);
+         WHERE fu.bobine_id=? AND p.date_point > ? AND " . _vsm_cond_deduit('p'), [$bobine_id, $date]);
 }
 
 // Points postérieurs à $date qui ont réellement retiré du stock du site. Un
@@ -155,10 +158,8 @@ function vsm_films_retires_apres(int $bobine_id, string $date): int {
 // rendent pas la comparaison « périmée » (un point daté par erreur dans le
 // futur bloquait sinon toutes les comparaisons du site).
 function vsm_points_posterieurs(int $site_id, string $date): int {
-    $regle_18h = db_colonne_existe('op_points_journaliers', 'stock_deduit');
     return (int)db_fetch_value(
-        "SELECT COUNT(*) FROM op_points_journaliers WHERE site_id=? AND date_point > ? AND "
-        . ($regle_18h ? "stock_deduit >= 1" : "statut <> 'rejete'"), [$site_id, $date]);
+        "SELECT COUNT(*) FROM op_points_journaliers WHERE site_id=? AND date_point > ? AND " . _vsm_cond_deduit(), [$site_id, $date]);
 }
 
 // $reconstituer : des points postérieurs ont déjà retiré des films. Le stock
