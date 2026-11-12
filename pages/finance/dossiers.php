@@ -466,6 +466,23 @@ function finRendre(d) {
   });
 }
 
+// Filtres appliqués dès qu'un champ change : plus besoin de cliquer sur
+// « Filtrer » (le bouton reste en secours). La recherche part à Entrée, à la
+// perte du focus ou au clic sur la croix, pas à chaque touche.
+(function () {
+  const form = document.querySelector('.fin-toolbar');
+  if (!form) return;
+  const go = () => { if (form.requestSubmit) form.requestSubmit(); else form.submit(); };
+  form.querySelectorAll('select, input[type=date]').forEach(el => el.addEventListener('change', go));
+  const q = form.querySelector('input[type=search]');
+  if (q) {
+    let avant = q.value;
+    const envoyer = () => { if (q.value !== avant) { avant = q.value; go(); } };
+    q.addEventListener('change', envoyer);
+    q.addEventListener('search', envoyer);
+  }
+})();
+
 // Paiements CIL récents : synchronisation en arrière-plan, au plus toutes
 // les <?= (int)FIN_SYNC_AUTO_HEURES ?> heures.
 finPost({action: 'sync_auto'}).then(r => {
