@@ -920,7 +920,7 @@ include __DIR__ . '/../templates/header.php';
   <div class="table-wrap">
     <table data-paginer="25">
       <thead><tr>
-        <th>Équipement</th><th>Type</th><th>N° Série</th><th>Site</th>
+        <th>N° interne</th><th>Type</th><th>N° série fabricant</th><th>Site</th>
         <th style="text-align:center">État</th>
         <th style="text-align:center">Taux pannes</th>
         <th style="text-align:center">Valeur résid. (FCFA)</th>
@@ -941,7 +941,7 @@ include __DIR__ . '/../templates/header.php';
         <tr style="<?= $e['etat']==='hs'?'background:#fff5f5':'' ?>">
           <td style="font-weight:600;color:var(--navy)"><?= h($e['numero_serie_interne']??'—') ?></td>
           <td style="font-size:12px"><?= h($e['type_nom']??'—') ?></td>
-          <td style="font-family:monospace;font-size:12px"><?= h($e['numero_serie_interne']??'—') ?></td>
+          <td style="font-family:monospace;font-size:12px"><?= h(trim((string)($e['numero_serie_origine'] ?? '')) !== '' ? $e['numero_serie_origine'] : '—') ?></td>
           <td><?= h($e['site_nom']??'Non affecté') ?><?php if(!empty($e['emplacement'])): ?><div style="font-size:12px;color:var(--muted)"><?= h($e['emplacement']) ?></div><?php endif; ?><?php if(!empty($e['agent_nom'])): ?><div style="font-size:12px;color:var(--navy);font-weight:600"><i class="ph ph-user" aria-hidden="true"></i> <?= h($e['agent_nom']) ?></div><?php endif; ?></td>
           <td style="text-align:center"><span class="etat-badge etat-<?= $e['etat'] ?>"><?= ucfirst($e['etat']) ?></span></td>
           <td style="text-align:center">

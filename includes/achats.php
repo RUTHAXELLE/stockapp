@@ -714,11 +714,14 @@ function ach_basculer_vers_commande(int $feb_id, array $user): ?int {
         $cmd_id = (int) db_last_id();
 
         foreach ($lignes_stock as $l) {
-            $article = db_fetch_one("SELECT type_article, unite FROM articles WHERE id=?", [$l['article_id']]);
+            $article = db_fetch_one("SELECT unite FROM articles WHERE id=?", [$l['article_id']]);
+            // type_article d'une ligne de commande = 'article' : articles.type_article
+            // est la catégorie du catalogue (papeterie, encre…), pas le type de
+            // ligne — la recopier excluait la ligne du débit du dépôt à l'expédition.
             db_query(
                 "INSERT INTO commande_lignes (commande_id, type_article, article_id, libelle, quantite, unite, statut_ligne, feb_ligne_id)
-                 VALUES (?,?,?,?,?,?,'en_attente',?)",
-                [$cmd_id, $article['type_article'] ?? 'article', $l['article_id'], $l['designation'], $l['quantite'],
+                 VALUES (?,'article',?,?,?,?,'en_attente',?)",
+                [$cmd_id, $l['article_id'], $l['designation'], $l['quantite'],
                  $l['unite'] ?: ($article['unite'] ?? 'unité'), $l['id']]
             );
         }
