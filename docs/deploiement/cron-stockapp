@@ -19,3 +19,6 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # avant 7 jours ; au-delà de 5 alertes d'un même genre, une seule
 # notification groupée (fonctions écrites sur main, reportées le 14/10/2026).
 0 8 * * * www-data php /var/www/stockapp/cron/check_alerts.php >> /var/log/stockapp/cron.log 2>&1
+
+# Mails des notifications, chaque minute (sans effet tant que MAIL_ENABLED=1 n'est pas dans le .env)
+* * * * * www-data php /var/www/stockapp/cron/envoyer_mails.php >> /var/log/stockapp/cron.log 2>&1

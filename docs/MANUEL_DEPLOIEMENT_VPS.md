@@ -339,6 +339,7 @@ sudo install -m 644 docs/deploiement/logrotate-stockapp /etc/logrotate.d/stockap
 | `cron/check_alerts.php bobines` | toutes les 5 min | www-data | Passe en « épuisée » toute bobine à zéro film et zéro stock système |
 | Sauvegarde MySQL | chaque nuit à 2 h 30 | root | `/var/backups/stockapp/quotidien_AAAA-MM-JJ.sql.gz`, conservée 14 jours |
 | `cron/check_alerts.php` | chaque jour à 8 h | www-data | Alertes fin de cycle des équipements et stocks bas (sans doublon : même alerte au plus une fois par semaine) |
+| `cron/envoyer_mails.php` | chaque minute | www-data | Envoie par mail les notifications en attente (SMTP du `.env`, variables `MAIL_*` ; sans effet tant que `MAIL_ENABLED=1` n'y est pas) |
 
 Le journal des tâches est `/var/log/stockapp/cron.log`, avec une rotation
 hebdomadaire sur 8 semaines.
