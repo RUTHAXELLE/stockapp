@@ -242,6 +242,57 @@ function op_motif_vers_etape(string $motif): string {
 }
 
 /**
+ * Films OptoPlate d'un jour déjà décomptés du stock d'une bobine à son arrivée
+ * dans l'ERP. Une bobine peut être créée dans l'ERP (import OptoTrace, import
+ * Excel, création) APRÈS avoir servi : elle entre alors avec un stock net
+ * (ex. 474 sur 500), et les films imprimés avant l'entrée sont déjà retirés.
+ * Les compter de nouveau dans la comparaison du jour donnait un écart à tort,
+ * et les déclarer au point les aurait retirés une seconde fois du stock.
+ *
+ * Pour chaque bobine : déjà décomptés = qte_initiale - stock d'entrée (premier
+ * mouvement « entree »). Ils se répartissent sur les plus anciens films
+ * imprimés ; ne sont retirés de la comparaison du jour $date que ceux qui y
+ * tombent, et seulement si la bobine est entrée dans l'ERP ce jour-là ou après
+ * (les films imprimés après l'entrée comptent normalement).
+ *  $films_du_jour : [num_bobine => films OptoPlate du jour].
+ * Retourne [num_bobine => ['films' => n, 'stock_arrivee' => n, 'qte_initiale' => n]]
+ * pour les seules bobines concernées. Vide tant que la date d'impression
+ * n'est pas importée (migration_optoplate_date_impression).
+ */
+function op_films_deja_decomptes(int $site_id, string $date, array $films_du_jour): array {
+    if (!db_colonne_existe('import_optoplate', 'date_impression')) return [];
+    $numeros = array_values(array_filter(array_map('strval', array_keys($films_du_jour)),
+        fn($n) => $n !== '' && $n !== '—'));
+    if (!$numeros) return [];
+    $out = [];
+    foreach (array_chunk($numeros, 200) as $lot) {
+        $in = implode(',', array_fill(0, count($lot), '?'));
+        $bobines = db_fetch_all(
+            "SELECT b.numero, b.qte_initiale, m.stock_apres, m.created_at
+               FROM op_bobines b
+               JOIN mouvements_bobines m
+                 ON m.id = (SELECT MIN(m2.id) FROM mouvements_bobines m2 WHERE m2.bobine_id = b.id AND m2.type = 'entree')
+              WHERE b.numero IN ($in)", $lot);
+        foreach ($bobines as $b) {
+            $deja = (int)$b['qte_initiale'] - (int)$b['stock_apres'];
+            if ($deja <= 0) continue;                                  // entrée à pleine capacité : rien de décompté
+            if (substr((string)$b['created_at'], 0, 10) < $date) continue;  // entrée avant ce jour : films du jour comptés
+            // Films déjà imprimés avant ce jour sur ce site : ils ont consommé une part du décompté.
+            $avant = (int)db_fetch_value(
+                "SELECT COUNT(*) FROM import_optoplate
+                  WHERE site_id=? AND num_bobine=? AND date_impression < ?
+                    AND (statut_plaque IN ('in_use','reserved','in_use_need_reprint')
+                         OR type_desactivation IN ('Duplicata','Modification POST'))",
+                [$site_id, $b['numero'], $date]);
+            $films = min((int)($films_du_jour[$b['numero']] ?? 0), max(0, $deja - $avant));
+            if ($films > 0)
+                $out[$b['numero']] = ['films' => $films, 'stock_arrivee' => (int)$b['stock_apres'], 'qte_initiale' => (int)$b['qte_initiale']];
+        }
+    }
+    return $out;
+}
+
+/**
  * Compare un point 18h (ligne complète op_points_journaliers) à ce
  * qu'OptoPlate a enregistré pour le même site/date. Retourne les lignes
  * de comparaison (Primo par type, Duplicatas, Post-Immat, endommagés par
@@ -332,12 +383,19 @@ function op_comparer_point(array $point): array {
     $par_bobine = [];
     $bobines_vues = array_unique(array_merge(array_keys($coord_bobine), array_keys($opto['par_bobine'])));
     sort($bobines_vues);
+    // Films déjà décomptés du stock à l'arrivée de la bobine dans l'ERP : hors comparaison.
+    $deja = op_films_deja_decomptes($site_id, $date, $opto['par_bobine']);
     foreach ($bobines_vues as $num) {
         $c = $coord_bobine[$num] ?? 0;
-        $o = $opto['par_bobine'][$num] ?? 0;
+        $o_brut = $opto['par_bobine'][$num] ?? 0;
+        $dd = $deja[$num]['films'] ?? 0;
+        $o = $o_brut - $dd;
         $ecart = $c - $o;
         if ($ecart !== 0) $has_ecart = true;
-        $par_bobine[] = ['numero' => $num, 'coordinateur' => $c, 'optoplate' => $o, 'ecart' => $ecart];
+        $ligne = ['numero' => $num, 'coordinateur' => $c, 'optoplate' => $o, 'ecart' => $ecart];
+        if ($dd > 0) $ligne += ['deja_decomptes' => $dd, 'optoplate_brut' => $o_brut,
+                                'stock_arrivee' => $deja[$num]['stock_arrivee'], 'qte_initiale' => $deja[$num]['qte_initiale']];
+        $par_bobine[] = $ligne;
     }
 
     return [

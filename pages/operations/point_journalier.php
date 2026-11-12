@@ -3977,7 +3977,7 @@ async function ouvrirComparaisonOptoplate(id, date){
       ? c.endommages.map(r => compListRow(ETAPE_LBL_COMP[r.etape]||r.etape, r.coordinateur, r.optoplate, r.ecart, 'ph-warning-circle')).join('')
       : `<div style="padding:16px;text-align:center;color:var(--muted);font-size:12.5px">Aucun endommagement déclaré.</div>`;
     const bobineList = (c.par_bobine||[]).length
-      ? c.par_bobine.map(r => compListRow('Bobine ' + r.numero, r.coordinateur, r.optoplate, r.ecart, 'ph-film-strip')).join('')
+      ? c.par_bobine.map(r => compListRow('Bobine ' + r.numero + (r.deja_decomptes ? `<div style="font-weight:400;font-size:11px;color:var(--muted);margin-top:2px">${r.deja_decomptes} film(s) OptoPlate déjà décomptés à l'arrivée de la bobine (stock d'entrée ${r.stock_arrivee}/${r.qte_initiale}) : non comptés ici</div>` : ''), r.coordinateur, r.optoplate, r.ecart, 'ph-film-strip')).join('')
       : `<div style="padding:16px;text-align:center;color:var(--muted);font-size:12.5px">Aucune donnée par bobine.</div>`;
 
     document.getElementById('comp-body').innerHTML = `
