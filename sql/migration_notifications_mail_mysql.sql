@@ -23,3 +23,17 @@ SET @sql := IF(@existe = 0,
 PREPARE etape FROM @sql;
 EXECUTE etape;
 DEALLOCATE PREPARE etape;
+
+-- ------------------------------------------------------------
+--  Réglage par utilisateur : users.notif_mail (1 = reçoit les notifications par
+--  mail, défaut ; 0 = les a coupées, elles restent visibles dans l'application).
+--  Modifiable par l'utilisateur (Mon profil) et par l'administrateur.
+-- ------------------------------------------------------------
+SET @existe := (SELECT COUNT(*) FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'notif_mail');
+SET @sql := IF(@existe = 0,
+    'ALTER TABLE `users` ADD COLUMN `notif_mail` tinyint(1) NOT NULL DEFAULT 1',
+    'SELECT ''notif_mail déjà présente'' AS info');
+PREPARE etape FROM @sql;
+EXECUTE etape;
+DEALLOCATE PREPARE etape;

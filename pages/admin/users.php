@@ -49,6 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $site_id = (int)($_POST['site_id']      ?? 0) ?: null;
         $tel     = trim($_POST['telephone']     ?? '');
         $actif   = (int)($_POST['actif']        ?? 1);
+        $notif_mail = isset($_POST['notif_mail']) ? (int)!empty($_POST['notif_mail']) : null;
 
         if (!$nom || !$prenom || !$email) json_response(false, 'Nom, prénom et email obligatoires (lettres uniquement pour nom/prénom).');
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) json_response(false, 'Email invalide.');
@@ -71,6 +72,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             "UPDATE users SET nom=?,prenom=?,email=?,role_id=?,site_id=?,telephone=?,actif=? WHERE id=?",
             [$nom, $prenom, $email, $role_id, $site_id, $tel, $actif, $id]
         );
+        if ($notif_mail !== null && db_colonne_existe('users', 'notif_mail'))
+            db_query("UPDATE users SET notif_mail=? WHERE id=?", [$notif_mail, $id]);
         audit_log($user['id'], 'UPDATE', 'users', $id,
             "Modification utilisateur {$old['email']} → $email", $old,
             ['nom'=>$nom,'prenom'=>$prenom,'email'=>$email,'role_id'=>$role_id]);
@@ -114,6 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         );
         if (!$row) json_response(false, 'Introuvable.');
         // Stats de l'utilisateur
+        $row['notif_mail'] = db_colonne_existe('users', 'notif_mail') ? (int)db_fetch_value("SELECT notif_mail FROM users WHERE id=?", [$id]) : 1;
         $row['nb_actions'] = (int)db_fetch_value("SELECT COUNT(*) FROM audit_log WHERE user_id=?", [$id]);
         $row['nb_equips']  = (int)db_fetch_value("SELECT COUNT(*) FROM equipements WHERE utilisateur_id=? AND actif=1", [$id]);
         json_response(true, '', $row);
@@ -369,6 +373,11 @@ $role_palette = ['#1B75BC','#E67E22','#27AE60','#8E44AD','#C0392B','#16A085','#B
           <input type="checkbox" id="uActif" checked> Compte actif
         </label>
       </div>
+      <div style="margin-top:10px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer">
+          <input type="checkbox" id="uNotifMail" checked> Reçoit les notifications par mail
+        </label>
+      </div>
     </div>
     <div class="mfoot">
       <button class="btn btn-secondary" onclick="closeMU()">Annuler</button>
@@ -423,6 +432,7 @@ function resetUF(){
   document.getElementById('uPwdWrap').style.display='block';
   document.getElementById('uActifWrap').style.display='none';
   document.getElementById('uActif').checked=true;
+  document.getElementById('uNotifMail').checked=true;
 }
 
 function editU(id){
@@ -439,6 +449,7 @@ function editU(id){
     document.getElementById('uPwdWrap').style.display='none';
     document.getElementById('uActifWrap').style.display='block';
     document.getElementById('uActif').checked=r.actif==1;
+    document.getElementById('uNotifMail').checked=r.notif_mail!=0;
     document.getElementById('mU').classList.add('open');
   });
 }
@@ -460,6 +471,7 @@ function saveU(){
   ap({action:id?'update':'create',id, prenom, nom, email, telephone:tel, password:pwd,
     role_id:document.getElementById('uRole').value, site_id:document.getElementById('uSite').value,
     actif:document.getElementById('uActif').checked?1:0,
+    notif_mail:document.getElementById('uNotifMail').checked?1:'',
   }).then(d=>{
     btn.disabled=false; btn.textContent='💾 Enregistrer';
     if(d.success){toast(d.message,'success');closeMU();setTimeout(()=>location.reload(),800);}

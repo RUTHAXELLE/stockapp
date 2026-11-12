@@ -410,7 +410,7 @@ function mail_notification_texte(string $titre, string $message, string $lien): 
 /**
  * Notifications à envoyer par mail : [['id','to','prenom','sujet','html','texte'], ...].
  * Celles qui n'ont pas lieu d'être envoyées passent à 'ignore' : déjà lue,
- * sans destinataire, destinataire inactif ou sans adresse valide, plus ancienne
+ * sans destinataire, destinataire inactif, ayant coupé les mails (users.notif_mail = 0) ou sans adresse valide, plus ancienne
  * que MAIL_NOTIF_AGE_MAX_H. Les autres restent 'attente' jusqu'à
  * mail_enregistrer_resultat(). Renvoie ['mails' => [...], 'ignores' => n].
  */
@@ -419,12 +419,13 @@ function mail_notifications_a_envoyer(int $max = 100): array {
     if (!db_colonne_existe('notifications', 'mail_statut')) return $r;
     $limite = date('Y-m-d H:i:s', time() - MAIL_NOTIF_AGE_MAX_H * 3600);
     $rows = db_fetch_all(
-        "SELECT n.id, n.titre, n.message, n.lien, n.lu, n.created_at, u.email, u.prenom, u.actif
+        "SELECT n.id, n.titre, n.message, n.lien, n.lu, n.created_at, u.email, u.prenom, u.actif,
+                " . (db_colonne_existe('users', 'notif_mail') ? 'u.notif_mail' : '1') . " AS notif_mail
            FROM notifications n LEFT JOIN users u ON u.id = n.user_id
           WHERE n.mail_statut = 'attente' ORDER BY n.id LIMIT " . (int)$max);
     foreach ($rows as $n) {
         $email = trim((string)($n['email'] ?? ''));
-        if ($email === '' || !(int)$n['actif'] || (int)$n['lu'] === 1 || $n['created_at'] < $limite
+        if ($email === '' || !(int)$n['actif'] || !(int)$n['notif_mail'] || (int)$n['lu'] === 1 || $n['created_at'] < $limite
             || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             db_query("UPDATE notifications SET mail_statut='ignore' WHERE id=?", [$n['id']]);
             $r['ignores']++;

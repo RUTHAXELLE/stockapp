@@ -77,12 +77,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         json_response(true, 'Signature enregistrée avec succès.');
     }
 
+    // ── Recevoir (ou non) les notifications par mail
+    if ($action === 'save_notif_mail') {
+        if (!db_colonne_existe('users', 'notif_mail')) json_response(false, 'Réglage indisponible : migration non jouée.');
+        $v = !empty($_POST['notif_mail']) ? 1 : 0;
+        db_query("UPDATE users SET notif_mail=? WHERE id=?", [$v, $user['id']]);
+        audit_log($user['id'], 'UPDATE', 'users', $user['id'], $v ? 'Notifications par mail activées' : 'Notifications par mail coupées');
+        json_response(true, $v ? 'Vous recevrez les notifications par mail.' : 'Vous ne recevrez plus de notifications par mail (elles restent visibles dans l\'application).');
+    }
+
     json_response(false, 'Action inconnue.');
 }
 
 // Charger la signature (pas dans le cache current_user)
 $sig_row        = db_fetch_one("SELECT signature FROM users WHERE id=?", [$user['id']]);
 $user_signature = $sig_row['signature'] ?? '';
+$notif_mail_dispo = db_colonne_existe('users', 'notif_mail');
+$notif_mail_on    = !$notif_mail_dispo || (int)db_fetch_value("SELECT notif_mail FROM users WHERE id=?", [$user['id']]) === 1;
 
 include __DIR__ . '/../templates/header.php';
 ?>
@@ -373,6 +384,29 @@ include __DIR__ . '/../templates/header.php';
       </div>
     </div>
 
+    <?php if ($notif_mail_dispo): ?>
+    <!-- ── Notifications par mail ── -->
+    <div class="card">
+      <div class="card-header">
+        <h3>
+          <i class="ph-duotone ph-envelope-simple" style="margin-right:8px;color:var(--primary-d)"></i>
+          Notifications par mail
+        </h3>
+      </div>
+      <div class="card-body">
+        <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+          Chaque notification peut aussi vous être envoyée par mail à <strong><?= h($user['email']) ?></strong>.
+          Si vous coupez les mails, les notifications restent visibles dans l'application.
+        </p>
+        <label style="display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer">
+          <input type="checkbox" id="notifMail" <?= $notif_mail_on ? 'checked' : '' ?> onchange="saveNotifMail(this)">
+          Recevoir mes notifications par mail
+        </label>
+        <div id="notifMailFb" style="margin-top:12px;font-size:12.5px;font-weight:600;min-height:20px"></div>
+      </div>
+    </div>
+    <?php endif; ?>
+
     <!-- ── Signature électronique ── -->
     <div class="card">
       <div class="card-header">
@@ -551,6 +585,20 @@ async function apPost(fd) {
     body: fd
   });
   return r.json();
+}
+async function saveNotifMail(cb) {
+  const fd = new FormData();
+  fd.append('action', 'save_notif_mail');
+  fd.append('notif_mail', cb.checked ? '1' : '');
+  const fb = document.getElementById('notifMailFb');
+  try {
+    const d = await apPost(fd);
+    fb.style.color = d.success ? 'var(--primary-d)' : '#dc2626';
+    fb.textContent = d.message;
+    if (!d.success) cb.checked = !cb.checked;
+  } catch (e) {
+    fb.style.color = '#dc2626'; fb.textContent = 'Erreur réseau : réglage non enregistré.'; cb.checked = !cb.checked;
+  }
 }
 function alertBox(id, ok, msg) {
   const el = document.getElementById(id);
