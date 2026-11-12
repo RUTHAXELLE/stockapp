@@ -960,11 +960,29 @@ function fin_consolider(): array {
 
 // ── Lecture pour les écrans ────────────────────────────────────
 
+// Date sur laquelle porte la période Du/Au de l'écran de suivi. Elle était
+// fixée à date_ref (réception, sinon paiement…) : un dossier payé hors de la
+// période mais reçu dedans s'affichait quand même, et l'écran semblait ignorer
+// le filtre. Le choix est maintenant explicite (liste « Période selon »).
+const FIN_PERIODES = [
+    'paiement'  => 'Paiement (sinon réception)',
+    'reception' => 'Réception chez EMUCI',
+    'pose'      => 'Pose des plaques',
+];
+function fin_periode_sql(string $periode): string {
+    switch ($periode) {
+        case 'reception': return 'date_reception::date';
+        case 'pose':      return 'date_pose';
+        default:          return 'COALESCE(date_paiement, date_reception::date)';
+    }
+}
+
 // Filtres de l'écran de suivi → [clause WHERE, paramètres].
 function fin_filtres_sql(array $f): array {
     $w = ['1=1']; $p = [];
-    if (!empty($f['du']))   { $w[] = 'date_ref >= ?'; $p[] = $f['du']; }
-    if (!empty($f['au']))   { $w[] = 'date_ref <= ?'; $p[] = $f['au']; }
+    $d = fin_periode_sql((string)($f['periode'] ?? 'paiement'));
+    if (!empty($f['du']))   { $w[] = "$d >= ?"; $p[] = $f['du']; }
+    if (!empty($f['au']))   { $w[] = "$d <= ?"; $p[] = $f['au']; }
     if (!empty($f['canal']) && isset(FIN_CANAUX[$f['canal']])) { $w[] = 'canal = ?'; $p[] = $f['canal']; }
     if (!empty($f['type'])) { $w[] = 'type_dossier = ?'; $p[] = $f['type']; }
     if (!empty($f['genre']) && isset(FIN_CATEGORIES[$f['genre']])) { $w[] = fin_categorie_sql('genre') . ' = ?'; $p[] = $f['genre']; }

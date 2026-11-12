@@ -79,6 +79,7 @@ if (is_ajax() && $_SERVER['REQUEST_METHOD'] === 'POST') {
 $f = [
     'du'       => trim($_GET['du'] ?? '') ?: date('Y-m-d', strtotime('-30 days')),
     'au'       => trim($_GET['au'] ?? '') ?: date('Y-m-d'),
+    'periode'  => isset(FIN_PERIODES[$_GET['periode'] ?? '']) ? $_GET['periode'] : 'paiement',
     'canal'    => trim($_GET['canal'] ?? ''),
     'type'     => trim($_GET['type'] ?? ''),
     'genre'    => trim($_GET['genre'] ?? ''),
@@ -126,7 +127,7 @@ if ($pret) {
                 montant_dossier, montant_attendu, montant_reconcilie, code_rec, ecart, etape, paye_par_bon,
                 " . implode(', ', array_keys(FIN_ANOMALIES)) . "
          FROM fin_dossiers WHERE $where
-         ORDER BY date_ref DESC NULLS LAST, cle LIMIT $par_page OFFSET " . (($page - 1) * $par_page), $params);
+         ORDER BY " . fin_periode_sql($f['periode']) . " DESC NULLS LAST, cle LIMIT $par_page OFFSET " . (($page - 1) * $par_page), $params);
     $couverture = fin_couverture();
     $genres = FIN_CATEGORIES;
 }
@@ -215,6 +216,10 @@ include __DIR__ . '/../../templates/header.php';
 <form class="fin-toolbar" method="GET">
   <div class="fin-fg"><label for="f-du">Du</label><input type="date" id="f-du" name="du" value="<?= h($f['du']) ?>"></div>
   <div class="fin-fg"><label for="f-au">Au</label><input type="date" id="f-au" name="au" value="<?= h($f['au']) ?>"></div>
+  <div class="fin-fg"><label for="f-periode">Période selon</label>
+    <select id="f-periode" name="periode">
+      <?php foreach (FIN_PERIODES as $k => $l): ?><option value="<?= $k ?>" <?= $f['periode'] === $k ? 'selected' : '' ?>><?= h($l) ?></option><?php endforeach; ?>
+    </select></div>
   <div class="fin-fg"><label for="f-canal">Canal</label>
     <select id="f-canal" name="canal"><option value="">Tous</option>
       <?php foreach (FIN_CANAUX as $k => $l): ?><option value="<?= $k ?>" <?= $f['canal'] === $k ? 'selected' : '' ?>><?= h($l) ?></option><?php endforeach; ?>
