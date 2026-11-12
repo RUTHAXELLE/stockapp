@@ -30,6 +30,12 @@ $inv = db_fetch_one(
 );
 if (!$inv) { header('Location: inventaire_equipements.php'); exit; }
 
+// Un coordinateur ne travaille que sur l'inventaire de SON site.
+if (($user['role_slug'] ?? '') === 'coordinateur_site' && (int)($user['site_id'] ?? 0) !== (int)$inv['site_id']) {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) { header('Content-Type: application/json'); json_response(false, "Cet inventaire n'est pas celui de votre site."); }
+    http_response_code(403); include __DIR__ . '/../templates/403.php'; exit;
+}
+
 $role_slug    = $user['role_slug'] ?? '';
 $is_coord     = ($role_slug === 'coordinateur_site');
 $can_edit     = $inv['statut'] === 'brouillon' && can('inventaire_equipements','can_update');
@@ -317,6 +323,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $nb_ecarts = 0; $nb_trouves = 0;
         db_begin();
         try {
+            inv_verrouiller_brouillon('inventaires_equipements', $inv_id);
             foreach ($lignes as $l) {
                 if ($l['trouve'] === null) continue;
 

@@ -31,6 +31,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         db_begin();
         try {
+            // Relu sous verrou : rejouer le retour d'un équipement déjà en
+            // stock créait un mouvement « sortie » sans site à chaque appel.
+            $equip = db_fetch_one("SELECT * FROM equipements WHERE id=? AND actif=1 FOR UPDATE", [$equip_id]);
+            if (!$equip || (empty($equip['site_id']) && empty($equip['utilisateur_id']))) {
+                db_rollback();
+                json_response(false, 'Cet équipement est déjà en stock.');
+            }
             db_query(
                 "INSERT INTO mouvements_equipements (equipement_id,type,site_source_id,notes,created_by)
                  VALUES (?,?,?,?,?)",

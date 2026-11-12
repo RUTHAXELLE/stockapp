@@ -125,6 +125,7 @@ function inv_creer_mensuel(int $site_id, string $date, ?int $session_id, int $us
 //    l'inventaire corrige. À appeler dans la transaction de l'appelant.
 function inv_valider_bobines(array $inv, int $user_id): array {
     $inv_id = (int)$inv['id'];
+    inv_verrouiller_brouillon('inventaires_bobines', $inv_id);
     inv_verifier_pas_plus_recent('inventaires_bobines', $inv);
     inv_verifier_point18h($inv);
     $lignes = db_fetch_all("SELECT * FROM inventaire_details_bobines WHERE inventaire_id=?", [$inv_id]);
@@ -253,6 +254,17 @@ function inv_valider_bobines(array $inv, int $user_id): array {
     );
     return ['nb_ecarts' => $nb_ecarts, 'total_physique' => $total_physique,
             'absentes' => $absentes, 'retrouvees' => $retrouvees, 'ignorees' => $ignorees, 'conflits' => $conflits];
+}
+
+// ── Verrouille la ligne de l'inventaire et refuse si elle n'est plus un
+//    brouillon : deux validations simultanées (double clic, deux gestionnaires)
+//    lisaient toutes deux « brouillon » et rejouaient les ajustements.
+//    À appeler dans la transaction de l'appelant. $table : inventaires_bobines
+//    | inventaires_rivets | inventaires_pmma | inventaires_equipements.
+function inv_verrouiller_brouillon(string $table, int $inv_id): void {
+    $st = db_fetch_value("SELECT statut FROM $table WHERE id = ? FOR UPDATE", [$inv_id]);
+    if ($st !== 'brouillon')
+        throw new Exception("cet inventaire n'est plus en cours (déjà validé ou annulé).");
 }
 
 // ── RÈGLE INVENTAIRE (02/11/2026) : le comptage se fait en FIN de journée,

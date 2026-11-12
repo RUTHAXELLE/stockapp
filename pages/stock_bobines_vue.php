@@ -34,6 +34,8 @@ require_permission('stock_bobines', 'can_read');
 
 // ── FILTRES ──────────────────────────────────────────────────
 $f_site   = (int)($_GET['site']   ?? 0);
+// Le coordinateur ne consulte que le stock de SON site.
+if ($role_slug === 'coordinateur_site' && !empty($user['site_id'])) $f_site = (int)$user['site_id'];
 $f_type   = trim($_GET['type']    ?? '');
 $f_statut = trim($_GET['statut']  ?? '');   // en_cours | en_stock | (vide=tous)
 $export   = trim($_GET['export']  ?? '');   // csv | xlsx | pptx

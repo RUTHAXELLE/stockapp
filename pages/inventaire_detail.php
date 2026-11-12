@@ -41,6 +41,12 @@ $inv = db_fetch_one(
 );
 if (!$inv) { header('Location: inventaire_bobines.php'); exit; }
 
+// Un coordinateur ne travaille que sur l'inventaire de SON site.
+if (($user['role_slug'] ?? '') === 'coordinateur_site' && (int)($user['site_id'] ?? 0) !== (int)$inv['site_id']) {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) { header('Content-Type: application/json'); json_response(false, "Cet inventaire n'est pas celui de votre site."); }
+    http_response_code(403); include __DIR__ . '/../templates/403.php'; exit;
+}
+
 $role_slug    = $user['role_slug'] ?? '';
 $can_edit     = $inv['statut'] === 'brouillon' && can('inventaire_bobines','can_update');
 $can_validate = $inv['statut'] === 'brouillon'
@@ -53,6 +59,15 @@ $can_demander_site  = can('inventaire_sessions','can_read');
 // Bobines absentes / retrouvées (includes/bobines_absentes.php), actives
 // une fois la migration passée.
 $bab = bab_actif();
+// Une ligne déjà saisie est verrouillée : seule une demande ouverte par
+// l'admin, ou une demande du coordinateur déjà autorisée, la rouvre. Ce
+// contrôle vit côté serveur (le champ désactivé de l'écran ne protège rien).
+function _inv_ligne_deverrouillee(int $detail_id): bool {
+    return (bool)db_fetch_value(
+        "SELECT COUNT(*) FROM inventaire_corrections WHERE detail_id=?
+            AND ((type='demande_site' AND statut='en_attente')
+              OR (type='demande_autorisation' AND statut='autorise'))", [$detail_id]);
+}
 $page_title  = 'Inventaire du ' . fmt_date($inv['date_inventaire']);
 $active_page = 'inventaire_bobines';
 
@@ -84,10 +99,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
             [$detail_id, $inv_id]
         );
         if (!$det) json_response(false,'Ligne introuvable.');
+        if (bab_ligne_saisie($det) && !_inv_ligne_deverrouillee($detail_id))
+            json_response(false,'Ligne déjà saisie : passez par une demande de modification.');
         if ($absente && !empty($det['ajoutee'])) json_response(false,"Une bobine ajoutée comme retrouvée ne peut pas être déclarée absente : retirez-la de l'inventaire.");
         if ($absente && bab_ligne_saisie($det)) json_response(false,'Ligne déjà saisie : passez par une demande de modification.');
         if (!$absente && !empty($det['absente'])) json_response(false,'Bobine déclarée absente : passez par une demande de modification.');
         if ($stock_physique === null) json_response(false,'Saisissez le stock physique.');
+        if ($stock_physique < 0) json_response(false,'Le stock physique ne peut pas être négatif.');
 
         // Stock au comptage : ERP actuel + films retirés depuis par les
         // points datés d'après l'inventaire (cf. inv_conso_apres()).
@@ -268,6 +286,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $valeur_finale = ($_POST['valeur_finale'] ?? '') !== '' ? (int)$_POST['valeur_finale'] : null;
         $reponse       = trim($_POST['reponse'] ?? '');
         if ($valeur_finale === null) json_response(false,'La valeur corrigée est obligatoire.');
+        if ($valeur_finale < 0) json_response(false,'La valeur corrigée ne peut pas être négative.');
 
         $corr = db_fetch_one("SELECT * FROM inventaire_corrections WHERE id=? AND inventaire_id=? AND statut IN ('en_attente','autorise')", [$corr_id, $inv_id]);
         if (!$corr) json_response(false,'Demande introuvable ou déjà traitée.');
@@ -280,7 +299,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
              JOIN op_bobines b ON b.id=d.bobine_id WHERE d.id=?",
             [$corr['detail_id']]
         );
-        $stock_sys    = (int)$det['erp_actuel'];   // référence ERP, cf. sauver_ligne
+        if (!$det) json_response(false,'Ligne introuvable.');
+        // Même référence que sauver_ligne : ERP actuel + films retirés depuis
+        // le comptage par les points datés d'après l'inventaire.
+        $stock_sys    = (int)$det['erp_actuel']
+                      + (inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films')[(int)$det['bobine_id']] ?? 0);
         $ecart_mesure = $valeur_finale - $stock_sys;
         $conso_moy    = (float)$det['conso_quotidienne_moy'];
         $jours_phy    = $conso_moy > 0 ? (int)ceil($valeur_finale / $conso_moy) : null;
@@ -316,15 +339,17 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     if ($action==='sauver_tout') {
         if (!$can_edit) json_response(false,'Inventaire non modifiable.');
         $lignes_data = json_decode($_POST['lignes'] ?? '[]', true);
+        if (!is_array($lignes_data)) json_response(false,'Données invalides.');
         $saved = 0; $errors = 0;
         $conso_inv = inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films');
         db_begin();
         try {
             foreach ($lignes_data as $ld) {
                 $detail_id   = (int)($ld['id'] ?? 0);
-                $phy_val     = $ld['phy'] !== '' ? (int)$ld['phy'] : null;
-                $notes       = trim($ld['notes'] ?? '');
+                $phy_val     = (($ld['phy'] ?? '') !== '') ? (int)$ld['phy'] : null;
+                $notes       = trim((string)($ld['notes'] ?? ''));
                 if ($phy_val === null) continue;
+                if ($phy_val < 0) { $errors++; continue; }
 
                 $det = db_fetch_one(
                     "SELECT d.*, b.films_restants AS erp_actuel
@@ -334,6 +359,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
                 );
                 if (!$det) continue;
                 if (!empty($det['absente'])) continue;   // déclarée absente : verrouillée
+                // Ligne déjà saisie et non rouverte : verrouillée côté serveur aussi.
+                if (bab_ligne_saisie($det) && !_inv_ligne_deverrouillee($detail_id)) continue;
 
                 // Référence ERP, cf. sauver_ligne (plus de repli sur OptoTrace
                 // quand l'ERP est à zéro : zéro est une quantité comme une autre)
@@ -350,7 +377,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
                 $saved++;
             }
             db_commit();
-            json_response(true,"$saved ligne(s) sauvegardée(s).",['saved'=>$saved]);
+            json_response(true,"$saved ligne(s) sauvegardée(s)." . ($errors ? " $errors ignorée(s) (valeur négative)." : ''),['saved'=>$saved]);
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 

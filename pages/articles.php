@@ -364,6 +364,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         $article = db_fetch_one("SELECT * FROM articles WHERE id=?", [$article_id]);
         if (!$article) json_response(false, 'Article introuvable.');
+        // Destinataire : un site actif, jamais un dépôt (magasin / entrepôt) —
+        // le stock central est la somme de leurs stocks, une « distribution »
+        // vers l'un d'eux le ferait baisser sans que rien ne sorte.
+        $site_dest = db_fetch_one("SELECT type, actif FROM sites WHERE id=?", [$site_id]);
+        if (!$site_dest || !(int)$site_dest['actif']) json_response(false, 'Site introuvable ou inactif.');
+        if (in_array($site_dest['type'], ['magasin', 'entrepot'], true))
+            json_response(false, "Un magasin ou un entrepôt ne peut pas être destinataire d'une distribution (utilisez un ajustement ou une commande interne).");
         if ($article['stock_global'] < $qte)
             json_response(false, "Stock insuffisant. Disponible : {$article['stock_global']} {$article['unite']}(s).");
 
@@ -372,6 +379,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         db_begin();
         try {
+            // Stock relu sous verrou : le contrôle d'avant la transaction ne
+            // protège pas de deux distributions simultanées.
+            $sg = (int)db_fetch_value("SELECT stock_global FROM articles WHERE id=? FOR UPDATE", [$article_id]);
+            if ($sg < $qte) {
+                db_rollback();
+                json_response(false, "Stock insuffisant. Disponible : $sg {$article['unite']}(s).");
+            }
             $num_dist = 'DS-'.date('Ymd').'-'.str_pad(rand(1,999),3,'0',STR_PAD_LEFT);
 
             // compat legacy livraisons_consommables
@@ -549,17 +563,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $new_qte    = (int)($_POST['new_qte']     ?? 0);
         $motif      = trim($_POST['motif']        ?? '');
         if (!$article_id || !$site_id) json_response(false, 'Article et site obligatoires.');
-        $old_qte = (int)(db_fetch_value(
-            "SELECT quantite FROM stock_site WHERE article_id=? AND site_id=?",
-            [$article_id, $site_id]) ?? 0);
-        $diff = $new_qte - $old_qte;
+        if ($new_qte < 0) json_response(false, 'La quantité ne peut pas être négative.');
+        if (!db_fetch_value("SELECT COUNT(*) FROM articles WHERE id=?", [$article_id])) json_response(false, 'Article introuvable.');
+        if (!db_fetch_value("SELECT COUNT(*) FROM sites WHERE id=?", [$site_id])) json_response(false, 'Site introuvable.');
         db_begin();
         try {
+            // Ancienne quantité lue sous verrou : l'écart reporté sur le stock
+            // central doit venir de la valeur réellement remplacée.
+            $old_qte = (int)(db_fetch_value(
+                "SELECT quantite FROM stock_site WHERE article_id=? AND site_id=? FOR UPDATE",
+                [$article_id, $site_id]) ?? 0);
+            $diff = $new_qte - $old_qte;
             db_query("INSERT INTO stock_site (article_id,site_id,quantite) VALUES (?,?,?) ON DUPLICATE KEY UPDATE quantite=VALUES(quantite)",
                 [$article_id,$site_id,$new_qte]);
             // Un site terrain n'entre pas dans le stock central.
             if (_art_est_depot($site_id))
                 db_query("UPDATE articles SET stock_global = GREATEST(0, stock_global + ?) WHERE id=?", [$diff, $article_id]);
+            db_query(
+                "INSERT INTO mouvements_stock (article_id,site_id,type_mouvement,quantite,solde_apres,reference,notes,created_by)
+                 VALUES (?,?,'ajustement',?,?,?,?,?)",
+                [$article_id, $site_id, $diff, $new_qte, 'Ajustement', "$old_qte → $new_qte" . ($motif !== '' ? " ($motif)" : ''), $user['id']]);
             audit_log($user['id'],'UPDATE','articles',$article_id,
                 "Ajustement site:$site_id : $old_qte → $new_qte ($motif)");
             db_commit();
