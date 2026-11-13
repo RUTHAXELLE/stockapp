@@ -877,7 +877,7 @@ include __DIR__ . '/../templates/header.php';
 <?php endif; ?>
 
 <script>
-function ap(data){ return fetch(window.location.href,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data)}).then(r=>r.json()); }
+function ap(data){ return fetch(window.location.href,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data)}).then(async r=>{ try{ return await r.json(); }catch(e){ return {success:false,message:'Erreur du serveur (code '+r.status+'). L’opération n’a pas abouti : réessayez, puis prévenez l’administrateur si cela se reproduit.'}; } }).catch(()=>({success:false,message:'Connexion au serveur impossible. Vérifiez votre réseau puis réessayez.'})); }
 
 function toast(msg,type='success'){
   let t=document.getElementById('toast-live');
