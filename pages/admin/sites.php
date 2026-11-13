@@ -24,6 +24,69 @@ $page_title  = 'Sites';
 $active_page = 'sites';
 
 // ============================================================
+//  CALCULATEUR DE CAPACITÉ : stock pris en compte (paramétrable)
+//  Un kit d'équipements se monte avec le stock des entrepôts et des magasins
+//  (par défaut tous, au choix un ou plusieurs), dans les états choisis
+//  (neuf et bon par défaut), hors équipements hors service, en transit ou en
+//  cours d'affectation. Les équipements sans site peuvent être ajoutés.
+//  Le réglage par défaut est conservé dans achat_parametres.
+// ============================================================
+const CAPA_ETATS = ['neuf' => 'Neuf', 'bon' => 'Bon', 'usage' => 'Usagé'];
+
+function capa_params_enregistres(): array {
+    $lire = function (string $cle): string {
+        try { return trim((string)db_fetch_value("SELECT valeur FROM achat_parametres WHERE cle = ?", [$cle])); }
+        catch (Throwable $e) { return ''; }
+    };
+    $etats = array_values(array_intersect(array_filter(explode(',', $lire('capacite_etats'))), array_keys(CAPA_ETATS)));
+    return [
+        'sites'     => array_values(array_filter(array_map('intval', explode(',', $lire('capacite_sites_sources'))))),   // [] = tous
+        'etats'     => $etats ?: ['neuf', 'bon'],
+        'sans_site' => $lire('capacite_sans_site') === '1',
+    ];
+}
+
+/** Réglage envoyé par le calculateur (listes séparées par des virgules), nettoyé. */
+function capa_params_requete(): array {
+    return [
+        'sites'     => array_values(array_filter(array_map('intval', explode(',', (string)($_POST['sites'] ?? ''))))),
+        'etats'     => array_values(array_intersect(explode(',', (string)($_POST['etats'] ?? '')), array_keys(CAPA_ETATS))),
+        'sans_site' => ($_POST['sans_site'] ?? '') === '1',
+    ];
+}
+
+/** [nomenclature_id => nombre d'équipements disponibles] pour un réglage. */
+function capa_stock(array $p): array {
+    $etats  = $p['etats'] ?: ['neuf', 'bon'];
+    $params = $etats;
+    $cond   = "s.type IN ('entrepot','magasin') AND s.actif = 1";
+    if ($p['sites']) {
+        $cond .= ' AND s.id IN (' . implode(',', array_fill(0, count($p['sites']), '?')) . ')';
+        array_push($params, ...$p['sites']);
+    }
+    if ($p['sans_site']) $cond = "(($cond) OR e.site_id IS NULL)";
+    $rows = db_fetch_all(
+        "SELECT e.nomenclature_id AS id, COUNT(*) AS n
+           FROM equipements e LEFT JOIN sites s ON s.id = e.site_id
+          WHERE e.actif = 1 AND e.etat IN (" . implode(',', array_fill(0, count($etats), '?')) . ")
+            AND COALESCE(e.statut_stock, 'affecte') IN ('en_stock', 'affecte')
+            AND $cond
+          GROUP BY e.nomenclature_id", $params);
+    return array_map('intval', array_column($rows, 'n', 'id'));
+}
+
+/** Phrase décrivant le stock pris en compte. */
+function capa_resume(array $p): string {
+    $noms = $p['sites']
+        ? array_column(db_fetch_all("SELECT nom FROM sites WHERE id IN (" . implode(',', array_fill(0, count($p['sites']), '?')) . ") ORDER BY nom", $p['sites']), 'nom')
+        : [];
+    $txt = $noms ? implode(', ', $noms) : 'tous les entrepôts et magasins';
+    if ($p['sans_site']) $txt .= ' + équipements sans site';
+    $etats = array_map(fn($e) => strtolower(CAPA_ETATS[$e]), $p['etats'] ?: ['neuf', 'bon']);
+    return $txt . ' · état : ' . implode(', ', $etats);
+}
+
+// ============================================================
 //  AJAX
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
@@ -207,23 +270,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     if ($action === 'calc_capacite') {
         $type_site = trim($_POST['type_site'] ?? '');
         if (!$type_site) json_response(false, 'Type de site obligatoire.');
+        $p = isset($_POST['etats']) ? capa_params_requete() : capa_params_enregistres();
         $besoins = db_fetch_all(
-            "SELECT cs.nomenclature_id, cs.quantite AS requis, cs.optionnel, n.code, n.libelle,
-                    COUNT(e.id) AS stock_disponible
+            "SELECT cs.nomenclature_id, cs.quantite AS requis, cs.optionnel, n.code, n.libelle
              FROM configurations_site cs JOIN nomenclatures n ON n.id=cs.nomenclature_id
-             LEFT JOIN equipements e ON e.nomenclature_id=cs.nomenclature_id AND e.actif=1 AND e.site_id IS NULL AND e.etat IN ('neuf','bon')
-             WHERE cs.type_site=? GROUP BY cs.nomenclature_id, cs.quantite, cs.optionnel, n.code, n.libelle", [$type_site]
+             WHERE cs.type_site=? ORDER BY n.libelle", [$type_site]
         );
         if (empty($besoins)) json_response(false, "Aucune configuration définie pour «$type_site».");
+        $stock    = capa_stock($p);
         $nb_sites = PHP_INT_MAX;
         $details  = [];
         foreach ($besoins as $b) {
-            $ratio = $b['requis'] > 0 ? floor($b['stock_disponible'] / $b['requis']) : PHP_INT_MAX;
+            $dispo = (int)($stock[(int)$b['nomenclature_id']] ?? 0);
+            $ratio = $b['requis'] > 0 ? (int)floor($dispo / $b['requis']) : PHP_INT_MAX;
             if (!$b['optionnel'] && $ratio < $nb_sites) $nb_sites = $ratio;
-            $details[] = ['code'=>$b['code'],'libelle'=>$b['libelle'],'requis'=>(int)$b['requis'],'disponible'=>(int)$b['stock_disponible'],'couvre'=>$ratio===PHP_INT_MAX?'∞':$ratio,'optionnel'=>(bool)$b['optionnel'],'ok'=>$b['stock_disponible']>=$b['requis']];
+            $details[] = ['code'=>$b['code'],'libelle'=>$b['libelle'],'requis'=>(int)$b['requis'],'disponible'=>$dispo,'couvre'=>$ratio===PHP_INT_MAX?'∞':$ratio,'optionnel'=>(bool)$b['optionnel'],'ok'=>$dispo>=$b['requis']];
         }
         if ($nb_sites === PHP_INT_MAX) $nb_sites = 0;
-        json_response(true, '', ['nb_sites'=>$nb_sites,'details'=>$details,'type'=>$type_site]);
+        json_response(true, '', ['nb_sites'=>$nb_sites,'details'=>$details,'type'=>$type_site,'sources'=>capa_resume($p)]);
+    }
+
+    // ── RÉGLAGE PAR DÉFAUT DU CALCULATEUR
+    if ($action === 'save_capa_params') {
+        require_permission('sites', 'can_update');
+        $p = capa_params_requete();
+        if (!$p['etats']) json_response(false, 'Choisissez au moins un état.');
+        $depots = array_map('intval', array_column(db_fetch_all("SELECT id FROM sites WHERE type IN ('entrepot','magasin') AND actif=1"), 'id'));
+        $p['sites'] = array_values(array_intersect($p['sites'], $depots));
+        if (!$p['sites'] && !$p['sans_site'] && $depots) json_response(false, 'Choisissez au moins un site source.');
+        if (count($p['sites']) === count($depots)) $p['sites'] = [];   // tous : les futurs entrepôts et magasins seront inclus
+        $valeurs = [
+            'capacite_sites_sources' => [implode(',', $p['sites']), 'Calculateur de capacité : sites sources (vide = tous les entrepôts et magasins)'],
+            'capacite_etats'         => [implode(',', $p['etats']), 'Calculateur de capacité : états des équipements pris en compte'],
+            'capacite_sans_site'     => [$p['sans_site'] ? '1' : '0', 'Calculateur de capacité : compter les équipements sans site'],
+        ];
+        foreach ($valeurs as $cle => [$val, $lib]) {
+            if ((int)db_fetch_value("SELECT COUNT(*) FROM achat_parametres WHERE cle=?", [$cle]) > 0)
+                db_query("UPDATE achat_parametres SET valeur=?, modifie_par=? WHERE cle=?", [$val, $user['id'], $cle]);
+            else
+                db_query("INSERT INTO achat_parametres (cle, valeur, libelle, type, modifie_par) VALUES (?,?,?,'texte',?)", [$cle, $val, $lib, $user['id']]);
+        }
+        audit_log($user['id'], 'UPDATE', 'sites', null, 'Réglage du calculateur de capacité : ' . capa_resume($p));
+        json_response(true, 'Réglage enregistré.');
     }
 
     // ── SAUVEGARDER CONFIG SITE
@@ -302,12 +390,9 @@ $types_labels = ['saisie'=>'Saisie','pose'=>'Pose','mixte'=>'Mixte','entrepot'=>
 $users_list    = db_fetch_all("SELECT id,prenom,nom FROM users WHERE actif=1 ORDER BY prenom");
 $nomenclatures = db_fetch_all("SELECT id,code,libelle FROM nomenclatures ORDER BY libelle");
 $all_sites_list = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
-$stock_dispo = db_fetch_all(
-    "SELECT n.id, n.code, n.libelle, COUNT(e.id) AS dispo
-     FROM nomenclatures n
-     LEFT JOIN equipements e ON e.nomenclature_id=n.id AND e.actif=1 AND e.site_id IS NULL AND e.etat IN ('neuf','bon')
-     GROUP BY n.id ORDER BY n.libelle"
-);
+$capa_p      = capa_params_enregistres();
+$stock_capa  = capa_stock($capa_p);
+$depots_capa = db_fetch_all("SELECT id, nom, type FROM sites WHERE type IN ('entrepot','magasin') AND actif=1 ORDER BY type, nom");
 $sites_inconnus_emuci = db_fetch_all(
     "SELECT * FROM emuci_sites_inconnus WHERE statut='en_attente' ORDER BY nb_occurrences DESC, derniere_apparition DESC"
 );
@@ -764,7 +849,30 @@ $type_colors = [
   <div class="modal" style="width:620px">
     <div class="mhdr"><h3>Calculateur de capacité</h3><button class="mclose" onclick="closeMX('mCapa')"><i class="ph ph-x" aria-hidden="true"></i></button></div>
     <div class="mbody">
-      <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Combien de sites de ce type puis-je créer avec le stock disponible ?</p>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Combien de sites de ce type puis-je créer avec le stock disponible ?</p>
+      <details id="capaParams" style="border:1px solid var(--border);border-radius:10px;margin-bottom:14px;background:var(--lighter,#f8fafc)">
+        <summary style="cursor:pointer;padding:10px 14px;font-size:12.5px;font-weight:600"><i class="ph ph-sliders-horizontal" aria-hidden="true"></i> Stock pris en compte : <span id="capaResume" style="font-weight:400;color:var(--muted)"></span></summary>
+        <div style="padding:4px 14px 14px;font-size:13px">
+          <div style="font-weight:600;margin:8px 0 4px">Sites sources</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px 16px">
+            <?php foreach ($depots_capa as $d): ?>
+            <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="capa-site" value="<?= (int)$d['id'] ?>" data-nom="<?= h($d['nom']) ?>" <?= (!$capa_p['sites'] || in_array((int)$d['id'], $capa_p['sites'], true)) ? 'checked' : '' ?> onchange="capaChange()"> <?= h($d['nom']) ?> <em style="color:var(--muted);font-size:12px">(<?= $d['type'] === 'magasin' ? 'magasin' : 'entrepôt' ?>)</em></label>
+            <?php endforeach; ?>
+            <?php if (!$depots_capa): ?><span style="color:var(--muted)">Aucun entrepôt ni magasin actif.</span><?php endif; ?>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;margin-top:6px"><input type="checkbox" id="capaSansSite" <?= $capa_p['sans_site'] ? 'checked' : '' ?> onchange="capaChange()"> Compter aussi les équipements sans site</label>
+          <div style="font-weight:600;margin:12px 0 4px">États des équipements</div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
+            <?php foreach (CAPA_ETATS as $k => $l): ?>
+            <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="capa-etat" value="<?= $k ?>" data-nom="<?= h(strtolower($l)) ?>" <?= in_array($k, $capa_p['etats'], true) ? 'checked' : '' ?> onchange="capaChange()"> <?= h($l) ?></label>
+            <?php endforeach; ?>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-top:10px">Les équipements hors service, en transit ou en cours d'affectation ne sont jamais comptés. Le calcul suit vos choix tout de suite ; l'enregistrement les garde par défaut pour tous.</div>
+          <?php if (can('sites', 'can_update')): ?>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="capaSave()"><i class="ph ph-floppy-disk" aria-hidden="true"></i> Enregistrer comme réglage par défaut</button>
+          <?php endif; ?>
+        </div>
+      </details>
       <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap">
         <?php
         // Entrepôt, Siège et Magasin n'ont pas de kit d'équipements type à
@@ -817,7 +925,7 @@ $type_colors = [
 
 <script>
 const NOMS = <?= json_encode(array_map(fn($n)=>['id'=>$n['id'],'code'=>$n['code'],'libelle'=>$n['libelle']],$nomenclatures)) ?>;
-const STOCK_DISPO = <?= json_encode(array_column($stock_dispo,'dispo','id')) ?>;
+const STOCK_DISPO = <?= json_encode($stock_capa) ?>;
 const cfgData = {};
 <?php foreach ($types_calculables as $k => $l):
   $cfg = db_fetch_all("SELECT cs.*,n.code,n.libelle FROM configurations_site cs JOIN nomenclatures n ON n.id=cs.nomenclature_id WHERE cs.type_site=?",[$k]);
@@ -964,12 +1072,38 @@ function viewS(id){
 }
 
 // ── CALCULATEUR
-function openCapa(){document.getElementById('mCapa').classList.add('open');}
+let capaType=null;
+function capaParams(){
+  return {
+    sites:[...document.querySelectorAll('.capa-site:checked')].map(c=>c.value).join(','),
+    etats:[...document.querySelectorAll('.capa-etat:checked')].map(c=>c.value).join(','),
+    sans_site:document.getElementById('capaSansSite').checked?'1':'0'
+  };
+}
+function capaResumeTxt(){
+  const noms=[...document.querySelectorAll('.capa-site:checked')].map(c=>c.dataset.nom);
+  const tous=document.querySelectorAll('.capa-site').length===noms.length;
+  let t=tous?'tous les entrepôts et magasins':(noms.join(', ')||'aucun site');
+  if(document.getElementById('capaSansSite').checked)t+=' + sans site';
+  const e=[...document.querySelectorAll('.capa-etat:checked')].map(c=>c.dataset.nom);
+  return t+' · '+(e.join(', ')||'aucun état');
+}
+function capaChange(){
+  document.getElementById('capaResume').textContent=capaResumeTxt();
+  if(capaType)calcCapa(capaType);
+}
+function capaSave(){
+  ap(Object.assign({action:'save_capa_params'},capaParams())).then(d=>{alert(d.message||'');});
+}
+function openCapa(){document.getElementById('mCapa').classList.add('open');document.getElementById('capaResume').textContent=capaResumeTxt();}
 function calcCapa(type){
+  capaType=type;
   document.querySelectorAll('[id^="cb-"]').forEach(b=>b.classList.remove('btn-primary'));
   document.querySelector(`#cb-${type}`).classList.add('btn-primary');
   document.getElementById('capaResult').innerHTML='<div style="text-align:center;padding:20px;color:var(--muted)">Calcul…</div>';
-  ap({action:'calc_capacite',type_site:type}).then(d=>{
+  const pc=capaParams();
+  if(!pc.etats||(!pc.sites&&pc.sans_site!=='1')){document.getElementById('capaResult').innerHTML='<div class="alert alert-warning">Choisissez au moins un état et un site source (ou les équipements sans site).</div>';return;}
+  ap(Object.assign({action:'calc_capacite',type_site:type},pc)).then(d=>{
     if(!d.success){document.getElementById('capaResult').innerHTML=`<div class="alert alert-warning">${d.message}</div>`;return;}
     const{nb_sites,details}=d.data;
     const col=nb_sites===0?'#e74c3c':nb_sites<=2?'#f39c12':'#27ae60';
@@ -988,7 +1122,8 @@ function calcCapa(type){
         <div class="capa-number" style="color:${col}">${nb_sites}</div>
         <div style="font-size:13px;opacity:.75">site(s) «${type}» réalisable(s)</div>
       </div>
-      <h4 style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;margin-bottom:8px">Détail par équipement</h4>${rows}`;
+      <h4 style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;margin-bottom:8px">Détail par équipement</h4>${rows}
+      <div style="font-size:12px;color:var(--muted);margin-top:10px">Stock pris en compte : ${d.data.sources}</div>`;
   });
 }
 
