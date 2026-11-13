@@ -922,17 +922,16 @@ include __DIR__ . '/../templates/header.php';
   <div class="table-wrap eq-scroll">
     <table data-paginer="25">
       <thead><tr>
-        <th>N° interne</th><th>Type</th><th>N° série fabricant</th><th>Site</th>
+        <th>N° interne</th><th>Marque</th><th>Modèle</th><th>N° série fabricant</th><th>Site</th>
         <th style="text-align:center">État</th>
         <th style="text-align:center">Taux pannes</th>
-        <th style="text-align:center">Valeur résid. (FCFA)</th>
         <th style="text-align:center">Fin cycle</th>
         <th style="text-align:center">Statut stock</th>
         <?php if($can_update || $can_delete || $peut_cycle): ?><th class="eq-act" style="text-align:center">Actions</th><?php endif; ?>
       </tr></thead>
       <tbody>
       <?php if(empty($equipements)): ?>
-        <tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">Aucun équipement.</td></tr>
+        <tr><td colspan="11" style="text-align:center;padding:40px;color:var(--muted)">Aucun équipement.</td></tr>
       <?php else: foreach($equipements as $e):
         $nb_int = (int)($e['nb_interventions_total']??0);
         $nb_cur = (int)($e['nb_curative']??0);
@@ -942,7 +941,8 @@ include __DIR__ . '/../templates/header.php';
       ?>
         <tr class="<?= $e['etat']==='hs'?'eq-hs':'' ?>" style="<?= $e['etat']==='hs'?'background:#fff5f5':'' ?>">
           <td class="eq-nw" style="font-weight:600;color:var(--navy)"><?= h($e['numero_serie_interne']??'—') ?></td>
-          <td style="font-size:12px"><?= h($e['type_nom']??'—') ?></td>
+          <td style="font-size:13px"><?= h(trim((string)($e['marque'] ?? '')) !== '' ? $e['marque'] : '—') ?></td>
+          <td style="font-size:13px"><?= h(trim((string)($e['modele'] ?? '')) !== '' ? $e['modele'] : '—') ?></td>
           <td style="font-family:monospace;font-size:12px"><?= h(trim((string)($e['numero_serie_origine'] ?? '')) !== '' ? $e['numero_serie_origine'] : '—') ?></td>
           <td><?= h($e['site_nom']??'Non affecté') ?><?php if(!empty($e['emplacement'])): ?><div style="font-size:12px;color:var(--muted)"><?= h($e['emplacement']) ?></div><?php endif; ?><?php if(!empty($e['agent_nom'])): ?><div style="font-size:12px;color:var(--navy);font-weight:600"><i class="ph ph-user" aria-hidden="true"></i> <?= h($e['agent_nom']) ?></div><?php endif; ?></td>
           <td style="text-align:center"><span class="etat-badge etat-<?= $e['etat'] ?>"><?= ucfirst($e['etat']) ?></span></td>
@@ -950,12 +950,6 @@ include __DIR__ . '/../templates/header.php';
             <?php if($nb_int > 0): ?>
             <span class="<?= $taux_cls ?>"><?= $taux ?>%</span>
             <div style="font-size:12px;color:var(--muted)"><?= $nb_cur ?>/<?= $nb_int ?> int.</div>
-            <?php else: ?><span style="color:var(--muted)">—</span><?php endif; ?>
-          </td>
-          <td style="text-align:center;font-size:12px;font-weight:600">
-            <?php if($e['valeur_residuelle'] !== null): ?>
-            <?= fmt_number($e['valeur_residuelle']) ?> FCFA
-            <div style="font-size:12px;color:var(--muted)"><?= $e['pct_amorti'] ?>% amorti</div>
             <?php else: ?><span style="color:var(--muted)">—</span><?php endif; ?>
           </td>
           <td style="text-align:center;font-size:12px">
