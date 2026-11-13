@@ -418,6 +418,7 @@ function mail_notifications_a_envoyer(int $max = 100): array {
     $r = ['mails' => [], 'ignores' => 0];
     if (!db_colonne_existe('notifications', 'mail_statut')) return $r;
     $limite = date('Y-m-d H:i:s', time() - MAIL_NOTIF_AGE_MAX_H * 3600);
+    $col_erreur = db_colonne_existe('notifications', 'mail_erreur') ? ', mail_erreur=?' : '';
     $rows = db_fetch_all(
         "SELECT n.id, n.titre, n.message, n.lien, n.lu, n.created_at, u.email, u.prenom, u.actif,
                 " . (db_colonne_existe('users', 'notif_mail') ? 'u.notif_mail' : '1') . " AS notif_mail
@@ -425,9 +426,15 @@ function mail_notifications_a_envoyer(int $max = 100): array {
           WHERE n.mail_statut = 'attente' ORDER BY n.id LIMIT " . (int)$max);
     foreach ($rows as $n) {
         $email = trim((string)($n['email'] ?? ''));
-        if ($email === '' || !(int)$n['actif'] || !(int)$n['notif_mail'] || (int)$n['lu'] === 1 || $n['created_at'] < $limite
-            || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            db_query("UPDATE notifications SET mail_statut='ignore' WHERE id=?", [$n['id']]);
+        $motif = $email === '' ? 'Aucune adresse e-mail'
+               : (!(int)$n['actif'] ? 'Compte inactif'
+               : (!(int)$n['notif_mail'] ? "Mails désactivés par l'utilisateur"
+               : ((int)$n['lu'] === 1 ? 'Notification déjà lue'
+               : ($n['created_at'] < $limite ? 'Trop ancienne (plus de ' . MAIL_NOTIF_AGE_MAX_H . ' h)'
+               : (!filter_var($email, FILTER_VALIDATE_EMAIL) ? 'Adresse e-mail invalide' : '')))));
+        if ($motif !== '') {
+            db_query("UPDATE notifications SET mail_statut='ignore'" . $col_erreur . " WHERE id=?",
+                     $col_erreur !== '' ? [$motif, $n['id']] : [$n['id']]);
             $r['ignores']++;
             continue;
         }
@@ -443,24 +450,37 @@ function mail_notifications_a_envoyer(int $max = 100): array {
     return $r;
 }
 
+/** Message d'erreur d'envoi rendu stockable : une ligne, sans caractère de contrôle, 250 caractères au plus. */
+function mail_nettoyer_erreur(string $m): string {
+    $m = trim(preg_replace('/\s+/u', ' ', preg_replace('/[\x00-\x1F\x7F]/', ' ', $m)));
+    return mb_substr($m, 0, 250);
+}
+
 /**
  * Enregistre le résultat d'envoi. $envoyes : ids partis ; $echecs : ids refusés
- * (nouvelle tentative au prochain passage, 'echec' après MAIL_NOTIF_TENTATIVES).
+ * (nouvelle tentative au prochain passage, 'echec' après MAIL_NOTIF_TENTATIVES) ;
+ * $erreurs : [id => message du refus], conservé dans notifications.mail_erreur.
  * Seules les notifications encore 'attente' sont touchées.
  */
-function mail_enregistrer_resultat(array $envoyes, array $echecs): array {
+function mail_enregistrer_resultat(array $envoyes, array $echecs, array $erreurs = []): array {
     $r = ['envoyes' => 0, 'echecs' => 0];
+    $col = db_colonne_existe('notifications', 'mail_erreur') && db_colonne_existe('notifications', 'mail_envoye_le');
+    $maintenant = date('Y-m-d H:i:s');
     foreach (array_unique(array_map('intval', $envoyes)) as $id) {
-        $r['envoyes'] += db_query("UPDATE notifications SET mail_statut='envoye' WHERE id=? AND mail_statut='attente'", [$id])->rowCount();
+        $r['envoyes'] += db_query(
+            "UPDATE notifications SET mail_statut='envoye'" . ($col ? ', mail_erreur=NULL, mail_envoye_le=?' : '') . " WHERE id=? AND mail_statut='attente'",
+            $col ? [$maintenant, $id] : [$id])->rowCount();
     }
     foreach (array_unique(array_map('intval', $echecs)) as $id) {
+        $msg = mail_nettoyer_erreur((string)($erreurs[$id] ?? ''));
         $r['echecs'] += db_query(
             // MySQL évalue les affectations de gauche à droite : le statut se décide
             // avant l'incrément du compteur.
             "UPDATE notifications SET
                     mail_statut = CASE WHEN mail_tentatives + 1 >= " . MAIL_NOTIF_TENTATIVES . " THEN 'echec' ELSE 'attente' END,
-                    mail_tentatives = mail_tentatives + 1
-              WHERE id=? AND mail_statut='attente'", [$id])->rowCount();
+                    mail_tentatives = mail_tentatives + 1" . ($col ? ', mail_erreur=?' : '') . "
+              WHERE id=? AND mail_statut='attente'",
+            $col ? [$msg, $id] : [$id])->rowCount();
     }
     return $r;
 }
@@ -471,15 +491,16 @@ function mail_enregistrer_resultat(array $envoyes, array $echecs): array {
  */
 function mail_envoyer_notifications(int $max = 100): array {
     $a = mail_notifications_a_envoyer($max);
-    $ok = []; $ko = []; $de_suite = 0;
+    $ok = []; $ko = []; $erreurs = []; $de_suite = 0;
     foreach ($a['mails'] as $m) {
         if (mailer_send($m['to'], $m['sujet'], $m['html'], $m['texte'])) { $ok[] = $m['id']; $de_suite = 0; }
         else {
             $ko[] = $m['id'];
+            $erreurs[$m['id']] = mailer_derniere_erreur();
             // Serveur SMTP injoignable : inutile d'insister pour tout le lot.
             if (++$de_suite >= 3) break;
         }
     }
-    $r = mail_enregistrer_resultat($ok, $ko);
+    $r = mail_enregistrer_resultat($ok, $ko, $erreurs);
     return ['envoyes' => $r['envoyes'], 'ignores' => $a['ignores'], 'echecs' => $r['echecs']];
 }
