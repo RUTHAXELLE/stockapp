@@ -73,7 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             [$nom, $prenom, $email, $role_id, $site_id, $tel, $actif, $id]
         );
         if ($notif_mail !== null && db_colonne_existe('users', 'notif_mail'))
-            db_query("UPDATE users SET notif_mail=? WHERE id=?", [$notif_mail, $id]);
+            { db_query("UPDATE users SET notif_mail=? WHERE id=?", [$notif_mail, $id]); if (!$notif_mail) mail_ignorer_en_attente($id); }
         audit_log($user['id'], 'UPDATE', 'users', $id,
             "Modification utilisateur {$old['email']} → $email", $old,
             ['nom'=>$nom,'prenom'=>$prenom,'email'=>$email,'role_id'=>$role_id]);

@@ -450,6 +450,17 @@ function mail_notifications_a_envoyer(int $max = 100): array {
     return $r;
 }
 
+/**
+ * Un utilisateur coupe ses mails : ses notifications encore en attente d'envoi
+ * ne partiront pas. Sans cela elles restent « en attente » jusqu'au prochain
+ * passage d'envoi (et partiraient si l'envoi n'était pas encore activé).
+ */
+function mail_ignorer_en_attente(int $user_id): int {
+    if (!db_colonne_existe('notifications', 'mail_statut')) return 0;
+    $col = db_colonne_existe('notifications', 'mail_erreur') ? ", mail_erreur='Mails désactivés par l''utilisateur'" : '';
+    return db_query("UPDATE notifications SET mail_statut='ignore'$col WHERE user_id=? AND mail_statut='attente'", [$user_id])->rowCount();
+}
+
 /** Message d'erreur d'envoi rendu stockable : une ligne, sans caractère de contrôle, 250 caractères au plus. */
 function mail_nettoyer_erreur(string $m): string {
     $m = trim(preg_replace('/\s+/u', ' ', preg_replace('/[\x00-\x1F\x7F]/', ' ', $m)));

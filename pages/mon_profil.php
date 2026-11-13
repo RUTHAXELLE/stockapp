@@ -82,6 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!db_colonne_existe('users', 'notif_mail')) json_response(false, 'Réglage indisponible : migration non jouée.');
         $v = !empty($_POST['notif_mail']) ? 1 : 0;
         db_query("UPDATE users SET notif_mail=? WHERE id=?", [$v, $user['id']]);
+        if (!$v) mail_ignorer_en_attente((int)$user['id']);
         audit_log($user['id'], 'UPDATE', 'users', $user['id'], $v ? 'Notifications par mail activées' : 'Notifications par mail coupées');
         json_response(true, $v ? 'Vous recevrez les notifications par mail.' : 'Vous ne recevrez plus de notifications par mail (elles restent visibles dans l\'application).');
     }

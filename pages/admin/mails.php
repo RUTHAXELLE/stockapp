@@ -107,7 +107,8 @@ if ($col_ok) {
     $rows  = db_fetch_all(
         "SELECT n.id, n.titre, n.mail_statut, n.mail_tentatives, n.created_at,
                 " . ($col_erreur ? 'n.mail_erreur, n.mail_envoye_le' : "NULL AS mail_erreur, NULL AS mail_envoye_le") . ",
-                u.email, CONCAT(u.prenom,' ',u.nom) AS user_nom
+                u.email, CONCAT(u.prenom,' ',u.nom) AS user_nom,
+                " . (db_colonne_existe('users', 'notif_mail') ? 'u.notif_mail' : '1') . " AS notif_mail
            FROM notifications n LEFT JOIN users u ON u.id = n.user_id
           WHERE $wsql ORDER BY n.id DESC LIMIT ? OFFSET ?",
         array_merge($params, [$per_page, ($page - 1) * $per_page]));
@@ -247,6 +248,8 @@ include __DIR__ . '/../../templates/header.php';
               <span class="mail-motif">Envoyé le <?= h(fmt_datetime($r['mail_envoye_le'])) ?></span>
             <?php elseif ($r['mail_statut'] === 'ignore'): ?>
               <span class="mail-motif"><?= h($r['mail_erreur'] ?: '—') ?></span>
+            <?php elseif ($r['mail_statut'] === 'attente' && !(int)$r['notif_mail']): ?>
+              <span class="mail-motif">Ne partira pas : mails désactivés par l'utilisateur</span>
             <?php elseif ($r['mail_erreur']): ?>
               <span class="mail-erreur"><?= h($r['mail_erreur']) ?></span>
             <?php else: ?><span class="mail-motif">—</span><?php endif; ?>
