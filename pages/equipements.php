@@ -918,7 +918,8 @@ include __DIR__ . '/../templates/header.php';
       <?php endif; ?>
     </h3>
   </div>
-  <div class="table-wrap">
+<style>.eq-scroll{max-height:calc(52px + 3 * 66px);overflow-y:auto}.eq-scroll thead th{position:sticky;top:0;z-index:2;background:var(--input,#f8fafc);box-shadow:0 1px 0 var(--border,#e2e8f0)}.eq-scroll .eq-act{position:sticky;right:0;z-index:1;background:var(--card,#fff);box-shadow:-6px 0 8px -6px rgba(15,23,42,.18)}.eq-scroll thead th.eq-act{z-index:3;background:var(--input,#f8fafc)}.eq-scroll tr.eq-hs td.eq-act{background:#fff5f5}.eq-scroll td.eq-nw{white-space:nowrap}[data-theme="dark"] .eq-scroll .eq-act{background:#1E293B}[data-theme="dark"] .eq-scroll tr.eq-hs td.eq-act{background:#3b2230}</style>
+  <div class="table-wrap eq-scroll">
     <table data-paginer="25">
       <thead><tr>
         <th>N° interne</th><th>Type</th><th>N° série fabricant</th><th>Site</th>
@@ -927,7 +928,7 @@ include __DIR__ . '/../templates/header.php';
         <th style="text-align:center">Valeur résid. (FCFA)</th>
         <th style="text-align:center">Fin cycle</th>
         <th style="text-align:center">Statut stock</th>
-        <?php if($can_update || $can_delete || $peut_cycle): ?><th style="text-align:center">Actions</th><?php endif; ?>
+        <?php if($can_update || $can_delete || $peut_cycle): ?><th class="eq-act" style="text-align:center">Actions</th><?php endif; ?>
       </tr></thead>
       <tbody>
       <?php if(empty($equipements)): ?>
@@ -939,8 +940,8 @@ include __DIR__ . '/../templates/header.php';
         $taux_cls = $taux >= 70 ? 'taux-danger' : ($taux >= 40 ? 'taux-warn' : 'taux-ok');
         $days_left = $e['date_fin_cycle'] ? (int)round((strtotime($e['date_fin_cycle'])-time())/86400) : null;
       ?>
-        <tr style="<?= $e['etat']==='hs'?'background:#fff5f5':'' ?>">
-          <td style="font-weight:600;color:var(--navy)"><?= h($e['numero_serie_interne']??'—') ?></td>
+        <tr class="<?= $e['etat']==='hs'?'eq-hs':'' ?>" style="<?= $e['etat']==='hs'?'background:#fff5f5':'' ?>">
+          <td class="eq-nw" style="font-weight:600;color:var(--navy)"><?= h($e['numero_serie_interne']??'—') ?></td>
           <td style="font-size:12px"><?= h($e['type_nom']??'—') ?></td>
           <td style="font-family:monospace;font-size:12px"><?= h(trim((string)($e['numero_serie_origine'] ?? '')) !== '' ? $e['numero_serie_origine'] : '—') ?></td>
           <td><?= h($e['site_nom']??'Non affecté') ?><?php if(!empty($e['emplacement'])): ?><div style="font-size:12px;color:var(--muted)"><?= h($e['emplacement']) ?></div><?php endif; ?><?php if(!empty($e['agent_nom'])): ?><div style="font-size:12px;color:var(--navy);font-weight:600"><i class="ph ph-user" aria-hidden="true"></i> <?= h($e['agent_nom']) ?></div><?php endif; ?></td>
@@ -971,7 +972,7 @@ include __DIR__ . '/../templates/header.php';
             </span>
           </td>
           <?php if($can_update || $can_delete || $peut_cycle): ?>
-          <td style="text-align:center;white-space:nowrap">
+          <td class="eq-act" style="text-align:center;white-space:nowrap">
             <?php $st_cur = $e['statut_stock'] ?? 'affecte';
                   if ($peut_cycle && (int)$e['actif'] === 1 && (!$site_force || (int)$e['site_id'] === $site_force)): ?>
               <?php if (in_array($st_cur, ['affecte','en_stock'], true) && !empty($e['site_id'])): ?>
