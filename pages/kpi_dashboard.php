@@ -1336,7 +1336,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
 </div>
 
 <?php
-// ── À TRAITER : les alertes des panneaux, réunies en tête. Rouge = bloque
+// ── POINTS D'ATTENTION (lecture direction, pas une liste de tâches) : les alertes des panneaux, réunies en tête. Rouge = bloque
 //    ou fausse les chiffres ; orange = à surveiller. Chaque pastille ouvre
 //    la page de détail (ou le panneau si l'utilisateur n'y a pas accès).
 $todo = [];
@@ -1363,8 +1363,8 @@ if ($eq_hs > 0)
 if ($interv_ouvertes > 0)
     $todo[] = ['orange', 'ph-wrench', $interv_ouvertes, 'intervention(s) non résolue(s)', kpi_cible('interventions.php', 'interventions', 'kp-eq')];
 ?>
-<nav class="kpi-todo" aria-label="Points à traiter">
-  <span class="kpi-todo-t"><i class="ph ph-bell-ringing" aria-hidden="true"></i> À traiter</span>
+<nav class="kpi-todo" aria-label="Points d'attention">
+  <span class="kpi-todo-t"><i class="ph ph-eye" aria-hidden="true"></i> Points d'attention</span>
   <?php if (!$todo): ?>
   <span class="t-ok"><i class="ph ph-check-circle" aria-hidden="true"></i> Rien à signaler sur le périmètre affiché.</span>
   <?php else: foreach ($todo as [$niv, $ico, $nb, $txt, $url]): ?>
