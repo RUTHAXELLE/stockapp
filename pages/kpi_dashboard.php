@@ -463,6 +463,10 @@ $pmma_alertes = db_fetch_all(
         " . pref_clause_in('sp.site_id', $sites_sel) . "
       ORDER BY sp.quantite ASC LIMIT 4");
 
+$pmma_bas = (int) db_fetch_value(
+    "SELECT COUNT(*) FROM stock_pmma_site sp WHERE sp.quantite < COALESCE(sp.seuil_alerte,10) "
+    . pref_clause_in('sp.site_id', $sites_sel));
+
 // ── RIVETS
 $riv_stock = (int) db_fetch_value(
     "SELECT COALESCE(SUM(quantite),0) FROM op_stock_rivets WHERE 1=1 $sf");
@@ -786,6 +790,20 @@ function kpi_evol(float $c, float $p, string $sens = 'haut'): string {
     if (!empty($aucune_saisie) && $c == 0)
         return '<span class="kd neutre">aucune donnée saisie sur la période</span>';
     return kpi_delta(kpi_var($c, $p), $sens);
+}
+
+/**
+ * Lien « détail » d'un panneau ou d'une alerte : affiché seulement si
+ * l'utilisateur a le droit de lecture du module visé (sinon chaîne vide).
+ */
+function kpi_lien(string $url, string $module, string $texte): string {
+    if (!can($module, 'can_read')) return '';
+    return '<a class="kp-lien" href="' . h($url) . '">' . h($texte) . ' →</a>';
+}
+
+/** Adresse d'une alerte : la page de détail si elle est accessible, sinon le panneau. */
+function kpi_cible(string $url, string $module, string $ancre): string {
+    return can($module, 'can_read') ? $url : '#' . $ancre;
 }
 
 /** Entier signé : « +12 », « −5 », « 0 ». Texte brut. */
@@ -1152,6 +1170,21 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
 .ka-l span.neutre{color:var(--muted);font-weight:600}
 .kp-lien{font-size:0.75rem;font-weight:700;color:var(--primary-d);text-decoration:none;margin-top:8px}
 .kp-lien:hover{text-decoration:underline}
+.kp-h .kp-lien{margin-left:auto;margin-top:0;white-space:nowrap;padding-left:10px}
+.kpi-todo{background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;padding:12px 16px;margin-bottom:16px;
+  display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
+.kpi-todo-t{font-family:'Plus Jakarta Sans',sans-serif;font-size:0.8125rem;font-weight:800;color:var(--navy);margin-right:4px}
+.kpi-todo a{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:20px;font-size:0.78rem;font-weight:700;
+  text-decoration:none;border:1px solid transparent}
+.kpi-todo a b{font-weight:800}
+.kpi-todo a.t-rouge{background:#fdecea;color:#a12318;border-color:#f5c6c0}
+.kpi-todo a.t-orange{background:#fff4e0;color:#8a5300;border-color:#f3d9a8}
+.kpi-todo a:hover{filter:brightness(.96);text-decoration:underline}
+.kpi-todo a:focus-visible{outline:2px solid var(--blue,#1B75BC);outline-offset:2px}
+.kpi-todo .t-ok{font-size:0.8125rem;font-weight:600;color:#1e7e40;display:inline-flex;align-items:center;gap:6px}
+[data-theme="dark"] .kpi-todo a.t-rouge{background:#4a1f1b;color:#ffc9c2;border-color:#7a2e26}
+[data-theme="dark"] .kpi-todo a.t-orange{background:#4a3613;color:#ffdf9e;border-color:#7a5a1c}
+[data-theme="dark"] .kpi-todo .t-ok{color:#7ddba0}
 
 /* ── Sélecteur à choix multiple et vues enregistrées ─────────────
    Vingt et un sites ne tiennent pas dans une rangée de pastilles : le
@@ -1302,6 +1335,43 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
   </form>
 </div>
 
+<?php
+// ── À TRAITER : les alertes des panneaux, réunies en tête. Rouge = bloque
+//    ou fausse les chiffres ; orange = à surveiller. Chaque pastille ouvre
+//    la page de détail (ou le panneau si l'utilisateur n'y a pas accès).
+$todo = [];
+$jour_todo = $jour_ref === date('Y-m-d') ? "aujourd'hui" : 'le ' . fmt_date($jour_ref);
+if (count($saisie_manquants) > 0)
+    $todo[] = ['rouge', 'ph-clipboard-text', count($saisie_manquants), "site(s) sans point soumis $jour_todo", '#kp-fia'];
+if ($saisie_attente > 0)
+    $todo[] = ['orange', 'ph-hourglass', $saisie_attente, 'point(s) à valider par le superviseur',
+               kpi_cible('operations/point_journalier.php', 'operations', 'kp-fia')];
+if (count($emuci_en_ecart) > 0)
+    $todo[] = ['rouge', 'ph-arrows-left-right', count($emuci_en_ecart), 'site(s) en écart avec EMUCI',
+               kpi_cible('point_emuci.php', 'point_emuci', 'kp-fia')];
+if ($couverture !== null && $couverture < 30)
+    $todo[] = ['rouge', 'ph-film-reel', $couverture, 'jour(s) de stock de films', kpi_cible('stock_bobines_vue.php', 'stock_bobines', 'kp-bob')];
+elseif ($format_critique && (int)$format_critique['jours'] < 30)
+    $todo[] = ['orange', 'ph-film-reel', (int)$format_critique['jours'], 'jour(s) de stock pour le format ' . $format_critique['format'],
+               kpi_cible('stock_bobines_vue.php', 'stock_bobines', 'kp-bob')];
+if ($riv_bas > 0)
+    $todo[] = ['orange', 'ph-warning', $riv_bas, 'stock(s) de rivets sous le seuil', kpi_cible('operations/rivets.php', 'rivets', 'kp-riv')];
+if ($pmma_bas > 0)
+    $todo[] = ['orange', 'ph-warning', $pmma_bas, 'stock(s) de PMMA sous le seuil', kpi_cible('pmma.php', 'pmma', 'kp-pmma')];
+if ($eq_hs > 0)
+    $todo[] = ['orange', 'ph-desktop', $eq_hs, 'équipement(s) hors service', kpi_cible('equipements.php?categorie=informatique', 'equipements', 'kp-eq')];
+if ($interv_ouvertes > 0)
+    $todo[] = ['orange', 'ph-wrench', $interv_ouvertes, 'intervention(s) non résolue(s)', kpi_cible('interventions.php', 'interventions', 'kp-eq')];
+?>
+<nav class="kpi-todo" aria-label="Points à traiter">
+  <span class="kpi-todo-t"><i class="ph ph-bell-ringing" aria-hidden="true"></i> À traiter</span>
+  <?php if (!$todo): ?>
+  <span class="t-ok"><i class="ph ph-check-circle" aria-hidden="true"></i> Rien à signaler sur le périmètre affiché.</span>
+  <?php else: foreach ($todo as [$niv, $ico, $nb, $txt, $url]): ?>
+  <a class="t-<?= $niv ?>" href="<?= h($url) ?>"><i class="ph <?= $ico ?>" aria-hidden="true"></i> <b><?= fmt_number((int)$nb) ?></b> <?= h($txt) ?></a>
+  <?php endforeach; endif; ?>
+</nav>
+
 <div class="kpi-grid">
 
   <!-- ══ PRODUCTION ══ -->
@@ -1309,6 +1379,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     <div class="kp-h">
       <span class="kp-ic"><i class="ph ph-car" aria-hidden="true"></i></span>
       <h3 class="kp-t" id="kp-prod">Production<em><?= h($P['libelle']) ?> comparé à <?= h($C['libelle_b_long']) ?><?= h($note_b) ?></em></h3>
+      <?= kpi_lien('operations/point_journalier.php', 'operations', 'Points journaliers') ?>
     </div>
     <div class="kc-row">
       <div class="kc">
@@ -1349,6 +1420,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     <div class="kp-h">
       <span class="kp-ic"><i class="ph ph-copy" aria-hidden="true"></i></span>
       <h3 class="kp-t" id="kp-reimmat">Duplicatas &amp; Post-Immat<em>sites Re-Immatriculation — totaux séparés du Primo</em></h3>
+      <?= kpi_lien('operations/point_journalier.php', 'operations', 'Points journaliers') ?>
     </div>
     <div class="kc-row">
       <div class="kc">
@@ -1424,6 +1496,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     <div class="kp-h">
       <span class="kp-ic"><i class="ph ph-film-strip" aria-hidden="true"></i></span>
       <h3 class="kp-t" id="kp-bob">Bobines<em>état du parc — photo instantanée, hors période</em></h3>
+      <?= kpi_lien('stock_bobines_vue.php', 'stock_bobines', 'Stock par site') ?>
     </div>
     <div class="kp-ring">
       <?= kpi_anneau([['Utilisé', $taux_util, 's1'], ['Restant', 100 - $taux_util, '']],
@@ -1464,6 +1537,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     <div class="kp-h">
       <span class="kp-ic"><i class="ph ph-printer" aria-hidden="true"></i></span>
       <h3 class="kp-t" id="kp-pmma">PMMA<em>consommation de la période, stock et seuils</em></h3>
+      <?= kpi_lien('pmma.php', 'pmma', 'Stock PMMA') ?>
     </div>
     <div class="kc-row">
       <div class="kc">
@@ -1510,6 +1584,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     <div class="kp-h">
       <span class="kp-ic"><i class="ph ph-clipboard-text" aria-hidden="true"></i></span>
       <h3 class="kp-t" id="kp-cmd">Commandes<em>commandes créées sur la période</em></h3>
+      <?= kpi_lien('commandes.php', 'commandes', 'Liste des commandes') ?>
     </div>
     <div class="kc-row">
       <div class="kc">
@@ -1544,6 +1619,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     <div class="kp-h">
       <span class="kp-ic"><i class="ph ph-desktop" aria-hidden="true"></i></span>
       <h3 class="kp-t" id="kp-eq">Équipements<em>parc actif — photo instantanée</em></h3>
+      <?= kpi_lien('equipements.php?categorie=informatique', 'equipements', 'Liste des équipements') ?>
     </div>
     <div class="kc-row">
       <div class="kc">
@@ -1557,6 +1633,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
         <div class="kc-n">non résolues à ce jour<?php if ($interv_ouvertes > 0): ?>
           · <?= fmt_number((int)($interv['equip'] ?? 0)) ?> équipement(s) concerné(s)<?php if (!empty($interv['plus_ancienne'])): ?>
           · la plus ancienne du <?= h(fmt_date($interv['plus_ancienne'])) ?><?php endif; ?><?php endif; ?></div>
+        <?= kpi_lien('interventions.php', 'interventions', 'Voir les interventions') ?>
       </div>
     </div>
     <?php if ($eq_total > 0): ?>
@@ -1586,6 +1663,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     <div class="kp-h">
       <span class="kp-ic"><i class="ph ph-push-pin" aria-hidden="true"></i></span>
       <h3 class="kp-t" id="kp-riv">Rivets<em>consommation de la période et stock disponible</em></h3>
+      <?= kpi_lien('operations/rivets.php', 'rivets', 'Stock rivets') ?>
     </div>
     <div class="kc-row">
       <div class="kc">
@@ -1621,6 +1699,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     <div class="kp-h">
       <span class="kp-ic"><i class="ph ph-shield-check" aria-hidden="true"></i></span>
       <h3 class="kp-t" id="kp-fia">Fiabilité &amp; pertes<em>saisie terrain, rapprochement EMUCI et films endommagés</em></h3>
+      <?= kpi_lien('validation_stock_matin.php', 'validation_stock', 'Validation stock') ?>
     </div>
     <div class="kp-3c">
 
@@ -1764,6 +1843,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     <div class="kp-h">
       <span class="kp-ic"><i class="ph ph-map-pin" aria-hidden="true"></i></span>
       <h3 class="kp-t" id="kp-sites">Sites<em>plaques posées — <?= h($P['libelle']) ?> comparé à <?= h($C['libelle_b_long']) ?></em></h3>
+      <?= kpi_lien('pdg_overview.php', 'pdg_overview', 'Vue par site') ?>
     </div>
     <?php if (empty($classement)): ?>
       <p class="kvide">Aucune production enregistrée sur cette période.</p>
