@@ -537,9 +537,16 @@ $eq_hs    = (int)($eq['hs'] ?? 0);
 $eq_maint = (int)($eq['maint'] ?? 0);
 $eq_autre = max(0, $eq_total - $eq_ok - $eq_hs - $eq_maint);
 $dispo    = $eq_total > 0 ? $eq_ok / $eq_total * 100 : 0;
-$interv_ouvertes = (int) db_fetch_value(
-    "SELECT COUNT(*) FROM interventions_maintenance
-      WHERE statut_apres <> 'resolu' " . pref_clause_in('site_id', $sites_sel));
+// Interventions non résolues : seulement sur des équipements encore actifs
+// (ou sans équipement précis). Le nombre d'équipements concernés et la date
+// de la plus ancienne expliquent un total supérieur au parc.
+$interv = db_fetch_one(
+    "SELECT COUNT(*) AS n, COUNT(DISTINCT i.equipement_id) AS equip, MIN(i.date_intervention) AS plus_ancienne
+       FROM interventions_maintenance i
+       LEFT JOIN equipements e ON e.id = i.equipement_id
+      WHERE i.statut_apres <> 'resolu' AND (i.equipement_id IS NULL OR e.actif = 1) "
+    . pref_clause_in('i.site_id', $sites_sel)) ?: [];
+$interv_ouvertes = (int)($interv['n'] ?? 0);
 
 // ── SITES — production comparee et classement
 // Un site sans production sur A mais actif sur B reste affiche : c'est
@@ -583,8 +590,16 @@ foreach ($classement as $c)
 // sites. Le jour est celui de la vue journalière, aujourd'hui si la période
 // est en cours, sinon son dernier jour. Un point est « soumis » dès qu'il
 // n'est ni brouillon ni rejeté : un rejet est à reprendre, il ne compte pas.
+// Avant 18 h, le point du jour n'est pas encore attendu : compter aujourd'hui
+// marquait tous les sites « à relancer » dès minuit. On contrôle alors la veille.
 $jour_ref = $periode === 'journalier' ? $C['du_a']
-          : ($C['a_en_cours'] ? date('Y-m-d') : $C['au_a']);
+          : ($C['a_en_cours'] ? ((int)date('G') >= 18 ? date('Y-m-d') : date('Y-m-d', strtotime('-1 day'))) : $C['au_a']);
+
+// Aucun point journalier sur la période analysée (périmètre choisi) : les
+// volumes à zéro ne sont pas des chutes, cf. kpi_evol().
+$aucune_saisie = !db_fetch_value(
+    "SELECT 1 FROM op_points_journaliers WHERE date_point BETWEEN ? AND ? AND statut <> 'rejete' "
+    . pref_clause_in('site_id', $sites_sel) . " LIMIT 1", [$C['du_a'], $C['au_a']]);
 $saisie_sites = db_fetch_all(
     "SELECT s.nom,
             COUNT(CASE WHEN p.statut NOT IN ('brouillon','rejete') THEN 1 END) AS soumis,
@@ -594,6 +609,7 @@ $saisie_sites = db_fetch_all(
        FROM sites s
        LEFT JOIN op_points_journaliers p ON p.site_id = s.id AND p.date_point = ?
       WHERE s.actif = 1 " . pref_clause_in('s.id', $sites_sel) . "
+        AND COALESCE(s.type,'') NOT IN ('entrepot','magasin','siege')
         AND (s.date_debut_mission IS NULL OR s.date_debut_mission <= ?)
         AND (s.date_fin_mission   IS NULL OR s.date_fin_mission   >= ?)
         AND EXISTS (SELECT 1 FROM op_bobines b
@@ -749,6 +765,27 @@ function kpi_var(float $c, float $p): ?float { return $p > 0 ? ($c - $p) / $p * 
 function kpi_pct(float $v): string {
     if ($v != 0 && abs($v) < 0.5) return '< 1 %';
     return number_format($v, 0, ',', ' ') . ' %';
+}
+
+/**
+ * Durée de couverture lisible. Au-delà d'un an le chiffre n'a plus de sens
+ * (une consommation presque nulle donnait « 6 379 867 jours de stock ») :
+ * on écrit « plus d'un an ». Texte brut.
+ */
+function kpi_jours(int $j): string {
+    return $j > 365 ? "plus d'un an" : fmt_number($j) . ' jour' . ($j > 1 ? 's' : '');
+}
+
+/**
+ * Évolution d'un volume entre les deux périodes. Quand aucun point
+ * journalier n'est saisi sur la période analysée, un zéro n'est pas une
+ * chute de 100 % : on le dit au lieu d'afficher une flèche rouge.
+ */
+function kpi_evol(float $c, float $p, string $sens = 'haut'): string {
+    global $aucune_saisie;
+    if (!empty($aucune_saisie) && $c == 0)
+        return '<span class="kd neutre">aucune donnée saisie sur la période</span>';
+    return kpi_delta(kpi_var($c, $p), $sens);
 }
 
 /** Entier signé : « +12 », « −5 », « 0 ». Texte brut. */
@@ -1277,19 +1314,19 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
       <div class="kc">
         <div class="kc-l">Plaques posées</div>
         <div class="kc-v"><?= fmt_number((int)$plaques) ?></div>
-        <?= kpi_delta(kpi_var($plaques, $plaques_p)) ?>
+        <?= kpi_evol($plaques, $plaques_p) ?>
         <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number((int)$plaques_p) ?>)</div>
       </div>
       <div class="kc">
         <div class="kc-l">Engins traités</div>
         <div class="kc-v"><?= fmt_number((int)$engins) ?></div>
-        <?= kpi_delta(kpi_var($engins, $engins_p)) ?>
+        <?= kpi_evol($engins, $engins_p) ?>
         <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number((int)$engins_p) ?>)</div>
       </div>
       <div class="kc">
         <div class="kc-l">Plaques par jour</div>
         <div class="kc-v"><?= $moy_j !== null ? number_format($moy_j, 1, ',', ' ') : '—' ?></div>
-        <?= ($moy_j !== null && $moy_j_p !== null) ? kpi_delta(kpi_var($moy_j, $moy_j_p)) : '' ?>
+        <?= ($moy_j !== null && $moy_j_p !== null) ? kpi_evol($moy_j, $moy_j_p) : '' ?>
         <div class="kc-n"><?= fmt_number($C['jours_a']) ?> j écoulé(s) contre <?= fmt_number($C['jours_b']) ?> j
           (<?= $moy_j_p !== null ? number_format($moy_j_p, 1, ',', ' ') : '—' ?>)</div>
       </div>
@@ -1317,25 +1354,25 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
       <div class="kc">
         <div class="kc-l">Duplicatas — plaques posées</div>
         <div class="kc-v"><?= fmt_number((int)$plaques_dup) ?></div>
-        <?= kpi_delta(kpi_var($plaques_dup, $plaques_dup_p)) ?>
+        <?= kpi_evol($plaques_dup, $plaques_dup_p) ?>
         <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number((int)$plaques_dup_p) ?>)</div>
       </div>
       <div class="kc">
         <div class="kc-l">Duplicatas — engins traités</div>
         <div class="kc-v"><?= fmt_number((int)$engins_dup) ?></div>
-        <?= kpi_delta(kpi_var($engins_dup, $engins_dup_p)) ?>
+        <?= kpi_evol($engins_dup, $engins_dup_p) ?>
         <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number((int)$engins_dup_p) ?>)</div>
       </div>
       <div class="kc">
         <div class="kc-l">Post-Immat — plaques posées</div>
         <div class="kc-v"><?= fmt_number((int)$plaques_pi) ?></div>
-        <?= kpi_delta(kpi_var($plaques_pi, $plaques_pi_p)) ?>
+        <?= kpi_evol($plaques_pi, $plaques_pi_p) ?>
         <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number((int)$plaques_pi_p) ?>)</div>
       </div>
       <div class="kc">
         <div class="kc-l">Post-Immat — engins traités</div>
         <div class="kc-v"><?= fmt_number((int)$engins_pi) ?></div>
-        <?= kpi_delta(kpi_var($engins_pi, $engins_pi_p)) ?>
+        <?= kpi_evol($engins_pi, $engins_pi_p) ?>
         <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number((int)$engins_pi_p) ?>)</div>
       </div>
     </div>
@@ -1401,11 +1438,11 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
     </div>
     <p class="kc-n" style="margin-top:10px">
       <?= $couverture !== null
-          ? 'Couverture : ' . fmt_number($couverture) . ' jours de stock au rythme des 30 derniers jours.'
+          ? 'Couverture : ' . h(kpi_jours($couverture)) . ' de stock au rythme des 30 derniers jours.'
           : 'Aucune consommation de films sur les 30 derniers jours : la couverture ne peut pas être calculée.' ?>
-      <?php if ($format_critique && $couverture !== null && $format_critique['jours'] < $couverture): ?>
+      <?php if ($format_critique && $couverture !== null && $format_critique['jours'] < $couverture && $format_critique['jours'] <= 365): ?>
       Premier format épuisé : <?= h($format_critique['format']) ?>, dans
-      <?= fmt_number($format_critique['jours']) ?> jour(s).
+      <?= h(kpi_jours((int)$format_critique['jours'])) ?>.
       <?php endif; ?>
       Perte : <?= h(kpi_pct($taux_perte)) ?> des films sortis.
     </p>
@@ -1432,7 +1469,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
       <div class="kc">
         <div class="kc-l">Consommés</div>
         <div class="kc-v"><?= fmt_number($pmma_conso) ?></div>
-        <?= kpi_delta(kpi_var($pmma_conso, $pmma_conso_p)) ?>
+        <?= kpi_evol($pmma_conso, $pmma_conso_p) ?>
         <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number($pmma_conso_p) ?>)</div>
       </div>
       <div class="kc">
@@ -1517,7 +1554,9 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
       <div class="kc">
         <div class="kc-l">Interventions</div>
         <div class="kc-v"><?= fmt_number($interv_ouvertes) ?></div>
-        <div class="kc-n">non résolues à ce jour</div>
+        <div class="kc-n">non résolues à ce jour<?php if ($interv_ouvertes > 0): ?>
+          · <?= fmt_number((int)($interv['equip'] ?? 0)) ?> équipement(s) concerné(s)<?php if (!empty($interv['plus_ancienne'])): ?>
+          · la plus ancienne du <?= h(fmt_date($interv['plus_ancienne'])) ?><?php endif; ?><?php endif; ?></div>
       </div>
     </div>
     <?php if ($eq_total > 0): ?>
@@ -1552,7 +1591,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
       <div class="kc">
         <div class="kc-l">Consommés</div>
         <div class="kc-v"><?= fmt_number($riv_conso) ?></div>
-        <?= kpi_delta(kpi_var($riv_conso, $riv_conso_p)) ?>
+        <?= kpi_evol($riv_conso, $riv_conso_p) ?>
         <div class="kc-n">vs <?= h($C['libelle_b']) ?> (<?= fmt_number($riv_conso_p) ?>)</div>
       </div>
       <div class="kc">
@@ -1594,7 +1633,9 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
             <div class="kc-v"><?= count($saisie_manquants) ?><small>/ <?= $saisie_attendus ?></small></div>
             <div class="kc-n"><?= $jour_ref === date('Y-m-d')
                 ? "aujourd'hui, à " . date('H\hi')
-                : 'le ' . h(fmt_date($jour_ref)) ?></div>
+                : ($jour_ref === date('Y-m-d', strtotime('-1 day')) && $periode !== 'journalier'
+                    ? 'hier, le ' . h(fmt_date($jour_ref)) . " (le point du jour est attendu à partir de 18 h)"
+                    : 'le ' . h(fmt_date($jour_ref))) ?></div>
           </div>
           <div class="kc">
             <div class="kc-l">À valider</div>
@@ -1618,7 +1659,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
             Tous les sites attendus ont soumis leur point.</div>
           <?php endif; ?>
         </div>
-        <p class="kc-n" style="margin:6px 0 0">Sites attendus : en mission et détenant au moins une bobine active.</p>
+        <p class="kc-n" style="margin:6px 0 0">Sites attendus : sites opérationnels (hors entrepôt, magasin et siège) en mission et détenant au moins une bobine active.</p>
       </div>
 
       <?php /* ── 2. Rapprochement EMUCI ── */ ?>
@@ -1756,7 +1797,7 @@ body.pdg-collee .kpi-bar{border-bottom-color:var(--border);
           <span class="kcl-r"><?= $r ?></span>
           <span class="kcl-n"><?= h($c['nom']) ?></span>
           <span class="kcl-v"><?= fmt_number((int)$c['plaques']) ?></span>
-          <?= kpi_delta(kpi_var((float)$c['plaques'], (float)$c['plaques_p'])) ?>
+          <?= kpi_evol((float)$c['plaques'], (float)$c['plaques_p']) ?>
         </div>
         <?php endforeach; ?>
       </div>
