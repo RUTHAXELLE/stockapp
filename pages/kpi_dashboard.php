@@ -588,10 +588,9 @@ foreach ($classement as $c)
 // repris de l'écran qui fait déjà foi pour lui.
 
 // 1. Sites sans point soumis au jour de référence.
-// Sites attendus : actifs, dans le périmètre, en mission ce jour-là et
-// détenant au moins une bobine active — la règle de
-// validation_stock_matin.php, pour que les deux écrans désignent les mêmes
-// sites. Le jour est celui de la vue journalière, aujourd'hui si la période
+// Sites attendus : actifs, dans le périmètre, de type Pose ou Mixte et
+// détenant au moins une bobine active. Les dates de mission ne sont pas
+// prises en compte : aucun écran ne permet de les saisir. Le jour est celui de la vue journalière, aujourd'hui si la période
 // est en cours, sinon son dernier jour. Un point est « soumis » dès qu'il
 // n'est ni brouillon ni rejeté : un rejet est à reprendre, il ne compte pas.
 // Avant 18 h, le point du jour n'est pas encore attendu : compter aujourd'hui
@@ -613,13 +612,11 @@ $saisie_sites = db_fetch_all(
        FROM sites s
        LEFT JOIN op_points_journaliers p ON p.site_id = s.id AND p.date_point = ?
       WHERE s.actif = 1 " . pref_clause_in('s.id', $sites_sel) . "
-        AND COALESCE(s.type,'') NOT IN ('entrepot','magasin','siege')
-        AND (s.date_debut_mission IS NULL OR s.date_debut_mission <= ?)
-        AND (s.date_fin_mission   IS NULL OR s.date_fin_mission   >= ?)
+        AND s.type IN ('pose','mixte')
         AND EXISTS (SELECT 1 FROM op_bobines b
                      WHERE b.site_id = s.id AND b.statut IN ('en_cours','en_stock'))
       GROUP BY s.id, s.nom
-      ORDER BY s.nom", [$jour_ref, $jour_ref, $jour_ref]);
+      ORDER BY s.nom", [$jour_ref]);
 $saisie_attendus = count($saisie_sites);
 $saisie_manquants = [];
 $saisie_attente = 0;
@@ -1738,7 +1735,7 @@ if ($interv_ouvertes > 0)
             Tous les sites attendus ont soumis leur point.</div>
           <?php endif; ?>
         </div>
-        <p class="kc-n" style="margin:6px 0 0">Sites attendus : sites opérationnels (hors entrepôt, magasin et siège) en mission et détenant au moins une bobine active.</p>
+        <p class="kc-n" style="margin:6px 0 0">Sites attendus : sites actifs de pose (types Pose et Mixte) détenant au moins une bobine active.</p>
       </div>
 
       <?php /* ── 2. Rapprochement EMUCI ── */ ?>
