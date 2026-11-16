@@ -54,30 +54,41 @@ if (!$types_dispo) {
 }
 
 // ── Filtres
-$date_ok = fn($d) => is_string($d) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) && strtotime($d);
-$du = $_GET['du'] ?? '';
-$au = $_GET['au'] ?? '';
-if (!$date_ok($du)) $du = date('Y-m-01');
-if (!$date_ok($au)) $au = date('Y-m-d');
-if ($au < $du) [$du, $au] = [$au, $du];
+// Le filtre porte sur l'inventaire (session) par son nom, pas sur des dates :
+// un inventaire validé en retard reste rattaché à sa session. -1 = inventaires
+// créés hors de toute session.
+$sessions = db_fetch_all("SELECT id, libelle, date_debut, date_fin FROM inventaire_sessions ORDER BY date_debut DESC, id DESC");
+$session_nom = fn(array $x) => trim((string)($x['libelle'] ?? '')) !== ''
+    ? trim((string)$x['libelle'])
+    : 'Inventaire du ' . fmt_date($x['date_debut']) . ' au ' . fmt_date($x['date_fin']);
+$session_id = (int)($_GET['session'] ?? 0);
+$session    = null;
+foreach ($sessions as $x) if ((int)$x['id'] === $session_id) $session = $x;
+if (!$session && $session_id !== -1) { $session = $sessions[0] ?? null; $session_id = $session ? (int)$session['id'] : -1; }
 
 $types_sel = array_values(array_intersect((array)($_GET['types'] ?? array_keys($types_dispo)), array_keys($types_dispo)));
 if (!$types_sel) $types_sel = array_keys($types_dispo);
 $statut  = in_array($_GET['statut'] ?? '', ['valide', 'tous'], true) ? $_GET['statut'] : 'valide';
 $site_id = (int)($_GET['site'] ?? 0);
 $export  = $_GET['export'] ?? '';
+// Export d'un seul inventaire (bouton de la ligne) : « type-id ».
+$une_type = ''; $une_id = 0;
+if ($export !== '' && preg_match('/^([a-z]+)-(\d+)$/', (string)($_GET['une'] ?? ''), $m) && isset($types_dispo[$m[1]])) {
+    $une_type = $m[1]; $une_id = (int)$m[2]; $types_sel = [$une_type];
+}
 
 $sites = db_fetch_all("SELECT id, nom FROM sites WHERE actif=1 ORDER BY nom");
 
 // ── Inventaires de la période (tous sites, ou le site choisi)
-function inv_export_entetes(string $type, string $du, string $au, string $statut, int $site_id): array {
+function inv_export_entetes(string $type, int $session_id, string $statut, int $site_id): array {
+    if (!db_colonne_existe("inventaires_$type", 'session_id')) return [];
     $sql = "SELECT i.*, s.nom AS site_nom FROM inventaires_$type i
             LEFT JOIN sites s ON s.id = i.site_id
-            WHERE i.date_inventaire BETWEEN ? AND ?"
+            WHERE " . ($session_id > 0 ? "i.session_id = ?" : "i.session_id IS NULL")
          . ($statut === 'valide' ? " AND i.statut = 'valide'" : " AND i.statut <> 'annule'")
          . ($site_id ? " AND i.site_id = ?" : '')
          . " ORDER BY s.nom, i.date_inventaire, i.id";
-    $p = [$du, $au];
+    $p = $session_id > 0 ? [$session_id] : [];
     if ($site_id) $p[] = $site_id;
     return db_fetch_all($sql, $p);
 }
@@ -121,7 +132,8 @@ function inv_export_compte(array $l): bool {
 // ── Données : par type, chaque inventaire avec ses lignes et sa synthèse
 $donnees = [];
 foreach ($types_sel as $t) {
-    $invs = inv_export_entetes($t, $du, $au, $statut, $site_id);
+    $invs = inv_export_entetes($t, $session_id, $statut, $site_id);
+    if ($une_id) $invs = array_values(array_filter($invs, fn($i) => (int)$i['id'] === $une_id));
     $det  = inv_export_details($t, array_map(fn($i) => (int)$i['id'], $invs));
     foreach ($invs as &$inv) {
         $lignes = $det[(int)$inv['id']] ?? [];
@@ -146,12 +158,22 @@ foreach ($types_sel as $t) {
     $donnees[$t] = $invs;
 }
 
-$periode_txt = $du === $au ? 'du ' . fmt_date($du) : 'du ' . fmt_date($du) . ' au ' . fmt_date($au);
+$periode_txt = $session ? '« ' . $session_nom($session) . ' »' : 'hors session';
 $site_txt    = 'Tous les sites';
 foreach ($sites as $s) if ((int)$s['id'] === $site_id) $site_txt = $s['nom'];
 $statut_lbl  = fn($s) => ['valide' => 'Validé', 'brouillon' => 'En cours'][$s] ?? ucfirst((string)$s);
 $ref_lbl     = fn($t) => $t === 'bobines' ? 'Qté physique (déclarée)' : 'Qté système';
-$nom_fichier = 'inventaires_' . str_replace('-', '', $du) . ($du !== $au ? '_' . str_replace('-', '', $au) : '');
+$nom_fichier = 'inventaires_' . ($session
+    ? (trim(preg_replace('/[^A-Za-z0-9]+/', '_', iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $session_nom($session)) ?: ''), '_') ?: 'session_' . $session_id)
+    : 'hors_session');
+if ($une_id) {
+    $une_inv = $donnees[$une_type][0] ?? null;
+    if (!$une_inv) { http_response_code(404); exit('Inventaire introuvable avec ces filtres.'); }
+    $site_txt = $une_inv['site_nom'] ?? $site_txt;
+    $nom_fichier = 'inventaire_' . $une_type . '_'
+        . (trim(preg_replace('/[^A-Za-z0-9]+/', '_', iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', (string)($une_inv['site_nom'] ?? '')) ?: ''), '_') ?: 'site')
+        . '_' . str_replace('-', '', substr((string)$une_inv['date_inventaire'], 0, 10));
+}
 
 // ============================================================
 //  EXPORT EXCEL : synthèse + une feuille de détail par type
@@ -344,7 +366,7 @@ if ($export === 'pdf') {
 //  PAGE
 // ============================================================
 include __DIR__ . '/../templates/header.php';
-$qs = fn(string $exp) => '?' . http_build_query(['du' => $du, 'au' => $au, 'types' => $types_sel, 'statut' => $statut, 'site' => $site_id, 'export' => $exp]);
+$qs = fn(string $exp) => '?' . http_build_query(['session' => $session_id, 'types' => $types_sel, 'statut' => $statut, 'site' => $site_id, 'export' => $exp]);
 ?>
 <style>
 .exp-filtres{background:white;border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:20px;
@@ -368,8 +390,14 @@ $qs = fn(string $exp) => '?' . http_build_query(['du' => $du, 'au' => $au, 'type
 </style>
 
 <form method="get" class="exp-filtres">
-  <div class="exp-champ"><label for="du">Du</label><input type="date" id="du" name="du" value="<?= h($du) ?>"></div>
-  <div class="exp-champ"><label for="au">Au</label><input type="date" id="au" name="au" value="<?= h($au) ?>"></div>
+  <div class="exp-champ"><label for="session">Inventaire</label>
+    <select id="session" name="session" style="min-width:260px;max-width:100%">
+      <?php foreach ($sessions as $x): ?>
+      <option value="<?= (int)$x['id'] ?>" <?= (int)$x['id'] === $session_id ? 'selected' : '' ?>><?= h($session_nom($x)) ?></option>
+      <?php endforeach; ?>
+      <option value="-1" <?= $session_id === -1 ? 'selected' : '' ?>>Inventaires hors session</option>
+    </select>
+  </div>
   <div class="exp-champ"><span>Inventaires</span>
     <div class="exp-types">
       <?php foreach ($types_dispo as $k => $lib): ?>
@@ -407,7 +435,7 @@ $qs = fn(string $exp) => '?' . http_build_query(['du' => $du, 'au' => $au, 'type
 <div class="exp-bloc">
   <h3><?= h($TYPES[$t]) ?> <small><?= count($invs) ?> inventaire(s)</small></h3>
   <?php if (!$invs): ?>
-  <div class="exp-vide">Aucun inventaire sur la période.</div>
+  <div class="exp-vide">Aucun inventaire de ce type pour cet inventaire.</div>
   <?php else: ?>
   <div class="table-wrap">
   <table data-paginer="25">
@@ -438,7 +466,12 @@ $qs = fn(string $exp) => '?' . http_build_query(['du' => $du, 'au' => $au, 'type
         <td style="text-align:right"><?= number_format($s['compte'], 0, ',', ' ') ?></td>
         <td style="text-align:right" class="<?= $s['ecart'] < 0 ? 'ec-neg' : ($s['ecart'] > 0 ? 'ec-pos' : '') ?>"><?= $s['ecart'] > 0 ? '+' : '' ?><?= number_format($s['ecart'], 0, ',', ' ') ?></td>
         <?php endif; ?>
-        <td style="text-align:right"><a href="<?= h($lien) ?>?id=<?= (int)$inv['id'] ?>" class="btn btn-secondary btn-sm">Voir</a></td>
+        <td style="text-align:right;white-space:nowrap">
+          <?php $une = '&une=' . $t . '-' . (int)$inv['id']; ?>
+          <a href="<?= h($qs('xlsx') . $une) ?>" class="btn btn-secondary btn-sm" title="Exporter cet inventaire en Excel" aria-label="Exporter cet inventaire en Excel"><i class="ph ph-file-xls" aria-hidden="true"></i> Excel</a>
+          <a href="<?= h($qs('pdf') . $une) ?>" class="btn btn-secondary btn-sm" title="Exporter cet inventaire en PDF" aria-label="Exporter cet inventaire en PDF"><i class="ph ph-file-pdf" aria-hidden="true"></i> PDF</a>
+          <a href="<?= h($lien) ?>?id=<?= (int)$inv['id'] ?>" class="btn btn-secondary btn-sm">Voir</a>
+        </td>
       </tr>
     <?php endforeach; ?>
     </tbody>
