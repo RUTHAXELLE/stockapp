@@ -695,6 +695,7 @@ $kpi_active_total = !$kpi_active_ok && !$kpi_active_hs && !$kpi_active_stock && 
 
 // ── EXPORT EXCEL
 if (isset($_GET['export'])) {
+    require_export($perm_module);
     $autoload = __DIR__ . '/../vendor/autoload.php';
     if (!file_exists($autoload)) die('PhpSpreadsheet non installé.');
     require_once $autoload;
@@ -882,10 +883,12 @@ include __DIR__ . '/../templates/header.php';
   <a href="?categorie=<?= h($f_categorie) ?>" id="equipEffacerBtn" onclick="return equipEffacer(event)" class="btn btn-secondary btn-sm" title="Réinitialiser les filtres"
      style="<?= ($f_site||$f_etat||$f_type||$f_search||$f_statut_stock||$f_fin_cycle) ? '' : 'display:none' ?>"><i class="ph ph-x" aria-hidden="true"></i> Effacer</a>
 
+  <?php if (can($perm_module, 'can_export')): ?>
   <a href="?categorie=<?= h($f_categorie) ?>&site=<?= $f_site ?>&etat=<?= h($f_etat) ?>&type=<?= $f_type ?>&q=<?= urlencode($f_search) ?>&statut_stock=<?= h($f_statut_stock) ?>&fin_cycle=<?= $f_fin_cycle?'1':'' ?>&export=1"
      id="equipExportLink" class="btn btn-secondary btn-sm">
     <i class="ph-duotone ph-file-xls"></i> Excel
   </a>
+  <?php endif; ?>
 </form>
 
 <?php if($voir_doublons): ?>

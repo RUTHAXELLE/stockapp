@@ -28,6 +28,7 @@ $sites_list = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom"
 // EXPORT EXCEL
 // ============================================================
 if (isset($_GET['export'])) {
+    require_export('resume_superviseur');
     $autoload = __DIR__ . '/../vendor/autoload.php';
     if (!file_exists($autoload)) { die('PhpSpreadsheet non installé.'); }
     require_once $autoload;
@@ -244,11 +245,11 @@ include __DIR__ . '/../templates/header.php';
     <?php if($f_vue==='journalier'): ?>
     <input type="date" value="<?= h($f_date) ?>" onchange="location.href=updateParam('date',this.value)" aria-label="Choisir la date"
            style="padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-size:13px;outline:none">
-    <a href="?vue=journalier&date=<?= h($f_date) ?>&site=<?= $f_site ?>&export=journalier" class="btn btn-secondary btn-sm"><i class="ph ph-download-simple" aria-hidden="true"></i> Excel</a>
+    <a href="?vue=journalier&date=<?= h($f_date) ?>&site=<?= $f_site ?>&export=journalier" class="btn btn-secondary btn-sm"<?= can('resume_superviseur','can_export') ? '' : ' hidden' ?>><i class="ph ph-download-simple" aria-hidden="true"></i> Excel</a>
     <?php elseif($f_vue==='mensuel'): ?>
     <input type="month" value="<?= h($f_mois) ?>" onchange="location.href=updateParam('mois',this.value)" aria-label="Choisir le mois"
            style="padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-size:13px;outline:none">
-    <a href="?vue=mensuel&mois=<?= h($f_mois) ?>&site=<?= $f_site ?>&export=mensuel" class="btn btn-secondary btn-sm"><i class="ph ph-download-simple" aria-hidden="true"></i> Excel</a>
+    <a href="?vue=mensuel&mois=<?= h($f_mois) ?>&site=<?= $f_site ?>&export=mensuel" class="btn btn-secondary btn-sm"<?= can('resume_superviseur','can_export') ? '' : ' hidden' ?>><i class="ph ph-download-simple" aria-hidden="true"></i> Excel</a>
     <?php else: ?>
     <select class="fsel" aria-label="Filtrer par année" onchange="location.href=updateParam('annee',this.value)">
       <?php for($y=date('Y');$y>=2023;$y--): ?>

@@ -39,6 +39,7 @@ if ($role_slug === 'coordinateur_site' && !empty($user['site_id'])) $f_site = (i
 $f_type   = trim($_GET['type']    ?? '');
 $f_statut = trim($_GET['statut']  ?? '');   // en_cours | en_stock | (vide=tous)
 $export   = trim($_GET['export']  ?? '');   // csv | xlsx | pptx
+if ($export !== '') require_export('stock_bobines');
 
 // ── REQUÊTE BASE ─────────────────────────────────────────────
 $where  = ["b.statut IN ('en_cours','en_stock')"];
@@ -812,10 +813,12 @@ include __DIR__ . '/../templates/header.php';
     <p>Synthèse par site et par type — <?= date('d/m/Y') ?> · <?= $total_bobines ?> bobines · <?= number_format($total_films) ?> films</p>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <?php if (can('stock_bobines', 'can_export')): ?>
     <a href="?<?= http_build_query(array_merge($_GET,['export'=>'csv']))  ?>" class="export-btn btn-csv"><i class="ph ph-file-text" aria-hidden="true"></i> CSV</a>
     <a href="?<?= http_build_query(array_merge($_GET,['export'=>'xlsx'])) ?>" class="export-btn btn-xlsx"><i class="ph ph-chart-bar" aria-hidden="true"></i> Excel</a>
     <a href="?<?= http_build_query(array_merge($_GET,['export'=>'pdf']))  ?>" class="export-btn btn-pdf"><i class="ph ph-note" aria-hidden="true"></i> PDF</a>
     <a href="?<?= http_build_query(array_merge($_GET,['export'=>'pptx'])) ?>" class="export-btn btn-pptx"><i class="ph ph-files" aria-hidden="true"></i> PowerPoint</a>
+    <?php endif; ?>
   </div>
 </div>
 

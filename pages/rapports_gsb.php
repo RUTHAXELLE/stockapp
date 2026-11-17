@@ -24,6 +24,7 @@ $page_title  = 'Rapports & Exports';
 $active_page = 'rapports_gsb';
 
 $export     = trim($_GET['export']     ?? '');
+if ($export !== '') require_export('rapports_gsb');
 $date_from  = trim($_GET['date_from']  ?? date('Y-m-01'));
 $date_to    = trim($_GET['date_to']    ?? date('Y-m-d'));
 $f_site     = (int)($_GET['site']      ?? 0);

@@ -239,6 +239,7 @@ $grand_total_sortis = array_sum(array_column($recap, 'total_sortis'));
 
 // ── EXPORTS
 if (isset($_GET['export'])) {
+    require_export('rivets');
     $export = $_GET['export'];
     $site_label = $f_site
         ? (db_fetch_value("SELECT nom FROM sites WHERE id=?", [$f_site]) ?: 'Site inconnu')
@@ -419,6 +420,7 @@ include __DIR__ . '/../../templates/header.php';
     <p style="font-size:12px;color:var(--muted);margin-top:2px">Stock et consommation rivets — Points journaliers</p>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <?php if (can('rivets', 'can_export')): ?>
     <a href="?<?= http_build_query(array_merge($_GET, ['export'=>'xlsx'])) ?>"
        class="btn btn-secondary" style="font-size:13px;display:flex;align-items:center;gap:6px">
       <i class="ph-duotone ph-microsoft-excel-logo" style="font-size:16px"></i> Excel
@@ -427,6 +429,7 @@ include __DIR__ . '/../../templates/header.php';
        class="btn btn-secondary" style="font-size:13px;display:flex;align-items:center;gap:6px">
       <i class="ph-duotone ph-file-pdf" style="font-size:16px"></i> PDF
     </a>
+    <?php endif; ?>
     <?php
     $can_appro = in_array($role_slug_r, ['admin','superadmin','gestionnaire_stock','superviseur_operation']);
     ?>

@@ -323,15 +323,6 @@ function _check_permission_db(int $role_id, string $module, string $droit): bool
 }
 
 function _support_it_can(array $user, string $module, string $droit): bool {
-    // Demandes internes est transversal ("tous les employés", cf.
-    // groupes_config.php) : ne pas le filtrer par sous-rôle IT, sinon
-    // aucun support_it ne peut jamais y accéder quel que soit son
-    // sous-rôle actif, quoi que porte la table permissions. Trouvé en
-    // testant l'activation du droit 'demandes' (2026-08-27).
-    if ($module === 'demandes') {
-        return _check_permission_db($user['role_id'], $module, $droit);
-    }
-
     $sous_roles = $user['support_it_sous_roles'] ?? [];
 
     $acces = [
@@ -340,13 +331,23 @@ function _support_it_can(array $user, string $module, string $droit): bool {
         'gestionnaire_bobines'   => ['bobines','inventaire_bobines','equipements','sites'],
     ];
 
+    // Les sous-rôles ne filtrent que les modules techniques ci-dessus. Tout
+    // autre module (demandes, rapport journalier, achats, vue exécutive…)
+    // suit la matrice Administration → Permissions, comme pour les autres
+    // rôles : auparavant tout ce qui sortait de cette liste était refusé,
+    // si bien que cocher une case pour Support IT n'avait aucun effet.
+    // Les droits jamais exercés ont été remis à zéro par
+    // sql/migration_permissions_revue_*.sql pour ne rien ouvrir d'imprévu.
+    $modules_techniques = array_unique(array_merge(...array_values($acces)));
+    if (!in_array($module, $modules_techniques, true)) {
+        return _check_permission_db($user['role_id'], $module, $droit);
+    }
+
     $modules_autorises = [];
     foreach ($sous_roles as $sr) {
         $modules_autorises = array_merge($modules_autorises, $acces[$sr] ?? []);
     }
-    $modules_autorises = array_unique($modules_autorises);
-
-    if (!in_array($module, $modules_autorises)) return false;
+    if (!in_array($module, $modules_autorises, true)) return false;
 
     // Vérifier le droit spécifique en BDD
     return _check_permission_db($user['role_id'], $module, $droit);
@@ -358,6 +359,14 @@ function require_permission(string $module, string $droit = 'can_read'): void {
         include __DIR__ . '/../templates/403.php';
         exit;
     }
+}
+
+/**
+ * Export (Excel, PDF, CSV, PowerPoint) d'un écran de liste : colonne
+ * « Exporter » de la matrice. La lecture seule ne suffit pas.
+ */
+function require_export(string $module): void {
+    require_permission($module, 'can_export');
 }
 
 function is_ajax(): bool {

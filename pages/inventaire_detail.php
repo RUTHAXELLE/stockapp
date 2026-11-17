@@ -548,6 +548,7 @@ $export = trim($_GET['export'] ?? '');
 // garde, un simple ?export=xlsx sur la page qu'il consulte pour compter lui
 // rendait l'intégralité de la comparaison : le masquage n'aurait tenu que sur
 // l'affichage.
+if ($export !== '') require_export('inventaire_bobines');
 if ($export !== '' && $is_coord) {
     http_response_code(403);
     exit("Export réservé aux profils de validation.");
@@ -764,7 +765,7 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
     </div>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
-    <?php if(!$is_coord): /* exports refusés au coordinateur côté serveur —
+    <?php if(!$is_coord && can('inventaire_bobines','can_export')): /* exports refusés au coordinateur côté serveur —
          cf. la garde en tête de fichier ; on masque aussi les boutons pour
          ne pas lui proposer un lien qui renverra 403. */ ?>
     <a href="?id=<?= $inv_id ?>&export=xlsx" class="btn btn-secondary" style="font-size:13px;display:flex;align-items:center;gap:5px">

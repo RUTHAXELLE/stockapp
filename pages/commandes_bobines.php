@@ -893,10 +893,7 @@ function rechercherBobine(val){
   clearTimeout(rechercheTimeout);
   if(val.length<3){document.getElementById('tBobineInfo').style.display='none';return;}
   rechercheTimeout=setTimeout(async()=>{
-    const r=await fetch(`<?= APP_URL ?>/api/equipements.php?action=search_bobine&q=${encodeURIComponent(val)}`,{headers:{'X-Requested-With':'XMLHttpRequest'}}).then(r=>r.json()).catch(()=>null);
-    // Fallback: chercher directement via AJAX POST
-    const d=await ap({action:'get_bobines_dispo',type_bobine:'__all__'}).catch(()=>({data:[]}));
-    // Simple: chercher la bobine par numéro direct
+    // Recherche de la bobine par son numéro (action de cette page).
     const d2 = await fetch(window.location.href,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest','Content-Type':'application/x-www-form-urlencoded'},body:`action=search_bobine_num&numero=${encodeURIComponent(val)}`}).then(r=>r.json()).catch(()=>null);
     if(d2&&d2.success&&d2.data){
       const b=d2.data;

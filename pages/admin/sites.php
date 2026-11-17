@@ -400,6 +400,7 @@ $nb_inconnus = count($sites_inconnus_emuci);
 
 // ── EXPORTS
 if (isset($_GET['export'])) {
+    require_export('sites');
     $export = $_GET['export'];
 
     if ($export === 'xlsx') {
@@ -575,6 +576,7 @@ $type_colors = [
     <p style="font-size:12px;color:var(--muted);margin-top:2px"><?= $total_actifs ?> actif(s) sur <?= $total_all ?> sites au total</p>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <?php if (can('sites', 'can_export')): ?>
     <a href="?<?= http_build_query(array_merge($_GET,['export'=>'xlsx'])) ?>"
        class="btn btn-secondary" style="font-size:13px;display:flex;align-items:center;gap:5px">
       <i class="ph-duotone ph-microsoft-excel-logo"></i> Excel
@@ -583,6 +585,7 @@ $type_colors = [
        class="btn btn-secondary" style="font-size:13px;display:flex;align-items:center;gap:5px">
       <i class="ph-duotone ph-file-pdf"></i> PDF
     </a>
+    <?php endif; ?>
     <button class="btn btn-secondary" style="font-size:13px" onclick="openCapa()">
       <i class="ph-duotone ph-calculator"></i> Capacité
     </button>

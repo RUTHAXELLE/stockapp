@@ -168,10 +168,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             json_response(false, 'Seul le Super Administrateur peut modifier les permissions.');
 
         $role_id = (int)($_POST['role_id'] ?? 0);
-        // Empêcher modification du superadmin lui-même
-        $role = db_fetch_one("SELECT slug FROM roles WHERE id=?", [$role_id]);
-        if ($role && $role['slug'] === 'superadmin')
-            json_response(false, 'Les permissions du Super Administrateur ne peuvent pas être modifiées.');
+        $role = db_fetch_one("SELECT slug, nom FROM roles WHERE id=?", [$role_id]);
+        if (!$role) json_response(false, 'Rôle introuvable.');
+        // Admin et superadmin ont tous les droits quelle que soit la matrice
+        // (can(), includes/session.php) : leurs cases n'auraient aucun effet.
+        if (in_array($role['slug'], ['superadmin', 'admin'], true))
+            json_response(false, 'Ce rôle a accès à tout : ses permissions ne se modifient pas.');
+        $avant = [];
+        foreach (db_fetch_all("SELECT * FROM permissions WHERE role_id=?", [$role_id]) as $p) $avant[$p['module']] = $p;
+        $libelles_droits = ['can_create'=>'créer','can_read'=>'lire','can_update'=>'modifier','can_delete'=>'supprimer','can_export'=>'exporter'];
+        $changements = [];
 
         // array_keys() du $modules défini en haut de fichier — source
         // unique partagée avec le tableau HTML et le JS (ALL_MODULES) : une
@@ -186,6 +192,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 foreach ($actions as $a) {
                     $key = "perm_{$role_id}_{$module}_{$a}";
                     $perms[$a] = !empty($_POST[$key]) ? 1 : 0;
+                    if ($perms[$a] !== (int)($avant[$module][$a] ?? 0))
+                        $changements[] = ($perms[$a] ? '+' : '−') . ' ' . strip_tags($modules[$module][1]) . ' : ' . $libelles_droits[$a];
                 }
                 // can_read toujours au moins 0 (pas de forçage)
                 db_query(
@@ -199,10 +207,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                      $perms['can_update'], $perms['can_delete'], $perms['can_export']]
                 );
             }
-            audit_log($user['id'], 'UPDATE', 'users', $role_id,
-                "Modification permissions rôle ID:$role_id");
+            if ($changements) {
+                audit_log($user['id'], 'UPDATE', 'permissions', $role_id,
+                    "Permissions du rôle {$role['nom']} : " . implode(' ; ', $changements));
+            }
             db_commit();
-            json_response(true, 'Permissions sauvegardées.');
+            json_response(true, $changements ? 'Permissions sauvegardées (' . count($changements) . ' changement(s)).' : 'Aucun changement.');
         } catch (Exception $e) {
             db_rollback();
             json_response(false, 'Erreur : ' . $e->getMessage());
@@ -214,7 +224,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if ($user['role_slug'] !== 'superadmin')
             json_response(false, 'Action réservée au Super Administrateur.');
         $nom  = trim($_POST['nom']  ?? '');
-        $slug = strtolower(preg_replace('/[^a-z0-9_]/', '_', trim($_POST['slug'] ?? '')));
+        // Minuscules d'abord : « Chef_Site » donnait « _hef__ite ».
+        $slug = trim(preg_replace('/[^a-z0-9_]/', '_', strtolower(trim($_POST['slug'] ?? ''))), '_');
         $desc = trim($_POST['desc'] ?? '');
         if (!$nom || !$slug) json_response(false, 'Nom et slug obligatoires.');
         if (db_fetch_value("SELECT COUNT(*) FROM roles WHERE slug=?", [$slug]) > 0)
@@ -401,7 +412,8 @@ include __DIR__ . '/../../templates/header.php';
 
 <div class="perm-panes">
 <?php foreach($roles as $r):
-  $is_superadmin = $r['slug'] === 'superadmin';
+  // Admin comme superadmin : accès total codé dans can(), cases sans effet.
+  $is_superadmin = in_array($r['slug'], ['superadmin', 'admin'], true);
   $can_edit      = $user['role_slug'] === 'superadmin' && !$is_superadmin;
   $role_icons    = ['superadmin'=>'<i class="ph ph-crown" aria-hidden="true"></i>','admin'=>'<i class="ph ph-shield" aria-hidden="true"></i>','lecteur'=>'<i class="ph ph-briefcase" aria-hidden="true"></i>'];
 ?>
@@ -434,10 +446,15 @@ include __DIR__ . '/../../templates/header.php';
 
   <?php if($is_superadmin): ?>
   <div class="alert alert-info">
-    <span><i class="ph ph-crown" aria-hidden="true"></i></span> Le Super Administrateur a accès à toutes les fonctionnalités sans restriction. Ses permissions ne peuvent pas être modifiées.
+    <span><i class="ph ph-crown" aria-hidden="true"></i></span> Ce rôle a accès à toutes les fonctionnalités sans restriction. Ses permissions ne peuvent pas être modifiées.
   </div>
 
   <?php else: ?>
+  <?php if ($r['slug'] === 'support_it'): ?>
+  <div class="alert alert-info">
+    <span><i class="ph ph-info" aria-hidden="true"></i></span> Interventions, Équipements, Sites, Import et Point EMUCI, Bobines et Inventaire bobines dépendent en plus des sous-rôles actifs de chaque utilisateur (Maintenance, Contrôleur production, Gestionnaire bobines). Les autres modules suivent cette matrice.
+  </div>
+  <?php endif; ?>
   <!-- ONGLETS PAR GROUPE DE MODULES (n° 2.7 réunion PDG)
        Tous les groupes sont rendus dans le DOM et masqués en CSS : les
        champs cachés existent donc quel que soit l'onglet affiché, et

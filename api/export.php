@@ -62,6 +62,9 @@ if ($type==='equipements') {
     if(!empty($_GET['nom'])){$w[]='e.nomenclature_id=?';$p[]=(int)$_GET['nom'];}
     if(!empty($_GET['etat'])){$w[]='e.etat=?';$p[]=$_GET['etat'];}
     if(!empty($_GET['site'])){$w[]='e.site_id=?';$p[]=(int)$_GET['site'];}
+    // Coordinateur : son site seulement, comme sur pages/equipements.php.
+    $u_exp = current_user();
+    if (($u_exp['role_slug'] ?? '') === 'coordinateur_site') { $w[]='e.site_id=?'; $p[]=(int)($u_exp['site_id'] ?? 0); }
     $w[]='e.actif=1';
     // Utilisateur = agent de l'Annuaire (equipements.agent_id), à défaut le
     // compte applicatif historique (utilisateur_id).

@@ -77,6 +77,14 @@ if ($export !== '' && preg_match('/^([a-z]+)-(\d+)$/', (string)($_GET['une'] ?? 
     $une_type = $m[1]; $une_id = (int)$m[2]; $types_sel = [$une_type];
 }
 
+// Export : seuls les types dont l'utilisateur a le droit « Exporter ».
+if ($export !== '') {
+    $module_type = ['bobines' => 'inventaire_bobines', 'rivets' => 'inventaire_rivets',
+                    'pmma' => 'inventaire_pmma', 'equipements' => 'inventaire_equipements'];
+    $types_sel = array_values(array_filter($types_sel, fn($t) => can($module_type[$t], 'can_export')));
+    if (!$types_sel) { http_response_code(403); exit("Vous n'avez pas le droit d'exporter ces inventaires."); }
+}
+
 $sites = db_fetch_all("SELECT id, nom FROM sites WHERE actif=1 ORDER BY nom");
 
 // ── Inventaires de la période (tous sites, ou le site choisi)

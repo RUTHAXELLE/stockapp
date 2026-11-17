@@ -307,8 +307,10 @@ function _groupes_def(): array {
                 ['label'=>'Simulation & projection', 'icon'=>'ph-trend-up',
                  'url'=>'pages/simulation_stocks.php','active_keys'=>['simulation_stocks'],
                  'perm'=>['simulation_stocks','can_read']],
+                // Visible seulement si au moins un export de la page est permis.
                 ['label'=>'Exports',          'icon'=>'ph-export',
-                 'url'=>'pages/export.php','active_keys'=>['export']],
+                 'url'=>'pages/export.php','active_keys'=>['export'],
+                 'si_exports'=>true],
             ],
         ],
 
@@ -525,7 +527,13 @@ function get_groupes_pour_role(string $role_slug): array {
         'admin'                      => $all,
         'superadmin'                 => $all,
     ];
-    $groupes = $map[$role_slug] ?? ['DASHBOARD'];
+    // Rôle absent de la carte (rôle créé depuis Administration → Permissions) :
+    // tous les groupes sauf Administration, réservée à l'admin, et
+    // Inventaire, ajouté selon son propre droit par get_groupes_utilisateur().
+    // Les groupes sans aucun écran autorisé par la matrice disparaissent
+    // ensuite d'eux-mêmes. Auparavant il ne voyait que le Dashboard, quels
+    // que soient les droits accordés.
+    $groupes = $map[$role_slug] ?? array_values(array_diff($all, ['ADMINISTRATION', 'INVENTAIRE']));
     // « Demandes internes » et « Achats » sont transversaux : visibles par
     // tous les rôles. Pour Achats, seuls « Mes FEB »/« Nouvelle FEB »
     // s'affichent réellement pour la plupart (filtrage par item dans
@@ -610,6 +618,13 @@ function get_groupe_nav_items(string $slug): array {
                 $autorise = is_support_it_with($item['ou_support_it_sous_role']);
             }
             if (!$autorise) continue;
+        }
+        if (!empty($item['si_exports'])) {
+            $un_export = false;
+            foreach (['equipements','affectations','consommables','interventions','audit','rapports'] as $m) {
+                if (can($m, 'can_export')) { $un_export = true; break; }
+            }
+            if (!$un_export) continue;
         }
         // Item réservé à une fonction (option Acheteur / Magasin de la matrice).
         if (!empty($item['fonction']) && !($user && droit_fonction($item['fonction'], $user))) continue;

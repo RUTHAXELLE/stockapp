@@ -385,6 +385,7 @@ if ($can_saisie) {
 
 // ── EXPORTS
 if (isset($_GET['export'])) {
+    require_export('pmma');
     $export = $_GET['export'];
     $site_label = $f_site
         ? (db_fetch_value("SELECT nom FROM sites WHERE id=?", [$f_site]) ?: 'Site inconnu')
@@ -656,6 +657,7 @@ include __DIR__ . '/../templates/header.php';
     <p style="font-size:12px;color:var(--muted);margin-top:2px">Consommation depuis les points journaliers — Support plaques d'immatriculation</p>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <?php if (can('pmma', 'can_export')): ?>
     <a href="?<?= http_build_query(array_merge($_GET, ['export'=>'xlsx'])) ?>"
        class="btn btn-secondary" style="font-size:13px;display:flex;align-items:center;gap:6px">
       <i class="ph-duotone ph-microsoft-excel-logo" style="font-size:16px"></i> Excel
@@ -670,6 +672,7 @@ include __DIR__ . '/../templates/header.php';
        title="Synthèse groupée par mois">
       <i class="ph-duotone ph-calendar-blank" style="font-size:16px"></i> PDF Mensuel
     </a>
+    <?php endif; ?>
     <?php if ($can_saisie): ?>
     <button class="btn btn-primary" style="font-size:13px" onclick="document.getElementById('mEntree').classList.add('open')">
       <i class="ph-duotone ph-download-simple"></i> Entrée PMMA
