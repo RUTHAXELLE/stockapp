@@ -62,7 +62,12 @@ $f_objet = trim($_GET['objet'] ?? '');
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $f_du)) $f_du = date('Y-m-01');
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $f_au)) $f_au = date('Y-m-d');
 
-$where  = ["DATE(e.created_at) BETWEEN ? AND ?"];
+// Période sur la date du point (celle qu'affiche la colonne Date), pas sur
+// la date de saisie : une déclaration du 31 saisie le 2 restait classée au
+// mois suivant. Un point rejeté est à reprendre : ses déclarations ne
+// comptent pas tant qu'il n'est pas resoumis.
+$where  = ["COALESCE(p.date_point, DATE(e.created_at)) BETWEEN ? AND ?"];
+$where[] = "(p.statut IS NULL OR p.statut <> 'rejete')";
 $params = [$f_du, $f_au];
 // Un brouillon n'est visible que de son auteur (même règle que la liste
 // des points) : ses déclarations n'apparaissent ici qu'à lui.

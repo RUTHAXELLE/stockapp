@@ -133,6 +133,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_ajax() && isset($_FILES['fichie
                         $seuil = $seuil_raw !== '' ? (int)$seuil_raw : 10;
                         $prix_raw = $get($row, 'Prix unitaire');
                         $prix  = $prix_raw !== '' ? (int)$prix_raw : 0;
+                        if ($seuil < 0 || $prix < 0) { $erreurs[] = "Ligne $ln : seuil d'alerte et prix ne peuvent pas être négatifs."; continue; }
 
                         $famille_raw = $get($row, 'Famille');
                         $famille_id  = $famille_raw !== '' ? ($famille_lookup[mb_strtolower($famille_raw)] ?? null) : null;
@@ -221,6 +222,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $prix  = (int)($_POST['prix_unitaire']         ?? 0);
         $famille_id = (int)($_POST['famille_id']       ?? 0) ?: null;
         if (!$code || !$lib) json_response(false, 'Code et libellé obligatoires.');
+        if (!isset($TYPES_ARTICLE[$type])) json_response(false, "Type d'article invalide.");
+        if (!isset($UNITES[$unite])) json_response(false, 'Unité invalide.');
+        if ($seuil < 0 || $prix < 0) json_response(false, "Le seuil d'alerte et le prix ne peuvent pas être négatifs.");
+        if ($famille_id && !db_fetch_value("SELECT id FROM familles_achat WHERE id=?", [$famille_id])) json_response(false, 'Famille introuvable.');
         if (db_fetch_value("SELECT COUNT(*) FROM articles WHERE code=?", [$code]) > 0)
             json_response(false, "Le code $code existe déjà.");
         db_query(
@@ -245,7 +250,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $prix  = (int)($_POST['prix_unitaire'] ?? 0);
         $famille_id = (int)($_POST['famille_id'] ?? 0) ?: null;
         if (!$lib) json_response(false, 'Libellé obligatoire.');
+        if (!isset($TYPES_ARTICLE[$type])) json_response(false, "Type d'article invalide.");
+        if (!isset($UNITES[$unite])) json_response(false, 'Unité invalide.');
+        if ($seuil < 0 || $prix < 0) json_response(false, "Le seuil d'alerte et le prix ne peuvent pas être négatifs.");
+        if ($famille_id && !db_fetch_value("SELECT id FROM familles_achat WHERE id=?", [$famille_id])) json_response(false, 'Famille introuvable.');
         $old = db_fetch_one("SELECT * FROM articles WHERE id=?", [$id]);
+        if (!$old) json_response(false, 'Article introuvable.');
         db_query(
             "UPDATE articles SET libelle=?,type_article=?,unite=?,description=?,seuil_alerte=?,prix_unitaire=?,famille_id=? WHERE id=?",
             [$lib, $type, $unite, $desc, $seuil, $prix, $famille_id, $id]
@@ -275,6 +285,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         if (!$article_id || $qte <= 0)
             json_response(false, 'Article et quantité (> 0) obligatoires.');
+        $d_ok = DateTime::createFromFormat('!Y-m-d', $date_rec);
+        if (!$d_ok || $d_ok->format('Y-m-d') !== $date_rec) json_response(false, 'Date invalide.');
+        if ($date_rec > date('Y-m-d')) json_response(false, 'La date ne peut pas être dans le futur.');
+        if ($prix_unit < 0) json_response(false, 'Le prix ne peut pas être négatif.');
 
         $article = db_fetch_one("SELECT * FROM articles WHERE id=?", [$article_id]);
         if (!$article) json_response(false, 'Article introuvable.');
@@ -361,6 +375,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         if (!$article_id || !$site_id || $qte <= 0)
             json_response(false, 'Article, site et quantité (> 0) obligatoires.');
+        $d_ok = DateTime::createFromFormat('!Y-m-d', $date_liv);
+        if (!$d_ok || $d_ok->format('Y-m-d') !== $date_liv) json_response(false, 'Date invalide.');
+        if ($date_liv > date('Y-m-d')) json_response(false, 'La date ne peut pas être dans le futur.');
+        if ($prix_unit < 0) json_response(false, 'Le prix ne peut pas être négatif.');
 
         $article = db_fetch_one("SELECT * FROM articles WHERE id=?", [$article_id]);
         if (!$article) json_response(false, 'Article introuvable.');

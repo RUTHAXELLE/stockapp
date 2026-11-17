@@ -200,6 +200,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // exactement le désordre que le catalogue supprime.
         if ($type === '' || !in_array($type, $types_connus, true))
             json_response(false, 'Type de PMMA inconnu au catalogue.');
+        db_begin();
+        try {
         db_query("INSERT INTO stock_pmma (site_id,type_pmma,quantite,type_mouvement,notes,created_by) VALUES (?,?,?,'entree',?,?)",
             [$site_id, $type, $quantite, $notes, $user['id']]);
         // Le code d'origine faisait un UPDATE puis SELECT ROW_COUNT() pour
@@ -214,6 +216,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             [$site_id, $type, $quantite,
              $catalogue_pmma[$type]['seuil_defaut'] ?? 10]);
         audit_log($user['id'], 'CREATE', 'pmma', null, "Entrée PMMA: $quantite ($type) site:$site_id");
+            db_commit();
+        } catch (Exception $e) {
+            db_rollback();
+            json_response(false, 'Erreur : ' . $e->getMessage());
+        }
         $cart = cartons_pour($quantite, $type);
         json_response(true, "Entrée de $quantite PMMA enregistrée"
             . ($cart ? " (~$cart carton(s) de " . capacite_carton_pmma($type) . ")." : '.'));
@@ -227,10 +234,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!$site_id || $quantite <= 0) json_response(false, 'Site et quantité obligatoires.');
         if ($type === '' || !in_array($type, $types_connus, true))
             json_response(false, 'Type de PMMA inconnu au catalogue.');
+        if (!$site_appro_ok($site_id)) json_response(false, "Le gestionnaire de stock ne saisit de sortie que pour l'entrepôt et le magasin.");
+        if ($bobine_id && !db_fetch_value("SELECT id FROM op_bobines WHERE id=? AND site_id=?", [$bobine_id, $site_id])) $bobine_id = 0;
+        // Stock relu sous verrou : deux sorties simultanées passaient toutes
+        // les deux le contrôle.
+        db_begin();
         $stock_actuel = (int)db_fetch_value(
-            "SELECT quantite FROM stock_pmma_site WHERE site_id=? AND type_pmma=?", [$site_id, $type]
+            "SELECT quantite FROM stock_pmma_site WHERE site_id=? AND type_pmma=? FOR UPDATE", [$site_id, $type]
         );
         if ($stock_actuel < $quantite) {
+            db_rollback();
             $cap = capacite_carton_pmma($type);
             $msg = "Stock insuffisant. Disponible : $stock_actuel unité(s)";
             if ($stock_actuel > 0) {
@@ -240,11 +253,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             }
             json_response(false, $msg);
         }
+        try {
         db_query("INSERT INTO stock_pmma (site_id,type_pmma,quantite,type_mouvement,bobine_id,notes,created_by) VALUES (?,?,?,'sortie',?,?,?)",
             [$site_id, $type, $quantite, $bobine_id ?: null, 'Utilisation production', $user['id']]);
         db_query("UPDATE stock_pmma_site SET quantite=quantite-? WHERE site_id=? AND type_pmma=?",
             [$quantite, $site_id, $type]);
         audit_log($user['id'], 'UPDATE', 'pmma', null, "Sortie PMMA: $quantite ($type) site:$site_id");
+            db_commit();
+        } catch (Exception $e) {
+            db_rollback();
+            json_response(false, 'Erreur : ' . $e->getMessage());
+        }
         json_response(true, "Sortie de $quantite PMMA enregistrée.");
     }
 
@@ -292,7 +311,9 @@ foreach ($stock_par_site as $sp_item) {
 }
 sort($pmma_types);
 
-// ── CONSOMMATION (depuis les points journaliers)
+// ── CONSOMMATION (depuis les points journaliers) : seuls les points 18h
+// validés ont retiré du stock ; brouillons, rejets et points en attente
+// gonflaient la consommation (même règle que pages/operations/rivets.php).
 $ws_site = $f_site ? "AND p.site_id = $f_site" : '';
 $ws_type = '';
 $conso_params = [$f_from, $f_to];
@@ -312,7 +333,7 @@ $conso = db_fetch_all(
      FROM op_pmma_utilises pu
      JOIN op_points_journaliers p ON p.id = pu.point_id
      JOIN sites s ON s.id = p.site_id
-     WHERE p.date_point BETWEEN ? AND ? $ws_site $ws_type
+     WHERE p.date_point BETWEEN ? AND ? AND p.statut='valide' AND p.type_point IN ('point_18h','historique') $ws_site $ws_type
      GROUP BY p.date_point, p.site_id, s.nom, pu.type_pmma
      ORDER BY p.date_point DESC",
     $conso_params

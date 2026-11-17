@@ -19,6 +19,9 @@ require_auth();
 // module, seedé depuis « equipements » par sql/migration_split_
 // equipements_operationnel_vignette.sql.
 $f_categorie  = trim($_GET['categorie'] ?? 'informatique');
+// Deux catégories seulement : une autre valeur dans l'adresse créait des
+// équipements dans une catégorie fantôme, invisible des deux écrans.
+if (!in_array($f_categorie, ['informatique', 'operationnel'], true)) $f_categorie = 'informatique';
 $perm_module  = $f_categorie === 'operationnel' ? 'equipements_operationnel' : 'equipements';
 require_permission($perm_module, 'can_read');
 
@@ -53,6 +56,16 @@ $can_update  = can($perm_module,'can_update');
 // Cycle de vie sur le site (mise en utilisation, épuisé, HS) : le
 // coordinateur pour les équipements de SON site, ou qui peut modifier.
 $peut_cycle  = $can_update || $site_force;
+// « Épuisé » sort l'équipement des comptes : c'est le sort d'un consommable,
+// pas d'un ordinateur. Le coordinateur ne peut le déclarer que pour les types
+// d'équipement issus d'un article (articles.nomenclature_id, cf.
+// includes/articles_equipements.php) ; qui peut modifier garde la main.
+$types_consommables = [];
+if (db_colonne_existe('articles', 'nomenclature_id')) {
+    foreach (db_fetch_all("SELECT DISTINCT nomenclature_id FROM articles WHERE nomenclature_id IS NOT NULL") as $r)
+        $types_consommables[(int)$r['nomenclature_id']] = true;
+}
+$peut_epuiser = fn(array $eq): bool => $can_update || isset($types_consommables[(int)($eq['nomenclature_id'] ?? 0)]);
 $STATUTS_STOCK = [
     'en_stock'               => ['Stock',            'ph-package',      '#e8f4f9', 'var(--blue)'],
     'affecte'                => ['Affecté',          'ph-check-circle', '#f0f0f0', '#666'],
@@ -408,10 +421,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         else                  $statut_stock = 'affecte';
         // Un équipement en utilisation le reste tant qu'il ne passe pas HS
         // ni ne quitte son site (le formulaire ne connaît pas ce statut).
-        if ($action === 'modifier' && $statut_stock === 'affecte') {
-            $avant = db_fetch_one("SELECT statut_stock, site_id FROM equipements WHERE id=?", [(int)($_POST['id'] ?? 0)]);
-            if ($avant && $avant['statut_stock'] === 'en_utilisation' && (int)$avant['site_id'] === (int)$site_id)
+        $avant = null;
+        if ($action === 'modifier') {
+            // L'équipement doit être actif et de la catégorie affichée : le
+            // droit de modifier l'Informatique ne vaut pas pour l'Opérationnel.
+            $avant = db_fetch_one("SELECT * FROM equipements WHERE id=? AND actif=1 AND categorie=?",
+                [(int)($_POST['id'] ?? 0), $f_categorie]);
+            if (!$avant) json_response(false, 'Équipement introuvable.');
+            $st_avant = $avant['statut_stock'] ?? '';
+            if (in_array($st_avant, ['en_transit', 'affectation_en_cours', 'en_attente_affectation'], true)) {
+                // En cours d'affectation ou de transfert : corriger la fiche ne
+                // doit ni le déplacer ni le sortir de son circuit.
+                if ((int)$avant['site_id'] !== (int)$site_id)
+                    json_response(false, "Cet équipement est en cours d'affectation : son site ne se modifie pas ici.");
+                if ($statut_stock !== 'hs') $statut_stock = $st_avant;
+            } elseif ($statut_stock === 'affecte' && $st_avant === 'en_utilisation' && (int)$avant['site_id'] === (int)$site_id) {
                 $statut_stock = 'en_utilisation';
+            }
         }
 
         if (!$marque && !$nsi) json_response(false,'Marque ou N° série interne obligatoire.');
@@ -419,6 +445,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // contrôle, l'INSERT/UPDATE plantait avec une erreur SQL brute au
         // lieu d'un message clair.
         if (!$nom_id) json_response(false,'Type obligatoire.');
+        if (!db_fetch_value("SELECT id FROM nomenclatures WHERE id=?", [$nom_id])) json_response(false, 'Type introuvable au catalogue.');
+        if ($date_achat !== '') {
+            $dt = DateTime::createFromFormat('!Y-m-d', $date_achat);
+            if (!$dt || $dt->format('Y-m-d') !== $date_achat) json_response(false, "Date d'acquisition invalide.");
+        }
+        if ($prix_achat < 0) json_response(false, "Le prix d'achat ne peut pas être négatif.");
 
         // Calcul fin cycle OHADA
         $duree_mois     = $ohada_durees[$f_categorie] ?? $ohada_durees['default'];
@@ -454,6 +486,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                  $site_id,$emplacement ?: null,$etat,$statut_stock,$date_achat ?: null,$prix_achat,$date_fin_cycle,$duree_mois,$id]
             );
             if ($equip_agent) db_query("UPDATE equipements SET agent_id=? WHERE id=?", [$agent_id, $id]);
+            // Changement de site par la fiche : tracé dans l'historique des
+            // mouvements, comme une affectation.
+            $site_avant = (int)($avant['site_id'] ?? 0);
+            if ($site_avant !== (int)$site_id) {
+                db_query(
+                    "INSERT INTO mouvements_equipements (equipement_id, type, site_source_id, site_dest_id, notes, created_by)
+                     VALUES (?,?,?,?,?,?)",
+                    [$id, !$site_avant ? 'entree' : (!$site_id ? 'sortie' : 'transfert'),
+                     $site_avant ?: null, $site_id, 'Site modifié sur la fiche équipement', $user['id']]);
+            }
             audit_log($user['id'],'UPDATE','equipements',$id,"Modification équipement: $label");
             json_response(true,'Équipement mis à jour.');
         }
@@ -473,6 +515,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!$eq) json_response(false, 'Équipement introuvable.');
         if ($site_force && (int)$eq['site_id'] !== $site_force)
             json_response(false, "Cet équipement n'est pas sur votre site.");
+        if ($statut === 'epuise' && !$peut_epuiser($eq))
+            json_response(false, "Seul un consommable peut être déclaré épuisé. Pour cet équipement, déclarez-le hors service.");
         $actuel = $eq['statut_stock'] ?? 'affecte';
         if ($statut === 'en_utilisation' && !in_array($actuel, ['affecte', 'en_stock'], true))
             json_response(false, "Seul un équipement en stock peut être mis en utilisation.");
@@ -520,6 +564,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $id = (int)($_POST['id'] ?? 0);
         $eq = db_fetch_one("SELECT * FROM equipements WHERE id=? AND actif=1 AND categorie=?", [$id, $f_categorie]);
         if (!$eq) json_response(false,'Équipement introuvable.');
+        if (in_array($eq['statut_stock'] ?? '', ['en_transit', 'affectation_en_cours', 'en_attente_affectation'], true))
+            json_response(false, "Cet équipement est en cours d'affectation : terminez ou annulez l'affectation avant de le supprimer.");
+        $nb_interv = (int)db_fetch_value(
+            "SELECT COUNT(*) FROM interventions_maintenance WHERE equipement_id=? AND statut_apres <> 'resolu'", [$id]);
+        if ($nb_interv > 0)
+            json_response(false, "$nb_interv intervention(s) non résolue(s) sur cet équipement : clôturez-les avant de le supprimer.");
         db_query("UPDATE equipements SET actif=0 WHERE id=?", [$id]);
         audit_log($user['id'],'DELETE','equipements',$id,"Suppression {$eq['numero_serie_interne']}");
         json_response(true,'Équipement supprimé.');
@@ -973,7 +1023,7 @@ include __DIR__ . '/../templates/header.php';
               <button class="btn btn-secondary btn-sm" title="Mettre en utilisation" onclick="ouvrirCycle(<?= (int)$e['id'] ?>, 'en_utilisation', <?= htmlspecialchars(json_encode($e['numero_serie_interne']),ENT_QUOTES) ?>)"><i class="ph ph-play-circle" aria-hidden="true"></i></button>
               <?php endif; ?>
               <?php if (in_array($st_cur, ['affecte','en_stock','en_utilisation'], true)): ?>
-              <button class="btn btn-secondary btn-sm" title="Déclarer épuisé" onclick="ouvrirCycle(<?= (int)$e['id'] ?>, 'epuise', <?= htmlspecialchars(json_encode($e['numero_serie_interne']),ENT_QUOTES) ?>)"><i class="ph ph-battery-empty" aria-hidden="true"></i></button>
+              <?php if ($peut_epuiser($e)): ?><button class="btn btn-secondary btn-sm" title="Déclarer épuisé" onclick="ouvrirCycle(<?= (int)$e['id'] ?>, 'epuise', <?= htmlspecialchars(json_encode($e['numero_serie_interne']),ENT_QUOTES) ?>)"><i class="ph ph-battery-empty" aria-hidden="true"></i></button><?php endif; ?>
               <button class="btn btn-secondary btn-sm" title="Déclarer hors service" onclick="ouvrirCycle(<?= (int)$e['id'] ?>, 'hs', <?= htmlspecialchars(json_encode($e['numero_serie_interne']),ENT_QUOTES) ?>)"><i class="ph ph-x-circle" aria-hidden="true"></i></button>
               <?php endif; ?>
             <?php endif; ?>

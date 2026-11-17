@@ -43,7 +43,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                  VALUES (?,?,?,?,?)",
                 [$equip_id, 'sortie', $equip['site_id'], $notes, $user['id']]
             );
-            db_query("UPDATE equipements SET site_id=NULL, utilisateur_id=NULL WHERE id=?", [$equip_id]);
+            // Retour complet : sans site, l'équipement est « en stock » (ou HS)
+            // et n'a plus d'utilisateur. Laisser « Affecté » ou « En
+            // utilisation » le faisait compter sur un site qu'il a quitté.
+            db_query("UPDATE equipements SET site_id=NULL, utilisateur_id=NULL,
+                             statut_stock = CASE WHEN etat='hs' THEN 'hs' ELSE 'en_stock' END
+                      WHERE id=?", [$equip_id]);
+            if (db_colonne_existe('equipements', 'agent_id'))
+                db_query("UPDATE equipements SET agent_id=NULL WHERE id=?", [$equip_id]);
             audit_log($user['id'], 'UPDATE', 'affectations', $equip_id,
                 "Retour stock {$equip['numero_serie_interne']}");
             db_commit();
@@ -158,7 +165,7 @@ include __DIR__ . '/../templates/header.php';
     <div style="text-align:center;padding:40px;color:var(--muted)">Aucun mouvement enregistré.</div>
     <?php else: foreach($mouvements as $m): ?>
     <div class="mouv-row">
-      <span class="mouv-type <?= $m['type'] ?>"><?= $m['type'] ?></span>
+      <span class="mouv-type <?= h($m['type']) ?>"><?= h($m['type']) ?></span>
       <div class="mouv-info">
         <div class="mouv-equip"><?= h($m['numero_serie_interne']) ?> <span style="font-family:'DM Sans';font-size:12px;font-weight:400;color:var(--muted)">· <?= h($m['type_equip']) ?></span></div>
         <div class="mouv-detail">
@@ -174,7 +181,7 @@ include __DIR__ . '/../templates/header.php';
       </div>
       <div class="mouv-date"><?= fmt_datetime($m['created_at']) ?></div>
       <?php if(can('affectations','can_update') && in_array($m['type'],['entree','transfert'])): ?>
-      <button class="btn btn-secondary btn-sm" onclick="openRetour(<?= $m['equipement_id'] ?>,'<?= h($m['numero_serie_interne']) ?>')" title="Retour stock">↩</button>
+      <button class="btn btn-secondary btn-sm" onclick="openRetour(<?= (int)$m['equipement_id'] ?>,<?= htmlspecialchars(json_encode((string)$m['numero_serie_interne']), ENT_QUOTES) ?>)" title="Retour stock">↩</button>
       <?php endif; ?>
     </div>
     <?php endforeach; endif; ?>
