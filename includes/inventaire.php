@@ -607,16 +607,36 @@ function inv_dater_comptage(string $type, array $inv): array {
     return $inv;
 }
 
-// ── Choix manuel du moment du comptage (brouillon). Rivets et PMMA : seulement
-//    avant la première saisie, la référence notée à la saisie en dépend.
+// ── Choix manuel du moment du comptage (brouillon). Rivets et PMMA : la
+//    référence notée à chaque saisie comptait comme « déjà consommé après le
+//    comptage » les points datés d'après l'ancienne date de stock ; elle est
+//    recalculée pour la nouvelle (points du jour validés avant la saisie,
+//    ajoutés en passant au matin, retirés en passant au soir).
 function inv_changer_moment(string $type, array $inv, bool $matin): void {
     $t = INV_TABLES[$type];
     if (!inv_moment_dispo($t['inv'])) throw new Exception('Option indisponible : migration non passée.');
     if ($inv['statut'] !== 'brouillon') throw new Exception("L'inventaire n'est plus en cours.");
-    if (in_array($type, ['rivets', 'pmma'], true) && (int)db_fetch_value(
-            "SELECT COUNT(*) FROM {$t['det']} d WHERE d.inventaire_id=? AND " . inv_sql_ligne_saisie($type), [(int)$inv['id']]))
-        throw new Exception('Des lignes sont déjà saisies : le moment du comptage ne peut plus changer pour cet inventaire.');
-    db_query("UPDATE {$t['inv']} SET comptage_matin=? WHERE id=? AND statut='brouillon'", [$matin ? 1 : 0, (int)$inv['id']]);
+    $ancienne = inv_date_stock($inv);
+    $inv['comptage_matin'] = $matin ? 1 : 0;
+    $nouvelle = inv_date_stock($inv);
+    db_begin();
+    try {
+        db_query("UPDATE {$t['inv']} SET comptage_matin=? WHERE id=? AND statut='brouillon'", [$matin ? 1 : 0, (int)$inv['id']]);
+        if ($ancienne !== $nouvelle && isset(INV_AGREGE[$type]) && inv_ag_reference_dispo($type)) {
+            $c = INV_AGREGE[$type];
+            [$de, $a] = $nouvelle < $ancienne ? [$nouvelle, $ancienne] : [$ancienne, $nouvelle];
+            $signe = $nouvelle < $ancienne ? 1 : -1;
+            foreach (db_fetch_all("SELECT * FROM {$c['det']} WHERE inventaire_id=? AND stock_reference IS NOT NULL AND saisi_at IS NOT NULL",
+                                  [(int)$inv['id']]) as $l) {
+                $delta = inv_conso_points((int)$inv['site_id'], $type, 'p.date_point > ? AND p.date_point <= ? AND p.validated_at <= ?',
+                                          [$de, $a, (string)$l['saisi_at']])[(string)$l[$c['cle']]] ?? 0;
+                if ($delta === 0) continue;
+                $ref = (int)$l['stock_reference'] + $signe * $delta;
+                db_query("UPDATE {$c['det']} SET stock_reference=?, ecart=? WHERE id=?", [$ref, (int)$l['stock_physique'] - $ref, (int)$l['id']]);
+            }
+        }
+        db_commit();
+    } catch (Exception $e) { db_rollback(); throw $e; }
 }
 
 // ── Bandeau « Comptage : … » de la fiche, avec le choix si modifiable.
