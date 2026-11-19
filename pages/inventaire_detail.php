@@ -99,8 +99,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         if (bab_ligne_saisie($det) && !_inv_ligne_deverrouillee($detail_id))
             json_response(false,'Ligne déjà saisie : passez par une demande de modification.');
         if ($absente && !empty($det['ajoutee'])) json_response(false,"Une bobine ajoutée comme retrouvée ne peut pas être déclarée absente : retirez-la de l'inventaire.");
-        if ($absente && bab_ligne_saisie($det)) json_response(false,'Ligne déjà saisie : passez par une demande de modification.');
-        if (!$absente && !empty($det['absente'])) json_response(false,'Bobine déclarée absente : passez par une demande de modification.');
+        if ($absente && bab_ligne_saisie($det) && !_inv_ligne_deverrouillee($detail_id)) json_response(false,'Ligne déjà saisie : passez par une demande de modification.');
+        if (!$absente && !empty($det['absente']) && !_inv_ligne_deverrouillee($detail_id))
+            json_response(false,'Bobine déclarée absente : passez par une demande de modification.');
         if ($stock_physique === null) json_response(false,'Saisissez le stock physique.');
         if ($stock_physique < 0) json_response(false,'Le stock physique ne peut pas être négatif.');
         $inv = inv_dater_comptage('bobines', $inv);
@@ -109,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         // Stock au comptage : ERP actuel + films retirés depuis par les
         // points datés d'après l'inventaire (cf. inv_conso_apres()).
         $stock_sys    = (int)$det['erp_actuel']
-                      + (inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films')[(int)$det['bobine_id']] ?? 0);
+                      + (inv_conso_apres((int)$inv['site_id'], inv_date_stock($inv), 'films')[(int)$det['bobine_id']] ?? 0);
         $stock_phy    = $stock_physique !== null ? $stock_physique : (int)$det['stock_physique'];
         $ecart_connu  = (int)($det['ecart_connu_avant'] ?? 0);
         $ecart_mesure = $stock_phy - $stock_sys;       // écart détecté lors de l'inventaire
@@ -303,7 +304,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         // Même référence que sauver_ligne : ERP actuel + films retirés depuis
         // le comptage par les points datés d'après l'inventaire.
         $stock_sys    = (int)$det['erp_actuel']
-                      + (inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films')[(int)$det['bobine_id']] ?? 0);
+                      + (inv_conso_apres((int)$inv['site_id'], inv_date_stock($inv), 'films')[(int)$det['bobine_id']] ?? 0);
         $ecart_mesure = $valeur_finale - $stock_sys;
         $conso_moy    = (float)$det['conso_quotidienne_moy'];
         $jours_phy    = $conso_moy > 0 ? (int)ceil($valeur_finale / $conso_moy) : null;
@@ -342,7 +343,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         if (!is_array($lignes_data)) json_response(false,'Données invalides.');
         $saved = 0; $errors = 0;
         $inv = inv_dater_comptage('bobines', $inv);
-        $conso_inv = inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films');
+        $conso_inv = inv_conso_apres((int)$inv['site_id'], inv_date_stock($inv), 'films');
         db_begin();
         try {
             foreach ($lignes_data as $ld) {
@@ -359,7 +360,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
                     [$detail_id, $inv_id]
                 );
                 if (!$det) continue;
-                if (!empty($det['absente'])) continue;   // déclarée absente : verrouillée
+                // Déclarée absente : verrouillée, sauf rouverte par une demande.
+                if (!empty($det['absente']) && !_inv_ligne_deverrouillee($detail_id)) continue;
                 // Ligne déjà saisie et non rouverte : verrouillée côté serveur aussi.
                 if (bab_ligne_saisie($det) && !_inv_ligne_deverrouillee($detail_id)) continue;
 
@@ -372,7 +374,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
                 $date_epuis = $jours_phy ? date('Y-m-d', strtotime("+{$jours_phy} days")) : null;
 
                 db_query(
-                    "UPDATE inventaire_details_bobines SET stock_physique=?,ecart=?,jours_restants_physique=?,date_epuisement_estime=?,notes=?$saisi_sql WHERE id=?",
+                    "UPDATE inventaire_details_bobines SET stock_physique=?,ecart=?,jours_restants_physique=?,date_epuisement_estime=?,notes=?$saisi_sql"
+                    . ($bab ? ",absente=0" : "") . " WHERE id=?",
                     [$phy_val,$ecart_mes,$jours_phy,$date_epuis,$notes,$detail_id]
                 );
                 if (bab_ligne_saisie($det)) inv_clore_demandes('inventaire_corrections', $detail_id, $phy_val, (int)$user['id']);
@@ -442,6 +445,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
             if ($r['conflits'])   $msg .= ' Non appliquée(s), signalée(s) au GSB : ' . implode(', ', $r['conflits']) . '.';
             json_response(true,$msg);
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
+    }
+
+    // ── MOMENT DU COMPTAGE (matin avant les activités / fin de journée)
+    if ($action==='moment_comptage') {
+        if (!($can_edit || $can_validate)) json_response(false,'Action non autorisée.');
+        try { inv_changer_moment('bobines', $inv, ($_POST['matin'] ?? '') === '1'); }
+        catch (Exception $e) { json_response(false, $e->getMessage()); }
+        audit_log($user['id'],'UPDATE','inventaire_bobines',$inv_id,"Moment du comptage : " . (($_POST['matin'] ?? '') === '1' ? 'matin' : 'soir'));
+        json_response(true,'Moment du comptage enregistré.');
     }
 
     // ── ANNULER L'INVENTAIRE (brouillon seulement) : un inventaire qui ne
@@ -765,6 +777,7 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
     <div class="inv-meta">
       <?= h($inv['site_nom']??'Tous les sites') ?> · <strong><?= count($lignes) ?></strong> bobines · Créé par <?= h($inv['createur']??'—') ?>
     </div>
+    <?= inv_moment_html('bobines', $inv, $can_edit || $can_validate) ?>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
     <?php if(!$is_coord && can('inventaire_bobines','can_export')): /* exports refusés au coordinateur côté serveur —
@@ -1113,7 +1126,7 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
             <?= $saisi ? '<i class="ph ph-check-circle" aria-hidden="true"></i> Sauvegardé' : '<i class="ph ph-circle" aria-hidden="true"></i> En cours' ?>
           </span>
           <button id="btn-<?= $l['id'] ?>"
-                  style="display:<?= $saisi ? 'none' : 'inline-block' ?>;background:#e3f2fd;color:#1565c0;border:1px solid #90caf9;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700"
+                  style="display:<?= ($saisi && !$deverrouille) ? 'none' : 'inline-block' ?>;background:#e3f2fd;color:#1565c0;border:1px solid #90caf9;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700"
                   onclick="sauverLigne(<?= $l['id'] ?>)"><i class="ph ph-floppy-disk" aria-hidden="true"></i> Enregistrer</button>
           <?php if($bab && !$saisi && !$ajoutee): ?>
           <button id="abs-<?= $l['id'] ?>"

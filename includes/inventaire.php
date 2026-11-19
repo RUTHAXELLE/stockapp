@@ -138,7 +138,7 @@ function inv_valider_bobines(array $inv, int $user_id): array {
     }
     if ($non_comptees) throw new Exception(count($non_comptees) . ' bobine(s) non comptée(s) : ' . implode(', ', array_slice($non_comptees, 0, 15))
         . (count($non_comptees) > 15 ? '…' : '') . '. Saisissez chaque bobine (0 si vide, ou « absente ») avant de valider.');
-    $conso  = inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films');
+    $conso  = inv_conso_apres((int)$inv['site_id'], inv_date_stock($inv), 'films');
     $nb_ecarts = 0;
     $total_physique = 0;
     $bab = bab_actif();
@@ -301,10 +301,25 @@ function inv_point18h_en_attente(int $site_id, string $date): ?string {
     return $st !== null && $st !== false ? (string)$st : null;
 }
 
+// ── MOMENT DU COMPTAGE (19/11/2026) : un inventaire fait le matin, avant
+//    les activités, compte le stock d'ouverture du jour J, c'est-à-dire le
+//    stock de fin de journée de J-1. inventaires_*.comptage_matin (NULL =
+//    pas encore fixé, traité comme le soir) : 1 = matin. Toute la règle
+//    « fin de journée » s'appuie alors sur J-1 : le point du soir de J reste
+//    possible et sa consommation est déduite du chiffre compté.
+function inv_date_stock(array $inv): string {
+    $d = (string)$inv['date_inventaire'];
+    return !empty($inv['comptage_matin']) ? date('Y-m-d', strtotime("$d -1 day")) : $d;
+}
+
+function inv_moment_dispo(string $table): bool {
+    return db_colonne_existe($table, 'comptage_matin');
+}
+
 // ── Message commun du refus de validation tant que le point 18h attend.
 function inv_verifier_point18h(array $inv): void {
-    if (inv_point18h_en_attente((int)$inv['site_id'], (string)$inv['date_inventaire']) !== null)
-        throw new Exception("le point 18h du " . date('d/m/Y', strtotime($inv['date_inventaire']))
+    if (inv_point18h_en_attente((int)$inv['site_id'], inv_date_stock($inv)) !== null)
+        throw new Exception("le point 18h du " . date('d/m/Y', strtotime(inv_date_stock($inv)))
             . " de ce site n'est pas encore validé par le superviseur. Le comptage est le stock de fin de journée :"
             . " validez d'abord ce point, puis l'inventaire.");
 }
@@ -344,10 +359,15 @@ function inv_conso_apres(int $site_id, string $date, string $quoi): array {
 //    se valide plus : il remplacerait un stock recompté par un comptage
 //    antérieur. $table : inventaires_bobines | inventaires_rivets | inventaires_pmma.
 function inv_verifier_pas_plus_recent(string $table, array $inv): void {
-    $d = db_fetch_value(
-        "SELECT MAX(date_inventaire) FROM $table
-          WHERE site_id = ? AND statut = 'valide' AND date_inventaire > ? AND id <> ?",
-        [(int)$inv['site_id'], (string)$inv['date_inventaire'], (int)$inv['id']]);
+    $moi = inv_date_stock($inv);
+    $d = null;
+    $col = inv_moment_dispo($table) ? ', comptage_matin' : '';
+    foreach (db_fetch_all(
+        "SELECT date_inventaire$col FROM $table
+          WHERE site_id = ? AND statut = 'valide' AND date_inventaire >= ? AND id <> ?",
+        [(int)$inv['site_id'], $moi, (int)$inv['id']]) as $autre) {
+        if (inv_date_stock($autre) > $moi && ($d === null || $autre['date_inventaire'] > $d)) $d = $autre['date_inventaire'];
+    }
     if ($d) throw new Exception("un inventaire plus récent de ce site (du " . date('d/m/Y', strtotime($d))
         . ") est déjà validé ; ce comptage plus ancien ne peut plus remplacer le stock."
         . " S'il n'a plus lieu d'être, annulez-le (bouton « Annuler l'inventaire » de la fiche).");
@@ -366,6 +386,17 @@ function inv_verifier_pas_plus_recent(string $table, array $inv): void {
 //    Renvoie la date du dernier inventaire validé concerné, ou null.
 function inv_recompte_apres(string $table, int $site_id, string $date, bool $inclus = true): ?string {
     if ($site_id <= 0 || $date === '') return null;
+    if (inv_moment_dispo($table)) {
+        // Date du stock compté (J, ou J-1 pour un comptage du matin) >= $date
+        // (ou > $date si $inclus est faux).
+        $ref = $inclus ? $date : date('Y-m-d', strtotime("$date +1 day"));
+        $d = db_fetch_value(
+            "SELECT MAX(date_inventaire) FROM $table
+              WHERE site_id = ? AND statut = 'valide'
+                AND (date_inventaire > ? OR (date_inventaire = ? AND COALESCE(comptage_matin,0) = 0))",
+            [$site_id, $ref, $ref]);
+        return $d ? (string)$d : null;
+    }
     $op = $inclus ? '>=' : '>';
     $d = db_fetch_value(
         "SELECT MAX(date_inventaire) FROM $table
@@ -555,15 +586,56 @@ function inv_sql_ligne_saisie(string $type): string {
 //    inventaires créés à une date choisie (hors session) la gardent.
 //    $type : bobines | rivets | pmma | equipements. Renvoie l'inventaire à jour.
 function inv_dater_comptage(string $type, array $inv): array {
-    if (empty($inv['session_id']) || $inv['statut'] !== 'brouillon') return $inv;
-    $auj = date('Y-m-d');
-    if ((string)$inv['date_inventaire'] === $auj) return $inv;
+    if ($inv['statut'] !== 'brouillon') return $inv;
     $t = INV_TABLES[$type];
     $deja = (int)db_fetch_value("SELECT COUNT(*) FROM {$t['det']} d WHERE d.inventaire_id=? AND " . inv_sql_ligne_saisie($type), [(int)$inv['id']]);
     if ($deja > 0) return $inv;
-    db_query("UPDATE {$t['inv']} SET date_inventaire=? WHERE id=? AND statut='brouillon'", [$auj, (int)$inv['id']]);
-    $inv['date_inventaire'] = $auj;
+    $auj = date('Y-m-d');
+    if (!empty($inv['session_id']) && (string)$inv['date_inventaire'] !== $auj) {
+        db_query("UPDATE {$t['inv']} SET date_inventaire=? WHERE id=? AND statut='brouillon'", [$auj, (int)$inv['id']]);
+        $inv['date_inventaire'] = $auj;
+    }
+    // Moment pas encore choisi : matin si la saisie commence avant midi et
+    // qu'aucun point du jour n'existe pour le site (activité pas commencée).
+    if ((string)$inv['date_inventaire'] === $auj && inv_moment_dispo($t['inv'])
+        && ($inv['comptage_matin'] ?? null) === null) {
+        $matin = (int)date('G') < 12 && !(int)db_fetch_value(
+            "SELECT COUNT(*) FROM op_points_journaliers WHERE site_id=? AND date_point=?", [(int)$inv['site_id'], $auj]);
+        db_query("UPDATE {$t['inv']} SET comptage_matin=? WHERE id=?", [$matin ? 1 : 0, (int)$inv['id']]);
+        $inv['comptage_matin'] = $matin ? 1 : 0;
+    }
     return $inv;
+}
+
+// ── Choix manuel du moment du comptage (brouillon). Rivets et PMMA : seulement
+//    avant la première saisie, la référence notée à la saisie en dépend.
+function inv_changer_moment(string $type, array $inv, bool $matin): void {
+    $t = INV_TABLES[$type];
+    if (!inv_moment_dispo($t['inv'])) throw new Exception('Option indisponible : migration non passée.');
+    if ($inv['statut'] !== 'brouillon') throw new Exception("L'inventaire n'est plus en cours.");
+    if (in_array($type, ['rivets', 'pmma'], true) && (int)db_fetch_value(
+            "SELECT COUNT(*) FROM {$t['det']} d WHERE d.inventaire_id=? AND " . inv_sql_ligne_saisie($type), [(int)$inv['id']]))
+        throw new Exception('Des lignes sont déjà saisies : le moment du comptage ne peut plus changer pour cet inventaire.');
+    db_query("UPDATE {$t['inv']} SET comptage_matin=? WHERE id=? AND statut='brouillon'", [$matin ? 1 : 0, (int)$inv['id']]);
+}
+
+// ── Bandeau « Comptage : … » de la fiche, avec le choix si modifiable.
+function inv_moment_html(string $type, array $inv, bool $modifiable): string {
+    if (!inv_moment_dispo(INV_TABLES[$type]['inv'])) return '';
+    $j = date('d/m/Y', strtotime((string)$inv['date_inventaire']));
+    $matin = !empty($inv['comptage_matin']);
+    $txt = $matin ? "avant les activités du $j (stock d'ouverture ; le point du soir reste à faire)"
+                  : "en fin de journée du $j, après le point 18h";
+    if (!$modifiable || $inv['statut'] !== 'brouillon')
+        return '<div class="inv-meta" style="margin-top:4px">Comptage : <strong>' . h($txt) . '</strong></div>';
+    $opt = fn($v, $l, $sel) => '<option value="' . $v . '"' . ($sel ? ' selected' : '') . '>' . h($l) . '</option>';
+    return '<div class="inv-meta" style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+         . '<label for="invMoment">Comptage réalisé :</label>'
+         . '<select id="invMoment" class="form-control" style="width:auto;padding:4px 8px;font-size:13px" '
+         . 'onchange="ap({action:\'moment_comptage\',matin:this.value}).then(d=>{toast(d.message,d.success?\'success\':\'error\');if(d.success)setTimeout(()=>location.reload(),600);})">'
+         . $opt('1', "le $j au matin, avant les activités", $matin)
+         . $opt('0', "le $j en fin de journée, après le point 18h", !$matin)
+         . '</select></div>';
 }
 
 // ── Date saisie à la création d'un inventaire : AAAA-MM-JJ valide, pas dans
@@ -664,7 +736,7 @@ function inv_ag_enregistrer(string $type, array $inv, array $det, int $phy, ?str
     $sets = 'stock_physique=?, ecart=?';
     if (inv_ag_reference_dispo($type)) {
         $ref = inv_ag_stock_actuel($type, (int)$inv['site_id'], $cle)
-             + (inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], $type)[$cle] ?? 0);
+             + (inv_conso_apres((int)$inv['site_id'], inv_date_stock($inv), $type)[$cle] ?? 0);
         $ecart  = $phy - $ref;
         $params = [$phy, $ecart, $ref];
         $sets  .= ', stock_reference=?, saisi_at=NOW()';
@@ -690,7 +762,7 @@ function inv_valider_agrege(string $type, array $inv, int $user_id): array {
     $lignes = db_fetch_all("SELECT * FROM {$c['det']} WHERE inventaire_id=?", [$inv_id]);
     $manque = array_map(fn($l) => $l[$c['cle']], array_filter($lignes, fn($l) => !inv_ag_ligne_saisie($l)));
     if ($manque) throw new Exception('ligne(s) non comptée(s) : ' . implode(', ', $manque) . '. Saisissez chaque ligne (0 si rien) avant de valider.');
-    $conso = inv_conso_apres($site, (string)$inv['date_inventaire'], $type);
+    $conso = inv_conso_apres($site, inv_date_stock($inv), $type);
     $nb_ecarts = 0; $total_physique = 0;
     foreach ($lignes as $l) {
         $cle = (string)$l[$c['cle']];
@@ -699,7 +771,7 @@ function inv_valider_agrege(string $type, array $inv, int $user_id): array {
         $actuel = inv_ag_stock_actuel($type, $site, $cle, true);
         if (isset($l['stock_reference']) && $l['stock_reference'] !== null && !empty($l['saisi_at'])) {
             $tardif = inv_conso_points($site, $type, 'p.date_point <= ? AND p.validated_at > ?',
-                [(string)$inv['date_inventaire'], (string)$l['saisi_at']])[$cle] ?? 0;
+                [inv_date_stock($inv), (string)$l['saisi_at']])[$cle] ?? 0;
             $sys     = (int)$l['stock_reference'] - $tardif;   // stock théorique au comptage
             $ecart   = $phy - $sys;
             $nouveau = max(0, $actuel + $ecart);

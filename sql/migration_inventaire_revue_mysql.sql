@@ -46,3 +46,21 @@ INSERT IGNORE INTO permissions (role_id, module, can_read, can_create, can_updat
 SELECT id, 'inventaire_pmma_valider', 0, 0, CASE WHEN slug IN ('superviseur_operation','gestionnaire_stock_bobines','gestionnaire_stock') THEN 1 ELSE 0 END, 0, 0 FROM roles;
 INSERT IGNORE INTO permissions (role_id, module, can_read, can_create, can_update, can_delete, can_export)
 SELECT id, 'inventaire_equipements_valider', 0, 0, CASE WHEN slug IN ('superviseur_operation','gestionnaire_stock') THEN 1 ELSE 0 END, 0, 0 FROM roles;
+
+-- 4. Moment du comptage : comptage_matin (NULL = pas encore fixé, 1 = matin avant les activités)
+SET @existe := (SELECT COUNT(*) FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = 'inventaires_bobines' AND column_name = 'comptage_matin');
+SET @sql := IF(@existe = 0, 'ALTER TABLE `inventaires_bobines` ADD COLUMN `comptage_matin` smallint DEFAULT NULL', 'SELECT ''inventaires_bobines.comptage_matin déjà présente'' AS info');
+PREPARE etape FROM @sql; EXECUTE etape; DEALLOCATE PREPARE etape;
+SET @existe := (SELECT COUNT(*) FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = 'inventaires_rivets' AND column_name = 'comptage_matin');
+SET @sql := IF(@existe = 0, 'ALTER TABLE `inventaires_rivets` ADD COLUMN `comptage_matin` smallint DEFAULT NULL', 'SELECT ''inventaires_rivets.comptage_matin déjà présente'' AS info');
+PREPARE etape FROM @sql; EXECUTE etape; DEALLOCATE PREPARE etape;
+SET @existe := (SELECT COUNT(*) FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = 'inventaires_pmma' AND column_name = 'comptage_matin');
+SET @sql := IF(@existe = 0, 'ALTER TABLE `inventaires_pmma` ADD COLUMN `comptage_matin` smallint DEFAULT NULL', 'SELECT ''inventaires_pmma.comptage_matin déjà présente'' AS info');
+PREPARE etape FROM @sql; EXECUTE etape; DEALLOCATE PREPARE etape;
+SET @existe := (SELECT COUNT(*) FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = 'inventaires_equipements' AND column_name = 'comptage_matin');
+SET @sql := IF(@existe = 0, 'ALTER TABLE `inventaires_equipements` ADD COLUMN `comptage_matin` smallint DEFAULT NULL', 'SELECT ''inventaires_equipements.comptage_matin déjà présente'' AS info');
+PREPARE etape FROM @sql; EXECUTE etape; DEALLOCATE PREPARE etape;

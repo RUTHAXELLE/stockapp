@@ -337,6 +337,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 
+    // ── MOMENT DU COMPTAGE (matin avant les activités / fin de journée)
+    if ($action==='moment_comptage') {
+        if (!($can_edit || $can_validate)) json_response(false,'Action non autorisée.');
+        try { inv_changer_moment('equipements', $inv, ($_POST['matin'] ?? '') === '1'); }
+        catch (Exception $e) { json_response(false, $e->getMessage()); }
+        audit_log($user['id'],'UPDATE','inventaire_equipements',$inv_id,"Moment du comptage : " . (($_POST['matin'] ?? '') === '1' ? 'matin' : 'soir'));
+        json_response(true,'Moment du comptage enregistré.');
+    }
+
     // ── ANNULER L'INVENTAIRE (brouillon seulement) : un inventaire qui ne
     //    sera jamais validé — remplacé par un comptage plus récent déjà
     //    validé (cf. inv_verifier_pas_plus_recent()), ouvert par erreur —
@@ -448,6 +457,7 @@ include __DIR__ . '/../templates/header.php';
     <div class="inv-meta">
       <?= h($inv['site_nom']??'Tous les sites') ?> · <strong><?= count($lignes) ?></strong> équipement(s) · Créé par <?= h($inv['createur']??'—') ?>
     </div>
+    <?= inv_moment_html('equipements', $inv, $can_edit || $can_validate) ?>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
     <?php if($peut_declarer): ?>
@@ -632,7 +642,7 @@ include __DIR__ . '/../templates/header.php';
             <?= $saisi ? '<i class="ph ph-check-circle" aria-hidden="true"></i> Sauvegardé' : '<i class="ph ph-circle" aria-hidden="true"></i> En cours' ?>
           </span>
           <button id="btn-<?= $l['id'] ?>"
-                  style="display:<?= $saisi ? 'none' : 'inline-block' ?>;background:#e3f2fd;color:#1565c0;border:1px solid #90caf9;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700"
+                  style="display:<?= ($saisi && !$deverrouille) ? 'none' : 'inline-block' ?>;background:#e3f2fd;color:#1565c0;border:1px solid #90caf9;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700"
                   onclick="sauverLigne(<?= $l['id'] ?>)"><i class="ph ph-floppy-disk" aria-hidden="true"></i> Enregistrer</button>
         </td>
 
