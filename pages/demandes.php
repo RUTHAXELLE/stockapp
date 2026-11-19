@@ -27,7 +27,7 @@ if (($_GET['export'] ?? '') === 'pdf' && !empty($_GET['id'])) {
     $wf = di_workflow_of($d);
     $isValidator = false;
     foreach ($wf as $st) if (in_array($st['role'], $my_roles, true)) $isValidator = true;
-    if (!$isValidator && isset($d['n1_user_id']) && (int)$d['n1_user_id'] === (int)$user['id']) $isValidator = true;
+    if (!$isValidator && in_array((int)$user['id'], di_n1_de_demande($d), true)) $isValidator = true;
     if (!$isValidator) {
         foreach ($wf as $st) {
             $dept_id = db_fetch_value("SELECT departement_id FROM di_roles WHERE code=?", [$st['role']]);
@@ -261,7 +261,7 @@ if (!empty($_GET['id'])) {
         $isValidator = false;
         foreach ($wf as $st) if (in_array($st['role'], $my_roles, true)) $isValidator = true;
         // N+1 résolu pour cette demande
-        if (!$isValidator && isset($detail['n1_user_id']) && (int)$detail['n1_user_id'] === (int)$user['id']) {
+        if (!$isValidator && in_array((int)$user['id'], di_n1_de_demande($detail), true)) {
             $isValidator = true;
         }
         // Validation par département : membre d'un département lié à une étape du circuit
@@ -381,8 +381,7 @@ include __DIR__ . '/../templates/header.php';
     $type = di_type($detail['type_code']);
     $wf   = di_workflow_of($detail);
     $cur  = (int)$detail['etape_actuelle'];
-    $n1Id = isset($detail['n1_user_id']) && $detail['n1_user_id'] ? (int)$detail['n1_user_id'] : null;
-    $canV = di_can_validate($my_roles, (int)$user['id'], $wf, $cur, (int)$detail['demandeur_id'], $n1Id)
+    $canV = di_peut_viser($detail, $my_roles, (int)$user['id'])
             && in_array($detail['statut'], ['en_attente','en_cours'], true);
     $canTraiterIt = $detail['statut'] === 'approuve_traitement' && empty($detail['traite_it'])
             && di_user_can_traiter_it((int)$user['id'], $my_roles);
@@ -398,7 +397,7 @@ include __DIR__ . '/../templates/header.php';
   </div>
   <?php
     $_wf_det = di_workflow_of($detail);
-    if (in_array($detail['statut'], ['en_attente','en_cours'], true) && empty($detail['n1_user_id'])
+    if (in_array($detail['statut'], ['en_attente','en_cours'], true) && !di_n1_de_demande($detail)
         && (($_wf_det[(int)$detail['etape_actuelle']]['role'] ?? '') === 'n1')): ?>
   <div style="margin:0 0 14px;padding:10px 14px;border-radius:10px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:13px">
     <i class="ph-duotone ph-warning"></i> Aucun N+1 n'est désigné pour le département concerné : le visa N+1 est attendu d'un administrateur.

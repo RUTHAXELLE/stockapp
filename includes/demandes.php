@@ -136,8 +136,7 @@ function di_a_valider(array $user, ?string $from = null, ?string $to = null): ar
     foreach ($pending as $p) {
         $d  = di_get((int)$p['id']);
         $wf = di_workflow_of($d);
-        $n1Id = isset($d['n1_user_id']) && $d['n1_user_id'] ? (int)$d['n1_user_id'] : null;
-        if (di_can_validate($roles, (int)$user['id'], $wf, (int)$d['etape_actuelle'], (int)$d['demandeur_id'], $n1Id)) {
+        if (di_peut_viser($d, $roles, (int)$user['id'])) {
             $d['_etape_label'] = $wf[(int)$d['etape_actuelle']]['label'] ?? '';
             $d['_demandeur']   = db_fetch_value("SELECT CONCAT(prenom,' ',nom) FROM users WHERE id=?", [$d['demandeur_id']]);
             $out[] = $d;
@@ -296,11 +295,16 @@ function di_next_step(array $workflow, int $currentStep): ?int {
 
 // ── Le validateur peut-il agir sur l'étape courante ?
 // $n1UserId : ID du N+1 résolu au moment de la soumission (null si aucun département défini)
-function di_can_validate(array $userRoles, int $userId, array $workflow, int $currentStep, int $demandeurId, ?int $n1UserId = null): bool {
+// $n1Ids : N+1 admis pour cette demande (demandes internes : tous les N+1
+// actifs du département retenu, cf. di_n1_de_demande()). Liste vide : aucun
+// N+1, l'administrateur vise à sa place. Null : règle à un seul N+1
+// ($n1UserId), gardée pour les FEB.
+function di_can_validate(array $userRoles, int $userId, array $workflow, int $currentStep, int $demandeurId, ?int $n1UserId = null, ?array $n1Ids = null): bool {
     if ($currentStep < 0 || $currentStep >= count($workflow)) return false;
     if ($userId === $demandeurId) return false;
     $role = $workflow[$currentStep]['role'];
     if ($role === 'n1') {
+        if ($n1Ids !== null) return $n1Ids ? in_array($userId, $n1Ids, true) : in_array('n1', $userRoles, true);
         return $n1UserId !== null ? $userId === $n1UserId : in_array('n1', $userRoles, true);
     }
     // Si ce rôle est lié à un département, tout membre du département peut valider
@@ -312,6 +316,29 @@ function di_can_validate(array $userRoles, int $userId, array $workflow, int $cu
         );
     }
     return in_array($role, $userRoles, true);
+}
+
+// ── N+1 actifs d'un département, hors un utilisateur (le demandeur).
+function di_n1_departement(int $deptId, int $exclure = 0): array {
+    return array_map('intval', array_column(db_fetch_all(
+        "SELECT ud.user_id FROM user_departements ud JOIN users u ON u.id=ud.user_id AND u.actif=1
+          WHERE ud.departement_id=? AND ud.is_n1=1 AND ud.user_id<>? ORDER BY ud.user_id",
+        [$deptId, $exclure]), 'user_id'));
+}
+
+// ── N+1 qui peuvent viser l'étape N+1 d'une demande : tous les N+1 actifs
+//    du département retenu à la soumission (n1_departement_id), lus au
+//    moment du visa — un N+1 ajouté ensuite peut viser, un N+1 retiré ne le
+//    peut plus. Demande soumise avant cette règle : le N+1 désigné alors.
+function di_n1_de_demande(array $d): array {
+    if (!empty($d['n1_departement_id'])) return di_n1_departement((int)$d['n1_departement_id'], (int)$d['demandeur_id']);
+    return !empty($d['n1_user_id']) ? [(int)$d['n1_user_id']] : [];
+}
+
+// ── L'utilisateur peut-il viser (ou rejeter) l'étape courante de la demande ?
+function di_peut_viser(array $d, array $userRoles, int $userId): bool {
+    return di_can_validate($userRoles, $userId, di_workflow_of($d), (int)$d['etape_actuelle'],
+        (int)$d['demandeur_id'], null, di_n1_de_demande($d));
 }
 
 // ── Numéro lisible : DEM-YYYYMMDD-NNN — dernier numéro du jour + 1 (le
@@ -514,14 +541,10 @@ function di_soumettre(int $id, array $user): void {
             $note_n1 = "Département du bénéficiaire introuvable dans l'ERP : N+1 du département du demandeur.";
         }
     }
-    $n1UserId = null;
-    if ($dept_id) {
-        $n1 = db_fetch_value(
-            "SELECT ud.user_id FROM user_departements ud JOIN users u ON u.id=ud.user_id AND u.actif=1
-              WHERE ud.departement_id=? AND ud.is_n1=1 AND ud.user_id<>? ORDER BY ud.user_id LIMIT 1",
-            [(int)$dept_id, $uid]);
-        $n1UserId = $n1 ? (int)$n1 : null;
-    }
+    // Tous les N+1 actifs du département peuvent viser ; n1_user_id garde le
+    // premier, pour l'affichage.
+    $n1Ids    = $dept_id ? di_n1_departement((int)$dept_id, $uid) : [];
+    $n1UserId = $n1Ids[0] ?? null;
     // Validé d'office seulement si le demandeur est lui-même N+1 du
     // département retenu, pas d'un autre.
     $auto_n1 = $workflow && $workflow[0]['role'] === 'n1' && $dept_id && (bool)db_fetch_value(
@@ -551,6 +574,9 @@ function di_soumettre(int $id, array $user): void {
         [$statut, $etape, $n1UserId, json_encode($workflow, JSON_UNESCAPED_UNICODE), json_encode($sigs, JSON_UNESCAPED_UNICODE),
          json_encode($hist, JSON_UNESCAPED_UNICODE), $now, $now, $id]);
     if ($maj->rowCount() !== 1) throw new Exception("Cette demande vient d'être soumise.");
+    if ($dept_id && db_colonne_existe('di_demandes', 'n1_departement_id')) {
+        db_query("UPDATE di_demandes SET n1_departement_id=? WHERE id=?", [(int)$dept_id, $id]);
+    }
 
     // Notifications
     if (in_array($statut, ['approuve', 'approuve_traitement'], true)) {
@@ -571,7 +597,7 @@ function di_soumettre(int $id, array $user): void {
         }
         di_notify($uid, "Aucun N+1 n'est désigné pour le département concerné : votre demande « {$type['label']} » ($numero) est transmise aux administrateurs pour le visa N+1.", $id);
     } elseif ($role === 'n1') {
-        di_notify($n1UserId, "Nouvelle demande « {$type['label']} » de $nom ($numero) à valider", $id);
+        foreach ($n1Ids as $n1) di_notify($n1, "Nouvelle demande « {$type['label']} » de $nom ($numero) à valider", $id);
     } else {
         di_notify_role($role, $etape === 0
             ? "Nouvelle demande « {$type['label']} » de $nom ($numero)"
@@ -614,8 +640,7 @@ function di_valider(array $demande, array $user, string $commentaire = ''): void
         }
         $wf = di_workflow_of($demande);
         $cur = (int)$demande['etape_actuelle'];
-        $n1Id = isset($demande['n1_user_id']) && $demande['n1_user_id'] ? (int)$demande['n1_user_id'] : null;
-        if (!di_can_validate(di_user_roles((int)$user['id']), (int)$user['id'], $wf, $cur, (int)$demande['demandeur_id'], $n1Id)) {
+        if (!di_peut_viser($demande, di_user_roles((int)$user['id']), (int)$user['id'])) {
             throw new Exception("Vous ne pouvez pas valider cette étape.");
         }
         $type = di_type($demande['type_code']);
@@ -654,8 +679,11 @@ function di_valider(array $demande, array $user, string $commentaire = ''): void
             }
         } else {
             di_notify((int)$demande['demandeur_id'], "Étape « $stepLabel » validée pour votre demande « {$type['label']} ».", (int)$demande['id']);
-            if ($wf[$next]['role'] === 'n1' && empty($demande['n1_user_id'])) {
+            $n1_suivants = $wf[$next]['role'] === 'n1' ? di_n1_de_demande($demande) : [];
+            if ($wf[$next]['role'] === 'n1' && !$n1_suivants) {
                 foreach (di_admins() as $a) di_notify($a, "Demande « {$type['label']} » ({$demande['numero']}) : aucun N+1 désigné — visa N+1 à donner par un administrateur.", (int)$demande['id']);
+            } elseif ($n1_suivants) {
+                foreach ($n1_suivants as $n1) di_notify($n1, "Demande « {$type['label']} » en attente — étape : {$wf[$next]['label']} ({$demande['numero']})", (int)$demande['id']);
             } else {
                 di_notify_role($wf[$next]['role'], "Demande « {$type['label']} » en attente — étape : {$wf[$next]['label']} ({$demande['numero']})", (int)$demande['id']);
             }
@@ -678,8 +706,7 @@ function di_rejeter(array $demande, array $user, string $motif): void {
         }
         $wf = di_workflow_of($demande);
         $cur = (int)$demande['etape_actuelle'];
-        $n1Id = isset($demande['n1_user_id']) && $demande['n1_user_id'] ? (int)$demande['n1_user_id'] : null;
-        if (!di_can_validate(di_user_roles((int)$user['id']), (int)$user['id'], $wf, $cur, (int)$demande['demandeur_id'], $n1Id)) {
+        if (!di_peut_viser($demande, di_user_roles((int)$user['id']), (int)$user['id'])) {
             throw new Exception("Vous ne pouvez pas rejeter cette étape.");
         }
         $type = di_type($demande['type_code']);

@@ -147,8 +147,13 @@ include __DIR__ . '/../templates/header.php';
   <div style="margin-bottom:16px">
     <h2 style="margin:0 0 3px">Demandes à valider</h2>
     <p style="color:var(--muted,#7f8c8d);margin:0;font-size:13px">
-      <?php if (!$my_roles): ?>Aucun rôle de validation ne vous est attribué.
-      <?php else: ?>Circuits : <?= h(implode(', ', $my_roles)) ?>.<?php endif; ?>
+      <?php $mes_dept_n1 = array_column(db_fetch_all(
+          "SELECT d.label FROM user_departements ud JOIN departements d ON d.id=ud.departement_id
+            WHERE ud.user_id=? AND ud.is_n1=1 ORDER BY d.label", [(int)$user['id']]), 'label');
+        $mes_visas = [];
+        if ($my_roles)    $mes_visas[] = 'Circuits : ' . implode(', ', $my_roles);
+        if ($mes_dept_n1) $mes_visas[] = 'N+1 : ' . implode(', ', $mes_dept_n1); ?>
+      <?= $mes_visas ? h(implode(' · ', $mes_visas)) . '.' : 'Aucun rôle de validation ne vous est attribué.' ?>
     </p>
   </div>
 
