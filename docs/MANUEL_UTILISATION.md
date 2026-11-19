@@ -1,9 +1,9 @@
 # Manuel d'utilisation — ERP EMUCI
 
 **Dépôt de référence** : GayeGuy/ERP-EMUCI-V2
-**Version du logiciel** : branche `main`, commit `2d9e32f` (24 septembre 2026)
-**Version du manuel** : 4.3
-**Périmètre couvert** : 70 entrées de menu réparties sur 10 modules, les
+**Version du logiciel** : branche `main`, commit `5866232` (19 novembre 2026)
+**Version du manuel** : 5.0
+**Périmètre couvert** : 73 entrées de menu réparties sur 10 modules, les
 écrans hors menu, 16 rôles, 21 sites actifs
 
 > **Provenance de ce document.** Il est établi à partir du code source, pas
@@ -16,15 +16,12 @@
 > le répercute plutôt que de la présenter comme arrêtée. Voir **« Ce qui reste
 > à décider »**, en fin de document.
 >
-> **Note sur cette version.** La version 3.0 avait été établie à partir du
-> dépôt RUTHAXELLE/stockapp, qui avait cessé d'être la référence pour la
-> branche `main` fin août 2026 sans que la rédaction n'en tienne compte.
-> L'essentiel restait juste : les deux dépôts partagent la même base
-> fonctionnelle (achats, demandes internes, inventaires, sécurité). Cette
-> version 4.0 corrige le dépôt de référence et ajoute cinq écrans propres à
-> GayeGuy/ERP-EMUCI-V2, absents de la v3.0 : Dashboard KPI (§11.4), Suivi des
-> observations (§5.5), Traçabilité endommagements (§7.6), Simulation &
-> projection (§7.7), Référentiels & capacités (§12.8).
+> **Note sur cette version.** La version 5.0 couvre les évolutions du 24
+> septembre au 19 novembre 2026 : stock retiré à la validation du point 18h
+> et comparaison OptoPlate, commandes de site (bobines, réception ligne par
+> ligne, BL), validation du stock du jour, inventaires (moment du comptage,
+> comptage sur plusieurs jours, absentes, équipements perdus, export),
+> équipements, articles, mails, permissions et visa N+1.
 
 ---
 
@@ -175,20 +172,29 @@ Sur tous les écrans d'un module :
 - une **cloche de notifications**, avec le nombre de messages non lus ;
 - un **menu utilisateur** déroulant, menant à Mon Profil et à la déconnexion.
 
+**Les listes se mettent à jour seules.** Commandes, réceptions, équipements,
+bobines et interventions se relisent toutes les 30 secondes, à l'arrivée
+d'une notification et au retour sur l'onglet — sauf pendant une saisie.
+Les longues listes sont découpées en pages de 25 lignes.
+
+**Session expirée.** Après 15 minutes d'inactivité, un bandeau « Votre
+session a expiré » apparaît, avec un lien pour se reconnecter dans un
+nouvel onglet : la saisie en cours n'est pas perdue.
+
 ### 3.4 Les dix modules
 
 | Module | Ce qu'on y fait | Section |
 |---|---|---|
 | **Dashboard** | Tableau de bord du jour, vue exécutive, tableau de bord KPI | [11](#11-rapports-et-exports) |
-| **Stock** | Équipements, articles, PMMA, bobines, rivets, commandes | [6](#6-le-stock) |
+| **Stock** | Équipements, articles, PMMA, bobines, rivets, commandes de site, archives des BL | [6](#6-le-stock) |
 | **Bobines** | Commandes, validation du stock du matin, rapports, traçabilité des endommagements | [7](#7-bobines-rivets-pmma-et-inventaires) |
-| **Inventaire** | Inventaires physiques et écarts | [7](#7-bobines-rivets-pmma-et-inventaires) |
-| **Opérations** | Point journalier, interventions, point et import EMUCI, suivi des observations | [5](#5-le-point-journalier-et-emuci) |
+| **Inventaire** | Sessions, inventaires physiques, écarts, export des inventaires | [7](#7-bobines-rivets-pmma-et-inventaires) |
+| **Opérations** | Point journalier, interventions, commandes, point et import EMUCI, suivi des observations | [5](#5-le-point-journalier-et-emuci) |
 | **Informatique** | Interventions, rapport journalier, affectations IT | [10](#10-linformatique) |
 | **Rapports** | Résumé superviseur, rapports généraux, exports, simulation & projection de stocks | [11](#11-rapports-et-exports) |
 | **Demandes internes** | Demandes administratives et circuits de visa | [8](#8-les-demandes-internes) |
 | **Achats** | Expression de besoin, visas, suivi, réceptions | [9](#9-les-achats) |
-| **Administration** | Utilisateurs, rôles, permissions, sites, audit, référentiels & capacités | [12](#12-ladministration) |
+| **Administration** | Utilisateurs, permissions, sites, départements, mails, audit, référentiels & capacités | [12](#12-ladministration) |
 
 ---
 
@@ -226,65 +232,121 @@ de bord KPI (§11.4).
 
 ## 5. Le point journalier et EMUCI
 
-C'est le relevé quotidien de production d'un site. Tout le reste en dépend.
+C'est le relevé quotidien de production d'un site. Tout le reste en dépend :
+le stock, les tableaux de bord et la validation du stock du jour.
 
 ### 5.1 Saisir un point — coordinateur de site
 
 1. Module **Opérations**, puis **Point journalier**.
-2. Renseigner la date, le type de point et les quantités : véhicules par
-   catégorie, plaques posées, rivets utilisés, rivets endommagés, heures de
-   travail.
-3. Enregistrer.
+2. Choisir le type de point : **9h**, **13h** ou **18h** (18h par défaut).
+3. Renseigner les quantités :
+    - véhicules posés par catégorie (VP, camion, semi-remorque, moto) et
+      plaques posées ;
+    - **films par bobine** : pour chaque bobine en utilisation, les films
+      utilisés, endommagés et **non conformes** (films reçus hors règles) ;
+    - **rivets** posés et endommagés, par type (gonflables, éclatés) ;
+    - **PMMA** utilisés, endommagés et non conformes, par type ;
+    - heures de travail et observations.
+4. Enregistrer.
+
+**Chaque bobine ne figure qu'une fois dans un point.** Pour ajouter une
+bobine, utilisez « + Ajouter une bobine » ; le serveur refuse un point où
+la même bobine apparaît deux fois.
+
+**Tout élément endommagé se justifie.** Dès qu'une quantité endommagée est
+saisie (film, rivet ou PMMA), une fenêtre demande une déclaration par unité :
+étape (vérification, lamination, percée, fissurée…), cause en texte libre et,
+pour un film, le **numéro du consommable**. Ces déclarations alimentent la
+Traçabilité des endommagements (§7.8). Elles sont rechargées quand on
+rouvre le point : inutile de tout re-justifier.
+
+**Sites en Re-Immatriculation.** Sur un site dont l'opération est
+« Re-Immatriculation » (§12.4), la section des véhicules s'intitule
+Re-Immatriculation et deux sections s'ajoutent : **Duplicatas** et
+**Post-Immat**. Pour un duplicata de VP ou de camion, indiquez les
+**plaques réellement posées** (1 ou 2 par véhicule). Le V/H se calcule sur
+le total des engins posés des trois sections.
+
+**Journée sans production.** Sur un point 18h, cochez « Aucune production
+ce jour » et choisissez le motif (commentaire obligatoire pour « Autre ») :
+le point est enregistré à zéro, sans mouvement de stock.
 
 | Statut | Ce que ça veut dire |
 |---|---|
 | **Brouillon** | Saisi mais pas transmis. Visible de vous seul. **Ses chiffres ne comptent nulle part.** |
-| **En attente de validation** | Transmis. Il est dans la file du superviseur, mais ne compte pas encore. |
-| **Validé** | Validé par le superviseur. Compte dans tous les indicateurs. |
-| **Rejeté** | Refusé avec un motif. À corriger et resoumettre. |
+| **Soumis** (en attente de validation) | Transmis au superviseur. Ne compte pas encore. |
+| **Validé** | Validé par le superviseur (point 18h) ou par vous-même (points 9h et 13h). |
+| **Modif. demandée** | Renvoyé par le superviseur avec un motif. Bouton **Corriger** sur la carte du point, puis resoumettre. |
 
-> **Brouillon et « en attente » ne sont pas la même chose.** Un brouillon
+> **Ce qu'il faut pour soumettre.** Un point ne peut être soumis (18h) ou
+> validé que s'il contient des **films utilisés**, des **rivets posés** et
+> des **PMMA utilisés** — sauf journée sans production. Un site en attente
+> de stock peut enregistrer un brouillon : le badge liste ce qui manque.
+
+> **Brouillon et « soumis » ne sont pas la même chose.** Un brouillon
 > n'est visible que de vous : le superviseur ne le voit pas et ne peut donc
-> pas le valider. Tant que vous ne l'avez pas soumis, il ne se passera rien.
-> C'est le piège le plus courant, et la raison pour laquelle le tableau de
-> bord affiche les points restés en attente.
+> pas le valider. Un brouillon abandonné se supprime avec « Supprimer le
+> brouillon ».
 
-### 5.2 Valider les points — superviseur opération
+### 5.2 Quand le stock bouge : seulement à la validation du point 18h
 
-1. Le tableau de bord signale les points **en attente de validation**.
-2. Ouvrir le point, vérifier les quantités.
-3. Valider, ou rejeter en indiquant le motif. Un point rejeté retourne au
-   coordinateur, qui le corrige et le resoumet.
+**Les films, rivets et PMMA ne sortent du stock qu'à la validation du point
+18h par le superviseur.** Un brouillon, un point soumis, un point renvoyé en
+modification, les points 9h et 13h : aucun mouvement de stock.
 
-### 5.3 Corriger un point déjà validé
+- Les films **non conformes** sont déclarés et tracés, mais ne sortent pas
+  du stock de la bobine. Les PMMA non conformes, eux, sortent du stock
+  utilisable.
+- Si un élément manque au moment de la validation (bobine, rivets d'un
+  type, PMMA), la validation est refusée avec le détail, et rien n'est
+  modifié.
+- Un point renvoyé en modification après validation remet son stock en
+  place ; il sera retiré à nouveau à la validation suivante.
 
-Un point validé ne se modifie plus directement. Le coordinateur dépose une
-**demande de correction de saisie**, que le superviseur traite. C'est ce qui
-garantit qu'un chiffre validé ne bouge pas sans laisser de trace.
+### 5.3 Valider les points 18h — superviseur opération
+
+1. Le tableau de bord signale les points **soumis**.
+2. Ouvrir le point. Avant la validation, l'écran **Comparaison OptoPlate**
+   met côte à côte ce que le coordinateur a déclaré et ce que la
+   plateforme a enregistré pour le site et le jour : Primo par catégorie,
+   Duplicatas, Post-Immat, endommagés, plaques des duplicatas et **films par
+   bobine**, avec l'écart de chaque ligne.
+3. Trois issues :
+    - **aucun écart** : valider ;
+    - **écart** : valider avec une **justification obligatoire**, conservée
+      avec le point (détail et PDF) ;
+    - ou **Demander une modification** au coordinateur, avec un motif.
+
+> **Ce que la comparaison sait déjà.** Une plaque imprimée un jour et posée
+> plus tard compte en film le jour de l'impression et en engin le jour de la
+> pose. Un véhicule désactivé sur un site et réimprimé sur un autre est
+> reconnu comme duplicata ou post-immat. Les films déjà retirés d'une
+> bobine entrée dans l'ERP après avoir servi ne comptent pas comme écart.
 
 ### 5.4 Import EMUCI
 
-**Module Opérations → Import EMUCI.** Charge le fichier produit par la
-plateforme nationale, qui donne le nombre de plaques par site et par
-**statut de plaque** (en service, déclarée cassée, etc.).
+**Module Opérations → Import EMUCI.** Charge les fichiers des plateformes
+nationales. Deux onglets :
 
-1. Sélectionner le fichier et la date d'import.
-2. Lancer l'import.
-3. L'écran affiche un **résumé par site** et le **détail par site et
-   statut**.
+- **OptoTrace (stock bobines)** : la quantité de films de chaque bobine vue
+  par la plateforme. L'import **ne change ni le statut ni le site** d'une
+  bobine déjà connue de l'ERP (affectations, transferts et points
+  journaliers en décident) : il ne met à jour que la quantité EMUCI et le
+  format.
+- **OptoPlate (plaques)** : les plaques posées, avec leurs désactivations
+  (duplicata, modification POST, incident) dans le même fichier. Le fichier
+  peut être ré-enregistré par Excel : l'encodage, le séparateur et les
+  variantes de noms de colonnes sont reconnus. Après l'import, l'écran
+  propose les jours de pose réellement contenus dans le fichier.
 
-Si des colonnes attendues manquent, l'import est refusé avec la liste des
-colonnes absentes : corrigez le fichier plutôt que de forcer.
+L'encadré **« Alimenter le dashboard »** (onglet OptoPlate) reconstitue des
+points « historique » à partir des plaques d'avant la mise en service de
+l'ERP : **Simuler** montre ce qui serait créé, rien n'est écrit avant
+« Alimenter le dashboard ». Aucun stock n'est modifié, un jour déjà saisi
+n'est jamais touché.
 
-> **Le droit requis a changé.** Lancer un import demande le droit de
-> **création** sur le module Import EMUCI, et non le simple droit de
-> lecture. Si vous ouvrez l'écran mais que l'import est refusé, c'est ce
-> droit-là qu'il manque — à demander à un administrateur.
-
-> **Les gros fichiers passent.** Les exports nationaux dépassaient la limite
-> de téléversement du serveur et étaient rejetés sans message exploitable.
-> La limite a été relevée à 50 Mo. Si un fichier est encore refusé pour sa
-> taille, c'est qu'il dépasse réellement cette limite.
+> **Le droit requis.** Lancer un import demande le droit de **création** sur
+> le module Import EMUCI. La limite de téléversement est de 50 Mo.
 
 ### 5.5 Suivi des observations
 
@@ -309,12 +371,8 @@ Opérations → Suivi des observations**.
   — ces trois actions demandent le droit de modification.
 
 > **Une observation en attente ne se clôture pas directement.** Elle doit
-> d'abord être prise en charge. C'est volontaire : une clôture sans prise en
-> charge ne dirait rien de ce qui a été fait.
-
-> **Au bout de trois relances sans réponse**, l'observation passe
-> automatiquement au statut **Escaladée** — visible et filtrable, pour ne pas
-> se perdre dans la liste.
+> d'abord être prise en charge. Au bout de trois relances sans réponse, elle
+> passe automatiquement au statut **Escaladée**.
 
 L'écran se filtre par statut et s'exporte en Excel.
 
@@ -322,11 +380,17 @@ L'écran se filtre par statut et s'exporte en Excel.
 
 **Module Opérations → Point EMUCI.** Compare ce que la plateforme nationale
 a enregistré avec ce que les coordinateurs ont déclaré dans leurs points
-journaliers, et met les **écarts** en évidence.
+journaliers, et met les **écarts** en évidence. Un écart se commente
+directement à l'écran, pour que le motif reste attaché au chiffre.
 
-C'est l'écran de rapprochement : un écart signifie soit une erreur de
-saisie, soit une plaque posée mais non remontée, soit l'inverse. Il se
-commente directement à l'écran, pour que le motif reste attaché au chiffre.
+### 5.7 Sites dont le point est généré depuis OptoPlate
+
+Un site qui produit sans saisir son point peut être réglé, dans
+Administration → Sites, sur **« Point généré depuis OptoPlate, à partir
+du… »**. À chaque import OptoPlate, son point de chaque jour est créé ou
+recalculé depuis les plaques posées (engins, plaques, duplicatas,
+post-immat, films par bobine), sans heures, rivets, PMMA ni mouvement de
+stock. Le site sort de ce mode dès son premier point saisi.
 
 ---
 
@@ -339,99 +403,213 @@ Deux entrées de menu pour un même écran, filtré différemment :
 - **Équipements Informatique** — postes, imprimantes, matériel IT ;
 - **Équipements Opérationnel** — matériel de pose et de terrain.
 
-Chaque équipement porte un numéro de série, une nomenclature, un site, un
-état (neuf, bon, usagé, réformé), une date de mise en service et une date de
-fin de cycle. Les fins de cycle proches sont signalées sur le tableau de
-bord.
+Chaque équipement porte un **N° interne** (généré), un **N° série
+fabricant**, une marque, un modèle, un site, un **emplacement** dans le
+site, un **utilisateur** (agent de l'annuaire), un état (neuf, bon, usagé,
+réformé) et ses dates de mise en service et de fin de cycle.
 
-Droit requis : lecture sur le module `equipements`.
+| Statut | Signification |
+|---|---|
+| **En stock** | Disponible au dépôt ou sur le site |
+| **Affecté** / **En utilisation** | Mis en service sur le site (date et agent) |
+| **Hors service** | Déclaré hors service, avec motif |
+| **Épuisé** | Consommable arrivé au bout ; retiré des comptes, fiche conservée |
+| **Perdu** | Déclaré perdu après un inventaire (§7.6) ; sorti du parc |
+
+Le coordinateur (pour son site) et les profils qui peuvent modifier
+disposent de trois actions : **Mettre en utilisation**, **Déclarer épuisé**
+(consommables seulement pour le coordinateur), **Déclarer hors service**.
+Chaque changement est tracé dans l'historique des mouvements.
+
+- **Importer** un fichier Excel/CSV crée les équipements en masse (modèle
+  téléchargeable) ; un N° série déjà connu est refusé comme doublon.
+- **Doublons** liste les fiches en double et permet de les retirer.
+- **Supprimer** retire une fiche du parc (elle reste en base) ; refusé
+  pendant une affectation ou une intervention non résolue.
+- Le **retour en stock** remet l'équipement « en stock » et retire son
+  utilisateur et son site d'affectation.
+
+Le tableau affiche quelques lignes avec défilement ; la colonne Actions
+reste visible à droite. L'export Excel suit le droit « Exporter ».
 
 ### 6.2 Articles
 
 **Module Stock → Articles.** Le catalogue des consommables : code, libellé,
-type, unité, seuil d'alerte, prix unitaire, stock global.
+type, unité, famille, seuil d'alerte, prix unitaire.
 
-> **À savoir.** Le stock d'un article est **global**, pas ventilé par site.
-> C'est pourquoi le compte des alertes de stock reste global même quand vous
-> filtrez le tableau de bord sur un site.
+- Le **stock central** d'un article est celui des sites de type **magasin**
+  et **entrepôt**. La distribution sort d'abord du magasin, puis de
+  l'entrepôt pour le reste.
+- Le **coordinateur** consulte le stock de son site et enregistre une
+  **Sortie** (consommation, perte, casse, autre) ; il ne sort que du stock
+  de son site, jamais au-delà.
+- Un article des familles **« Matériel et outillage industriel »** ou
+  **« Consommables informatiques »** ne va pas dans le stock d'articles du
+  site : à la réception (ou à la distribution), chaque unité devient une
+  **fiche d'équipement** du site.
+- L'onglet **Historique** retrace les réceptions, distributions et sorties.
+- **Importer** met à jour le catalogue et, en option, le stock par site.
 
 ### 6.3 Historique des mouvements
 
 **Module Stock → Historique des mouvements.** Trace tous les mouvements
-d'équipements : entrées, sorties, transferts, affectations. C'est l'écran à
-ouvrir quand on cherche où est passé un matériel.
-
-Non accessible au coordinateur de site.
+d'équipements : entrées, sorties, transferts, affectations, mises en
+utilisation, pertes. C'est l'écran à ouvrir quand on cherche où est passé
+un matériel. Non accessible au coordinateur de site.
 
 ### 6.4 PMMA
 
-**Module Stock → PMMA.** Suivi du stock de PMMA par site et par type, avec
-seuil d'alerte. Son inventaire et ses écarts ont leurs propres écrans
-(section 7).
+**Module Stock → PMMA.** Stock de PMMA par site et par type. Le stock est
+compté en **unités**, et l'équivalent en **cartons** est affiché partout
+(et sous le champ Quantité des fenêtres d'entrée et de sortie).
+
+- Le **coordinateur** consulte le stock de son site : il arrive par la
+  réception des commandes et sort par le point journalier. Il n'a ni
+  entrée, ni sortie, ni import.
+- Le **gestionnaire de stock** n'approvisionne que l'entrepôt et le magasin.
+- L'**import** se fait en cartons (plus unités en vrac) ; chaque ligne
+  remplace le stock du site et du type.
+- La consommation affichée repose sur les points 18h validés.
 
 ### 6.5 Rivets
 
-**Module Stock → Rivets.** Le stock de rivets par site et par type. L'écran
-sert aussi à **approvisionner** un site : on saisit la quantité livrée et le
-stock du site est crédité.
+**Module Stock → Rivets.** Le stock de rivets par site et **par type**
+(gonflables, éclatés). **Approvisionner** et **Ajuster** demandent toujours
+le type. Le gestionnaire de stock n'approvisionne que l'entrepôt et le
+magasin.
 
-Le seuil d'alerte est de **200 rivets** : en dessous, le site est signalé sur
-les tableaux de bord et dans la synthèse du gestionnaire de stock.
-
-Le coordinateur de site ne voit que le stock de son site.
+Le seuil d'alerte est de **200 rivets** : en dessous, le site est signalé.
+Le coordinateur ne voit que le stock de son site.
 
 ### 6.6 Vignette
 
-**Module Stock → Vignette.** Même écran que Bobines, filtré sur la catégorie
-vignette : les types y sont Réservoir et Pare-brise, au lieu des types de
-plaques.
+**Module Stock → Vignette.** Même écran que Bobines, filtré sur les
+vignettes (séries TL et WSL).
+
+### 6.7 Commandes de site
+
+**Module Stock → Commandes** (ou Opérations → Commandes selon le profil).
+C'est le circuit unique d'approvisionnement d'un site : articles, PMMA,
+rivets, **bobines**, **vignettes**, équipements informatiques et
+opérationnels. Les unités possibles sont UNITÉ, CARTON, BOBINE et BOÎTE.
+
+1. **Le coordinateur commande** (une seule commande en attente par site).
+2. **Le superviseur traite les lignes** : valider, rejeter ou demander une
+   modification, ligne par ligne. Une commande « À corriger » n'est
+   corrigée que par le coordinateur du site, sur les seules lignes signalées.
+3. **Lignes bobines et vignettes** : le GSB choisit les rouleaux précis à
+   l'entrepôt (la somme de leurs films doit égaler la quantité demandée),
+   puis « Valider la sélection ». Ils restent à l'entrepôt, réservés.
+4. **Le gestionnaire expédie** : pour chaque ligne, il choisit le dépôt de
+   sortie (entrepôt ou magasin, stock affiché en direct) et la quantité
+   livrée. Le dépôt est débité à l'expédition. Le **bon de livraison**
+   (BL) s'imprime dès l'expédition.
+5. **Le coordinateur réceptionne**, ligne par ligne : tout reçu, partiel
+   (avec la quantité) ou rien, en cochant les rouleaux arrivés. Tout manque
+   exige un motif, et le **BL signé** (PDF) est obligatoire. Le site n'est
+   crédité que de ce qu'il a reçu ; les bobines y arrivent **en stock**.
+6. **Chaque manque ouvre un écart**, traité par le gestionnaire (par le GSB
+   pour les rouleaux) : remise au stock du dépôt d'origine, renvoi (nouvelle
+   commande) ou perte.
+
+| Statut | Signification |
+|---|---|
+| **À valider** (« En attente de validation » pour le coordinateur) | Attend le superviseur |
+| **À corriger** | Lignes renvoyées au coordinateur |
+| **À préparer** (« En préparation ») | Validée, bobines à choisir puis expédition |
+| **En livraison** | Expédiée, à réceptionner |
+| **Reçu** | Réceptionnée par le site |
+| **Rejeté** / **Annulé** | Refusée, ou annulée avec motif |
+
+Chaque ligne a aussi son propre statut : Validé, En livraison, Non livré,
+Livré partiellement, Livré, Non reçu, Reçu partiel.
+
+> **Ce que voit le coordinateur.** Ses seules commandes, sans prix ni stock
+> central, et sans le BL (le site signe celui qui arrive avec la
+> marchandise). La liste montre d'abord ce que chacun doit traiter.
+
+> **Commande bobines.** L'ancien écran Bobines → Commande bobines ne prend
+> plus de nouvelle demande : il renvoie vers Commandes. Les commandes déjà
+> en cours y vont jusqu'à leur réception.
+
+### 6.8 Archives des BL
+
+**Module Stock → Archives des BL** (magasin, superviseurs, administration).
+Les commandes expédiées avec leur BL émis et leur BL signé, conservés en
+base. Filtres par site, période, numéro et BL manquant ; export ZIP des BL
+signés.
 
 ---
 
 ## 7. Bobines, rivets, PMMA et inventaires
 
-### 7.1 La validation du stock du matin
+### 7.1 La validation du stock du jour
 
-Chaque site déclare son stock en début de journée.
+**Module Bobines → Validation stock jour.** Chaque soir, le stock de
+bobines déclaré par l'ERP est comparé à la plateforme OptoTrace.
 
-1. Module **Bobines**, puis **Validation stock jour**.
-2. Saisir les quantités constatées.
-3. Valider.
+La comparaison se fait toute seule dès que deux conditions sont réunies,
+dans n'importe quel ordre :
 
-Trois résultats possibles : **validé**, **validé avec écarts**, ou **validé
-automatiquement**. Un écart n'est pas une faute en soi, mais il est tracé et
-doit être expliqué.
+1. le **point 18h** du site est validé par le superviseur ;
+2. l'**import OptoTrace** de la date est chargé.
+
+Le stock ERP du soir est alors comparé à l'import de cette date, bobine par
+bobine. Sans écart, le site est validé automatiquement. Avec un écart, le
+GSB est prévenu. En attendant, le site figure dans la rubrique « en
+attente » avec la raison (point non validé, import manquant).
+
+Pour chaque bobine en écart, le GSB voit les **causes possibles**, chiffrées
+quand c'est possible : plaques imprimées ce jour mais posées plus tard,
+export pris après la journée, films retirés par des points postérieurs, non
+conformes, même écart déjà constaté… Il décide :
+
+| Décision | Effet | Statut |
+|---|---|---|
+| **Autoriser l'écart** | L'écart est accepté et tracé | Avec écart |
+| **Réajuster le stock** | Le stock ERP est aligné sur EMUCI ; le coordinateur répond avec ses corrections | Réajusté |
+| **Refuser / Bloquer** | Le site est bloqué jusqu'à résolution | Bloqué |
+| (aucun écart) | Validation automatique | Conforme |
+
+Le GSB dispose de deux onglets : **Validation en cours** et **Historique
+30 jours**. Le coordinateur voit les réajustements qui l'attendent, à
+toutes les dates, et y répond.
 
 ### 7.2 Commander des bobines
 
-**Module Bobines → Commande bobines.** La demande passe par le gestionnaire
-de stock bobines, qui la sert.
-
-| Statut | Signification |
-|---|---|
-| **En attente** | Déposée, pas encore traitée |
-| **Validée** | Acceptée, à servir |
-| **Livrée / Reçue** | Servie |
+Les bobines se commandent désormais par **Stock → Commandes**, ligne
+« Bobine » (§6.7). Le GSB y choisit les rouleaux ; ils passent au site à la
+réception, en stock.
 
 ### 7.3 Vue stock par site
 
 **Module Bobines → Vue stock par site.** Tableau de synthèse du stock de
-bobines, site par site. Écran de consultation : on n'y saisit rien.
+bobines, site par site, type par type. Le coordinateur ne voit que son
+site. Exports CSV, Excel, PDF (tous les types, par blocs de huit) et
+PowerPoint, selon le droit « Exporter ».
 
 ### 7.4 Les bobines elles-mêmes
 
-Une bobine porte un numéro, un type, une série, un site, et un compte de
-films : total, utilisés, endommagés, restants.
+Une bobine porte un numéro, un type, un format, une série, un site, et un
+compte de films : initial, utilisés, endommagés, restants.
 
 | Statut | Signification |
 |---|---|
-| **En stock** | Reçue, pas encore ouverte |
-| **En cours** | Ouverte et en cours d'utilisation |
-| **Épuisée** | Films consommés |
+| **En stock** | Arrivée sur le site, pas encore ouverte |
+| **En cours** (en utilisation) | Ouverte, après une **demande d'utilisation** approuvée |
+| **Épuisée** | Films consommés (repasse « en cours » si un recomptage lui rend des films) |
 | **Retirée** | Sortie du circuit |
+| **Absente** | Non trouvée à l'inventaire ; rangée à l'entrepôt principal, hors stock disponible |
+| **Perdue** | Perte déclarée par le GSB |
 
-Seules les bobines **en cours** comptent dans les films restants affichés
-sur les tableaux de bord.
+- Une bobine arrive toujours sur un site **en stock** (réception d'une
+  commande, transfert, affectation) ; elle passe en utilisation par une
+  demande d'utilisation.
+- **Corriger la quantité initiale** (hors coordinateur) : pour une bobine
+  livrée avec 499 films au lieu de 500. Seule la quantité initiale change ;
+  le stock restant ne bouge pas.
+- L'onglet **Absentes** liste les bobines non retrouvées ; le GSB peut y
+  déclarer la perte.
 
 ### 7.5 Les quatre inventaires
 
@@ -442,76 +620,98 @@ sur les tableaux de bord.
 | **Inventaire PMMA** | Écarts PMMA | Les quantités, **par type de PMMA** |
 | **Inventaire équipements** | Écarts équipements | La **présence** du matériel — trouvé ou manquant |
 
-L'inventaire des équipements se distingue : un équipement n'a pas de
-quantité. On ne compare pas deux chiffres, on coche une liste de présence.
+#### La session d'inventaire
 
-#### La session d'inventaire, et qui l'ouvre
+L'administration ouvre une **session** depuis *Sessions d'inventaire*
+(périodicité mensuelle, trimestrielle, semestrielle ou annuelle). La session
+crée, pour chaque site, les inventaires des types qui ont quelque chose à
+compter. Un type sans rien à compter est « Sans objet » et ne bloque pas la
+clôture ; un inventaire annulé non plus. Tant que la session est ouverte,
+un inventaire manquant peut encore être créé, même après sa période.
 
-**Vous n'ouvrez pas vous-même un inventaire.** C'est l'administration qui
-ouvre une **session** depuis l'écran *Sessions d'inventaire*, et cette session
-crée automatiquement, pour chaque site concerné, les inventaires des quatre
-natures — déjà remplis du stock théorique du moment.
+#### Le comptage
 
-> **Ce qui a changé.** Un coordinateur de site pouvait auparavant créer son
-> inventaire journalier lui-même. Ce n'est plus possible : tout dépend
-> désormais de la session ouverte par l'administration. Si vous ne voyez pas
-> d'inventaire à saisir, c'est qu'aucune session n'est ouverte pour votre
-> site — c'est à signaler, pas à contourner.
+1. **Choisir le moment du comptage.** Avant la première saisie, la fiche
+   demande si le comptage est fait **le matin avant les activités** ou **le
+   soir après les activités**, avec une proposition selon l'heure. Rien ne
+   se saisit tant que ce choix n'est pas confirmé ; il reste modifiable
+   ensuite.
+    - **Matin** : le chiffre compté est le stock de fin de journée de la
+      veille. Le point du soir du même jour reste possible.
+    - **Soir** : le chiffre compté est le stock de fin de journée du jour.
+2. **Saisir chaque ligne.** Toutes les lignes doivent être comptées avant
+   la validation (0 ou « absente » compris). Une ligne saisie est
+   verrouillée. Le comptage peut s'étaler sur **plusieurs jours** : chaque
+   ligne se rapporte à son propre jour.
+3. **Demander une modification.** Une ligne verrouillée se rouvre par une
+   demande : le coordinateur la demande au GSB, ou le GSB et le superviseur
+   la demandent au site. Seul le site (ou un administrateur) corrige la
+   ligne rouverte.
+4. **Valider.** La validation n'est possible qu'après le **point 18h
+   validé** de chaque jour de comptage. La consommation des points validés
+   après le comptage est déduite. L'inventaire validé prend la date du
+   dernier jour de comptage.
 
-L'administrateur choisit une **périodicité** — mensuelle, trimestrielle,
-semestrielle ou annuelle — et une date de début. **La date de fin n'est pas
-saisie** : elle se déduit de la périodicité. Le libellé aussi, si on n'en
-donne pas : « Inventaire mensuel — mars 2026 ».
+> **Le coordinateur ne voit pas l'écart.** Pendant le comptage, la
+> quantité de référence et l'écart lui sont masqués : il compte ce qu'il
+> voit.
 
-L'accès aux sessions est réservé à l'administration. Il peut être ouvert
-**nominativement** à une personne précise, via les délégations — pas à un rôle
-entier.
+> **Rivets et PMMA : les entrées sont conservées.** La référence est notée
+> au moment de la saisie ; une livraison reçue entre la saisie et la
+> validation n'est pas effacée.
 
-#### Déroulé type
+**Bobines.** Une bobine non trouvée se déclare **« Absente »** : à la
+validation, elle part à l'entrepôt principal au statut absente, et le GSB
+est prévenu. Une bobine **retrouvée** s'ajoute avec « Ajouter une bobine
+retrouvée » ; à la validation, elle est affectée au site avec la quantité
+comptée. Les bobines épuisées encore vues par OptoTrace sont aussi à
+compter.
 
-1. L'administration ouvre la session, qui provisionne les inventaires.
-2. Vous saisissez le **comptage physique**, site par site, sur l'écran de
-   l'inventaire concerné.
-3. L'inventaire est validé.
-4. L'écran **Écarts** correspondant liste les différences entre le physique
-   et le théorique.
-5. Vous justifiez chaque écart, puis la session est clôturée.
+**Équipements.** Le coordinateur déclare un équipement **trouvé hors
+système** (type, marque, modèle, n° de série, état, emplacement, photo
+facultative) ; le gestionnaire de stock crée la fiche, le transfère depuis
+son ancien site ou refuse. Une déclaration en attente bloque la validation.
 
-> **Un écart non justifié reste ouvert.** C'est voulu : la trace de
-> l'explication vaut autant que la correction du chiffre.
+**Qui valide.** Le droit « Valider » de chaque type se règle dans
+Administration → Permissions (modules *Inventaire … — valider*). Par
+défaut : administrateurs, GSB, gestionnaire de stock et superviseur ; le
+GSB ne valide pas les équipements.
 
-> **Un écart déjà ouvert n'est pas recompté.** Si un manquant a été constaté
-> au dernier inventaire et n'est pas encore traité, il apparaît sur la
-> nouvelle ligne comme **écart connu** plutôt que d'être compté une seconde
-> fois. Vous ne payez pas deux fois le même trou.
+**Annuler un inventaire.** Les profils qui valident peuvent annuler un
+inventaire en cours, avec un motif. Aucun stock n'est touché.
 
-**Deux refus que vous pouvez rencontrer**, et qui ne sont pas des pannes :
+### 7.6 Les écarts d'inventaire
 
-| Message | Ce qu'il veut dire |
-|---|---|
-| « Un inventaire existe déjà pour ce site à cette date » | La session a déjà provisionné cet inventaire — cherchez-le plutôt que d'en créer un |
-| « Aucune bobine active / aucun stock / aucun équipement sur ce site » | Il n'y a rien à compter. Mieux vaut ce message qu'un inventaire vide, impossible à distinguer d'un inventaire non saisi |
+Les écrans **Écarts** listent les différences entre le compté et le stock
+de référence. Un écart non justifié reste ouvert ; un écart déjà ouvert
+n'est pas recompté au prochain inventaire.
 
-### 7.6 Traçabilité des endommagements
+Dans **Écarts équipements**, un équipement manquant peut être **déclaré
+perdu** (profils qui valident l'inventaire des équipements, motif
+obligatoire) : l'écart est fermé, l'équipement sort du parc au statut
+« Perdu » et le mouvement est tracé.
 
-**Module Bobines → Traçabilité endommagements.** L'historique complet des
-films endommagés, **un par un** : deux films abîmés sur la même bobine
-peuvent l'avoir été à des moments et pour des causes différents, et c'est ce
-détail que l'écran restitue plutôt qu'un simple compteur.
+### 7.7 Export des inventaires
 
-Cet écran ne fait que **lire** : la déclaration d'un film endommagé se fait
-toujours depuis le point journalier (section 5.1), jamais ici. Le
-coordinateur de site n'y voit que son propre site ; les autres profils
-filtrent librement par site, par période ou par cause.
+**Module Inventaire → Export des inventaires.** Export de tous les sites
+en Excel (synthèse puis détail par type) ou en PDF. Filtres : période,
+types, statut, site et **nom de la session**. Chaque ligne de l'aperçu
+s'exporte aussi seule. La « Référence » est le stock attendu au moment du
+comptage (référence − compté = écart). Non ouvert au coordinateur.
 
-L'écran s'exporte, sur le périmètre affiché.
+### 7.8 Traçabilité des endommagements
 
-### 7.7 Simulation & projection de stocks
+**Module Bobines → Traçabilité endommagements.** L'historique des éléments
+endommagés, **un par un** : films, rivets et PMMA, avec l'étape, la cause et
+le numéro du consommable. L'écran ne fait que **lire** : la déclaration se
+fait dans le point journalier (§5.1). Le coordinateur n'y voit que son
+site ; les brouillons ne sont visibles que de leur auteur. Filtres par
+élément, site, période, étape et cause ; export selon le droit.
+
+### 7.9 Simulation & projection de stocks
 
 **Module Rapports → Simulation & projection.** Un outil de calcul, pas un
 écran de saisie : il **ne modifie jamais** le stock réel, il projette.
-
-Deux questions, choisies explicitement en haut de l'écran :
 
 | Vous vous demandez… | Choisissez le mode |
 |---|---|
@@ -519,30 +719,17 @@ Deux questions, choisies explicitement en haut de l'écran :
 | « Si j'ouvre un nouveau site, mon stock tient-il ? Sinon, combien commander ? » | **Ouverture de site** |
 | Les deux à la fois | **Les deux** |
 
-**Comment lire le résultat :**
-
-- La projection se calcule **par format de bobine** (chaque conditionnement a
-  sa propre contenance en films — voir Référentiels & capacités, section
-  12.8) : la quantité de chaque format reste modifiable, et le résultat total
-  est la somme de ce que vous retenez.
-- **Bobines et vignettes ont chacune leur propre autonomie affichée** : les
-  deux chiffres ne se mélangent pas, pour ne pas masquer l'échéance la plus
-  proche des deux.
-- En mode « Ouverture de site », choisissez les formats de bobines et types
-  de PMMA que consommeront les nouveaux sites — par défaut, tous les formats
-  existants sont retenus. Si vous ne renseignez pas de consommation estimée
-  pour le nouveau site, l'écran retient par défaut la consommation moyenne
-  d'un site existant, plutôt qu'un zéro qui rendrait l'ouverture faussement
-  sans effet sur le stock.
+- La projection se calcule **par format de bobine** (contenance de
+  Référentiels & capacités, §12.8).
+- **Bobines et vignettes ont chacune leur propre autonomie affichée.**
+- En mode « Ouverture de site », sans consommation estimée, l'écran retient
+  la consommation moyenne d'un site existant.
 
 > **D'où vient la consommation observée.** Des films déclarés dans les
-> points journaliers soumis (utilisés et endommagés), plus les
-> consommations saisies à la main dans Opérations → Bobines. Un point resté
-> en brouillon ne compte pas.
+> points journaliers (utilisés et endommagés). Un brouillon ne compte pas.
 
-> **Le lien de la simulation se partage.** Tous les paramètres sont dans
-> l'adresse de la page : vous pouvez l'enregistrer ou l'envoyer à un
-> collègue, il retrouvera exactement le même scénario.
+> **Le lien de la simulation se partage** : tous les paramètres sont dans
+> l'adresse de la page.
 
 ---
 
@@ -619,7 +806,8 @@ Neuf types de demandes administratives, chacune avec son circuit de visas.
 avez déposé, avec le statut et l'étape en cours. C'est ici qu'on vient voir
 « où en est ma demande ».
 
-Un brouillon s'y reprend et se complète.
+Un brouillon s'y reprend avec **« Reprendre le brouillon »** : il se
+complète et se soumet avec le même numéro.
 
 ### 8.6 Viser une demande
 
@@ -628,8 +816,20 @@ Un brouillon s'y reprend et se complète.
 3. Approuver, ou rejeter. **Un rejet exige un motif** : la personne doit
    savoir quoi corriger.
 
-Le **N+1** n'est pas un rôle mais le responsable du département du
-demandeur. Il est résolu automatiquement.
+Le **N+1** n'est pas un rôle : ce sont les responsables (N+1) d'un
+département, désignés dans Administration → Départements.
+
+- **Le département retenu est celui du bénéficiaire.** Quand la demande
+  porte sur un agent d'un autre département, ce sont les N+1 du
+  département de cet agent qui visent. À défaut, ceux du demandeur.
+- **Tous les N+1 du département** voient la demande, sont prévenus et
+  peuvent la viser ou la rejeter ; le premier qui agit fait avancer le
+  circuit. La page À valider l'indique par « N+1 : département ».
+- **Département sans N+1** : les administrateurs et le demandeur sont
+  prévenus, un bandeau le signale sur la fiche, et un administrateur vise
+  à sa place.
+- Si le demandeur est lui-même N+1 du département retenu, l'étape N+1 est
+  validée d'office.
 
 ### 8.7 Traitements IT
 
@@ -665,8 +865,8 @@ de validation, au-delà de l'enchaînement simple des étapes.
 
 Trois règles s'ajoutent :
 
-- **Le N+1** n'est pas un rôle. C'est le responsable du département du
-  demandeur, résolu automatiquement.
+- **Le N+1** n'est pas un rôle : ce sont les N+1 du département du
+  bénéficiaire (§8.6).
 - **Une étape rattachée à un département** peut être visée par n'importe
   quel membre de ce département. C'est ce qui fait vivre le visa
   « Administration », dont le rôle ERP correspondant a été supprimé.
@@ -693,6 +893,17 @@ s'alimente par import depuis un fichier Excel.
 
 Le circuit part d'un besoin exprimé par un service et va jusqu'à la
 réception de la marchandise.
+
+> **Acheteur et Magasin sont des options de la matrice.** Dans
+> Administration → Permissions → Achats, les lignes **Acheteur** (file
+> d'attente, prise en charge et traitement des FEB) et **Magasin**
+> (préparation et expédition des commandes, écarts et litiges de
+> réception, réceptions magasin, alertes de stock bas) se cochent pour
+> n'importe quel rôle.
+
+> **Les pièces déposées sont conservées en base** (pièces jointes de FEB,
+> BL, bons de transfert, fiches signées, documents fournisseurs) et ne
+> s'ouvrent qu'avec le droit de lecture correspondant.
 
 ### 9.1 Dashboard Achats
 
@@ -765,6 +976,11 @@ Une fois confirmée, la FEB devient une commande suivie dans
 
 La réception se fait dans **Achats → Réceptions**. Elle **débite le stock du
 magasin** et **crédite le stock du département** demandeur.
+
+**File d'attente équipements** (même module) : les exemplaires
+d'équipements créés à la réception d'une demande d'immobilisation, en
+attente d'affectation. L'affectation se propose ici et se vise dans Mes
+visas. Ouvert au suivi des achats et aux N+1.
 
 ### 9.8 Stock par département
 
@@ -862,9 +1078,14 @@ Le numéro d'une FEB est attribué automatiquement, par exercice.
 
 **Déclarer un problème :**
 
-1. Ouvrir **Nouvelle intervention**.
-2. Décrire le problème observé, désigner l'équipement et le site.
-3. Enregistrer.
+1. Choisir le type : **Préventive**, **Curative** ou **Autre** (installation
+   de matériel, remplacement, diagnostic…).
+2. Choisir le site : la liste des équipements ne propose que ceux de ce
+   site.
+3. Décrire le problème ou l'intervention, puis enregistrer.
+
+Les onglets et compteurs (Préventives, Curatives, Autres) suivent ces
+types. Toute intervention ouverte se termine avec le bouton **Terminer**.
 
 **Traiter l'intervention** (technicien) : renseigner les travaux prévus,
 puis les travaux effectués et les pièces remplacées.
@@ -960,6 +1181,13 @@ sites. Le coordinateur, lui, est verrouillé sur le sien.
 > volontairement : la vue exécutive lui sert de tableau de bord, et la rangée
 > d'indicateurs ferait double emploi.
 
+> **Ce qui compte comme production.** Tous les chiffres de production
+> (accueil, tableau de bord, vue exécutive, Dashboard KPI) ne comptent que
+> les **points 18h validés par le superviseur**, plus les points
+> « historique » reconstitués depuis OptoPlate. Les points 9h et 13h, les
+> brouillons et les points en attente n'y entrent pas. Le suivi de saisie
+> (points en attente, taux de validation) porte, lui, sur tous les points.
+
 > **Si le tableau de bord affiche un mois qui n'est pas le mois en cours**,
 > c'est voulu : quand le mois courant n'a encore aucun relevé validé, la
 > synthèse retombe sur le dernier mois qui en a, et le libellé le nomme.
@@ -973,7 +1201,12 @@ par site, alertes.
 
 Elle est **accessible à tous les comptes**, pas réservée à la direction. Un
 filtre par site et par mois permet d'en resserrer le périmètre, et les
-chiffres se réactualisent sans recharger la page.
+chiffres se réactualisent sans recharger la page. Le sélecteur d'année
+propose aussi **« Depuis le début de l'activité »** ; la Performance
+mensuelle offre une entrée « Tous les sites ».
+
+Sur un périmètre qui compte des sites en Re-Immatriculation, une section
+**Duplicatas & Post-Immat** s'ajoute.
 
 ### 11.3 Les écrans de rapport
 
@@ -983,7 +1216,7 @@ chiffres se réactualisent sans recharger la page.
 | **Rapports généraux** | Analyses transverses |
 | **Exports** | Extraction des données |
 | **Rapports & Exports** (Bobines) | Spécifique au stock bobines |
-| **Simulation & projection** | Voir section 7.7 |
+| **Simulation & projection** | Voir section 7.9 |
 
 La plupart des écrans de liste proposent aussi un export direct, si votre
 rôle a le droit d'exporter sur ce module.
@@ -1041,6 +1274,8 @@ Avril 2026 ».
 | **Commandes** | Total, servies, en cours ; taux de satisfaction et délai de la période de comparaison ; taux sur six périodes |
 | **Équipements** | Disponibles, hors service, en maintenance, affectés — **état à ce jour** |
 | **Sites** | Production par site sur les deux périodes, et classement |
+| **Duplicatas & Post-Immat** | Pour les sites en Re-Immatriculation : mêmes comparaisons que la production |
+| **Fiabilité & pertes** | Sites sans point soumis au jour de référence, rapprochement avec EMUCI (plaques déclarées contre plaques posées), taux de films endommagés, causes et étapes |
 
 > **Pourquoi certains panneaux ne changent pas avec les périodes.** Le parc
 > de bobines, les stocks disponibles et les équipements sont des photos de
@@ -1052,11 +1287,18 @@ Avril 2026 ».
 > journée est comparée à la veille, la semaine en cours aux mêmes jours de
 > la semaine passée, le mois et l'année à nombre de jours égal.
 
-> **Les brouillons ne comptent pas.** Les consommations de PMMA et de rivets,
-> comme la production, ne tiennent compte que des points journaliers soumis.
+> **Seuls les points 18h validés comptent.** Les consommations de PMMA et
+> de rivets, comme la production, ne tiennent compte que de ces points.
 > Un site qui n'a rien produit sur la période analysée mais avait produit sur
 > la période de comparaison reste au classement : c'est justement ce qu'une
 > comparaison doit faire voir.
+
+**Le bandeau « Points d'attention »**, en tête, résume ce qui demande une
+action : sites sans point soumis, points à valider par le superviseur,
+sites en écart avec EMUCI, jours de stock de films ou d'un format qui
+baissent, interventions ouvertes… Chaque ligne mène à l'écran de détail,
+comme le titre de chaque panneau. Les **sites attendus** sont les sites
+de pose actifs qui détiennent une bobine active.
 
 **Filtrer et enregistrer une vue.** Vous pouvez sélectionner un ou plusieurs
 sites (aucune sélection = tout votre périmètre) et les périodes, puis
@@ -1081,6 +1323,9 @@ informations, l'activer ou le désactiver, lui attribuer un rôle et un site.
 La saisie est contrôlée : une adresse e-mail ou un numéro de téléphone mal
 formé est signalé en rouge dès que vous quittez le champ.
 
+La case **« Recevoir les notifications par mail »** coupe ou rétablit les
+mails d'une personne (§12.9). Chacun peut aussi la régler dans Mon Profil.
+
 > **Un compte désactivé n'est pas supprimé.** Ses données et sa trace dans
 > le journal d'audit restent. C'est ce qui permet de savoir qui a fait quoi,
 > même après un départ.
@@ -1089,9 +1334,23 @@ formé est signalé en rouge dès que vous quittez le champ.
 
 **Administration → Permissions.** Chaque rôle reçoit, module par module,
 cinq droits : **lire**, **créer**, **modifier**, **supprimer**,
-**exporter**. Cinquante-six modules sont gérés depuis cet écran — la
-totalité de ceux contrôlés dans le code, à l'exception des sessions
-d'inventaire (accès nominatif, section 7.5).
+**exporter**. Cinquante-sept modules sont gérés depuis cet écran, rangés
+par onglets de groupe.
+
+- **Exporter** commande réellement les exports (PMMA, stock bobines,
+  rapports GSB, inventaires, rivets, équipements, résumé superviseur,
+  sites) : sans ce droit, le bouton disparaît.
+- Certains modules sont des **fonctions** plutôt que des écrans : options
+  **Acheteur** et **Magasin** (§9), droit **Valider** de chaque inventaire
+  (§7.5). Ils se cochent pour n'importe quel rôle.
+- Les **pièces jointes** (BL, FEB, documents fournisseurs) ne s'ouvrent
+  qu'avec le droit de lecture de l'écran correspondant.
+- Le rôle **Admin** n'est pas modifiable. Chaque modification est inscrite
+  au journal d'audit, droit par droit (avant / après).
+- Un rôle **créé depuis cet écran** voit les menus des modules qui lui
+  sont ouverts.
+- **Support IT** : ses sous-rôles (§10.3) ne règlent que les modules
+  techniques ; pour le reste, il suit la matrice comme les autres rôles.
 
 > **Configuration absente n'est pas refus sur le tableau de bord — mais
 > l'est sur les pages.** Un rôle dont aucune permission n'est renseignée
@@ -1116,8 +1375,16 @@ demande reste bloquée à l'étape d'une personne absente.
 **Administration → Sites.** Le référentiel des sites : nom, type,
 localisation, coordonnées géographiques, état actif ou non.
 
-Le **type** du site compte : seuls les sites de type **magasin** portent le
-stock central utilisé par les réceptions d'achats (section 9.7).
+Le **type** du site compte : les sites de type **magasin** et **entrepôt**
+sont les dépôts qui portent le stock central (articles, PMMA, rivets,
+bobines) et d'où partent les commandes de site.
+
+- **Opération** (sites de saisie ou de pose) : **Primo** ou
+  **Re-Immatriculation**. Un site en Re-Immatriculation saisit aussi des
+  duplicatas et des post-immat (§5.1).
+- **Point généré depuis OptoPlate, à partir du…** : voir §5.7.
+- Le **calculateur de capacité** se base sur les équipements actifs des
+  entrepôts et magasins (tous ou au choix), selon les états retenus.
 
 ### 12.5 Départements
 
@@ -1150,7 +1417,7 @@ pourquoi.
 **Administration → Référentiels & capacités.** Les quantités de
 conditionnement — combien de films dans une bobine selon sa série, combien
 d'unités dans un carton de PMMA — qui alimentent les stocks créés et
-l'outil de simulation (section 7.7).
+l'outil de simulation (section 7.9).
 
 - **Par série de bobines** : posez une capacité en une saisie pour toutes les
   versions de la série. Vous pouvez aussi corriger un type individuel juste
@@ -1170,6 +1437,24 @@ l'outil de simulation (section 7.7).
 > stock créé ensuite. Vérifiez cet écran après tout changement de
 > conditionnement chez un fournisseur.
 
+### 12.9 Mails
+
+**Administration → Mails** (droit de modification sur les utilisateurs).
+Chaque notification de l'application part aussi par mail, en file
+d'attente, environ toutes les cinq minutes. L'écran suit ces envois :
+
+- état de l'envoi, compteurs des dernières 48 heures, alerte si des mails
+  attendent depuis plus de 15 minutes ;
+- liste filtrable, avec pour chaque mail son état et le **motif
+  d'erreur** en cas de refus ;
+- **relance** d'un mail ou de tous les échecs, et **mail de test**.
+
+Un mail n'est pas envoyé si la notification a déjà été lue, si le
+destinataire n'a pas d'adresse valide, s'il a plus de 48 heures, ou si la
+personne a coupé ses mails — dans ce dernier cas, même les mails déjà en
+attente sont abandonnés. Trois échecs d'affilée marquent le mail en
+échec.
+
 ---
 
 ## 12 bis. Les écrans hors menu
@@ -1179,8 +1464,9 @@ un bouton, ou automatiquement. Ils comptent autant que les autres.
 
 ### Mon Profil
 
-Vos informations personnelles, et la section **« Changer le mot de passe »**
-(section 2.3). Accessible depuis votre nom, en bas de la barre latérale.
+Vos informations personnelles, la section **« Changer le mot de passe »**
+(section 2.4) et l'interrupteur **« Recevoir mes notifications par
+mail »** : coupé, vos notifications restent visibles dans l'application. Accessible depuis votre nom, en bas de la barre latérale.
 
 ### Détail d'une FEB, et traitement
 
@@ -1205,9 +1491,8 @@ clôturée.
 
 ### Réceptions de commandes
 
-Écran de réception des commandes sur site, atteint depuis le suivi des
-commandes. Droit requis : **modification** sur le module `receptions` pour
-enregistrer une réception, lecture seule pour la consulter.
+La réception d'une commande de site se fait depuis la liste des
+Commandes (§6.7), par le coordinateur du site destinataire.
 
 ### Import stock bobines
 
@@ -1248,15 +1533,33 @@ La barre ne montre que les écrans du module en cours. Repassez par l'accueil
 et ouvrez le module auquel cet écran appartient. Voir section 3.2.
 
 **Mes chiffres n'apparaissent pas dans les rapports.**
-Vérifiez que vos points journaliers sont **validés** et non restés en
-brouillon. Un brouillon ne compte nulle part.
+Seuls les **points 18h validés par le superviseur** comptent. Un brouillon,
+un point soumis ou un point 9h/13h n'apparaît pas. Voir section 11.1.
 
 **Je ne peux pas soumettre une demande interne.**
 Vous n'êtes probablement pas rattaché à un département. Le message d'erreur
 le dit explicitement. Un administrateur doit vous assigner.
 
 **Je ne peux plus modifier un point journalier.**
-Il est validé. Déposez une demande de correction de saisie.
+Il est soumis ou validé. Le superviseur peut vous le renvoyer avec
+« Demander une modification » : le bouton **Corriger** apparaît alors sur
+la carte du point.
+
+**Le stock de ma bobine n'a pas baissé après mon point.**
+C'est normal tant que le point 18h n'est pas validé par le superviseur :
+le stock ne sort qu'à cette validation. Voir section 5.2.
+
+**Ma bobine reçue n'apparaît pas dans mon point journalier.**
+Elle est arrivée « en stock ». Faites une demande d'utilisation : elle
+apparaîtra une fois en cours. Voir section 7.4.
+
+**L'inventaire refuse ma saisie : « choisissez le moment du comptage ».**
+Indiquez d'abord si vous comptez le matin avant les activités ou le soir,
+puis confirmez. Voir section 7.5.
+
+**L'inventaire ne se valide pas.**
+Vérifiez que toutes les lignes sont comptées et que le point 18h de chaque
+jour de comptage est validé. Voir section 7.5.
 
 **Le tableau de bord affiche un mois qui n'est pas le mois en cours.**
 C'est voulu. Voir section 11.1.
@@ -1276,9 +1579,9 @@ section 9.9.
 Approuvée veut dire autorisée ; il reste le traitement par l'informatique.
 Voir section 8.7.
 
-**Le compte des alertes de stock ne change pas quand je filtre sur un site.**
-C'est normal : le stock des articles est global, pas ventilé par site. Voir
-section 6.2.
+**Je ne reçois pas les notifications par mail.**
+Vérifiez l'interrupteur dans Mon Profil. Un administrateur peut voir dans
+Administration → Mails si un envoi a échoué et pourquoi. Voir section 12.9.
 
 **Mon observation reste en attente alors que j'ai relancé plusieurs fois.**
 Au bout de trois relances, elle passe au statut Escaladée, ce qui la rend
@@ -1344,6 +1647,7 @@ sensible des trois.
 | 4.1 | 2026-09-24 | `59e3b0d` (GayeGuy/ERP-EMUCI-V2) | Dashboard KPI : choix libre de la période de comparaison, règle « à date égale » ou « périodes entières », tuile « Plaques par jour », bandeau « Aujourd'hui », panneaux « à ce jour » (11.4) ; nouvelle question fréquente |
 | 4.2 | 2026-09-24 | `ab9f7ff` (GayeGuy/ERP-EMUCI-V2) | Dashboard KPI : bandeau « Aujourd'hui » retiré ; comment afficher le jour, la semaine, le mois ou l'année en cours (11.4) |
 | 4.3 | 2026-09-24 | `2d9e32f` (GayeGuy/ERP-EMUCI-V2) | Couverture du panneau Bobines (11.4) et consommation observée de la simulation (7.7) calculées sur les points journaliers |
+| 5.0 | 2026-11-19 | `5866232` (GayeGuy/ERP-EMUCI-V2) | Point journalier : stock retiré à la validation du 18h, comparaison OptoPlate, non conformes, endommagements justifiés, Re-Immatriculation, journée sans production (5) ; commandes de site et archives des BL (6.7, 6.8) ; équipements, articles, PMMA, rivets (6) ; validation du stock du jour (7.1) ; statuts des bobines (7.4) ; inventaires réécrits, écarts, export (7.5 à 7.7) ; visa N+1 du département du bénéficiaire (8.6) ; options Acheteur et Magasin (9) ; interventions « Autre » (10.1) ; production = points 18h validés, Points d'attention et Fiabilité & pertes (11) ; permissions, sites, mails (12.2, 12.4, 12.9) ; 73 entrées de menu |
 
 > **Tenir ce manuel à jour.** Il décrit l'état du logiciel au commit
 > indiqué. À chaque évolution fonctionnelle notable, mettez à jour la

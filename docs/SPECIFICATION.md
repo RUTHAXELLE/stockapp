@@ -1,8 +1,8 @@
 # Spécification fonctionnelle et technique — ERP EMUCI
 
 **Dépôt de référence** : GayeGuy/ERP-EMUCI-V2
-**Version du logiciel** : branche `main`, commit `2d9e32f` (24 septembre 2026)
-**Version de la spécification** : 4.3
+**Version du logiciel** : branche `main`, commit `5866232` (19 novembre 2026)
+**Version de la spécification** : 5.0
 **Objet** : décrire ce que le système est, comment il est construit, les
 règles qu'il applique et les limites qu'il porte.
 
@@ -14,16 +14,12 @@ règles qu'il applique et les limites qu'il porte.
 > nécessairement le comportement voulu. Là où le code signale lui-même une
 > valeur provisoire, la spécification le répercute.
 >
-> **Note sur cette version.** La version 3.0 avait été établie depuis
-> RUTHAXELLE/stockapp, qui avait divergé du dépôt de référence
-> GayeGuy/ERP-EMUCI-V2 depuis fin août 2026. La quasi-totalité du contenu
-> technique et des domaines Achats, Demandes internes et Inventaires restait
-> exacte — ils sont partagés à l'identique entre les deux dépôts jusqu'à la
-> séparation. Cette version 4.0 corrige le dépôt de référence, met à jour la
-> volumétrie, et documente deux domaines propres à GayeGuy absents de la
-> v3.0 : le tableau de bord KPI (§13.5) et l'outil de simulation & projection
-> de stocks (§9.6), ainsi que le suivi des observations (§8.3) et la
-> traçabilité des endommagements (§9.5).
+> **Note sur cette version.** La version 5.0 couvre les évolutions du 24
+> septembre au 19 novembre 2026 : retrait du stock à la validation du point
+> 18h et comparaison OptoPlate (§8.1, §8.2), chaîne de validation du stock
+> du jour (§9.2), commandes de site (§9.7), inventaires (§9.4), équipements
+> et articles (§9.8), envoi des notifications par mail (§13.1), habilitations
+> par fonction (§7.1, §7.5) et visa N+1 par département (§10.3).
 
 ---
 
@@ -85,12 +81,13 @@ client.
 | Hébergement | Render | Conteneur bâti depuis le `Dockerfile` du dépôt |
 | Accès données | PDO natif | Aucun ORM |
 | PDF | Dompdf 3.1 | Fiches FEB, point journalier, rapports |
-| Excel | PhpSpreadsheet 5.9 | Montée depuis 1.30.5 en septembre 2026, trois CVE de gravité haute (mémoire, SSRF) |
+| Excel | PhpSpreadsheet 5.10 | Montée depuis 1.30.5 en septembre 2026, puis 5.10.0 en novembre (quatre CVE corrigées) |
+| Mail | PHPMailer 6.9 | Envoi SMTP des notifications (§13.1) |
 | PPTX | ZipArchive natif | Open XML écrit à la main, sans dépendance |
 | Extensions PHP | pdo_pgsql, gd (freetype, jpeg) | gd requis par Dompdf |
 
-Les deux seules dépendances applicatives du `composer.json` sont
-PhpSpreadsheet et Dompdf. Elles sont auditées automatiquement à chaque envoi
+Les trois dépendances applicatives du `composer.json` sont
+PhpSpreadsheet, Dompdf et PHPMailer. Elles sont auditées automatiquement à chaque envoi
 sur `main` (voir 6.5).
 
 ### 2.2 Il n'y a pas de framework, et cela se paie
@@ -115,7 +112,7 @@ utilitaires dans `includes/db.php` (`db_query`, `db_fetch_all`,
 `db_fetch_one`, `db_fetch_value`, `db_begin`, `db_commit`, `db_rollback`…).
 
 **3. Pas de migrations versionnées.** Les évolutions de schéma sont des
-fichiers dans `sql/` (78 fichiers), appliqués manuellement. Un outil
+fichiers dans `sql/` (121 fichiers), appliqués manuellement. Un outil
 d'inventaire détecte désormais leur état réel sur une base donnée (6.3), mais
 rien ne garantit qu'un environnement les a toutes reçues, ni dans quel ordre.
 
@@ -131,7 +128,11 @@ rien ne garantit qu'un environnement les a toutes reçues, ni dans quel ordre.
 | `session.php` | Authentification, permissions, session |
 | `demandes_champs.php` | Formulaires dynamiques des demandes |
 | `auth.php` | Connexion, verrouillage, réinitialisation |
-| `inventaire.php` | Provisionnement des sessions d'inventaire |
+| `inventaire.php` | Sessions d'inventaire, date de stock, validation unique par type |
+| `validation_stock.php` | Comparaison ERP / OptoTrace du soir, évaluation d'un site pour le GSB |
+| `optoplate_comparaison.php` | Comparaison d'un point 18h avec OptoPlate, reconstitution de l'historique |
+| `reception_commande.php` | Expédition, réception ligne par ligne et écarts des commandes de site |
+| `notifications.php` | Notifications applicatives et file d'envoi par mail |
 | `periode.php` | Granularité temporelle, partagée entre la vue exécutive et le tableau de bord KPI |
 | `referentiels.php` | Capacités de conditionnement (bobines, PMMA) |
 | `upload.php` | Téléversements contrôlés |
@@ -178,7 +179,8 @@ La configuration est portée par des constantes (`APP_URL`, `APP_NAME`,
 
 ## 3. Modèle de données
 
-**114 tables.**
+**133 tables** (base locale à jour de toutes les migrations ; la base
+de production peut en compter moins selon les migrations passées).
 
 | Domaine | Tables (approx.) | Principales |
 |---|---|---|
@@ -190,7 +192,8 @@ La configuration est portée par des constantes (`APP_URL`, `APP_NAME`,
 | Parc | 7 | `equipements`, `nomenclatures`, `interventions_maintenance` |
 | Référentiel | 8 | `users`, `roles`, `permissions`, `sites`, `departements`, `agents` |
 | Pilotage | 3 | `vues_enregistrees` (vues KPI), `preferences_utilisateur`, `defauts_affichage` |
-| Autres | 19 | `articles`, `stock_site`, `stock_departement`, `notifications`, `audit_log` |
+| Commandes de site | 6 | `commandes`, `commande_lignes`, `commande_ligne_bobines`, `commande_ecarts_reception`, `commande_bl` |
+| Autres | 20 | `articles`, `stock_site`, `stock_departement`, `notifications`, `audit_log`, `fichiers_archives`, `migrations_ponctuelles` |
 
 ### 3.1 Indexation
 
@@ -223,13 +226,13 @@ C'est la source d'erreur la plus probable pour qui découvre le modèle.
 
 | Notion | Table | Portée |
 |---|---|---|
-| Stock global d'un article | `articles.stock_global` | Aucune ventilation par site |
-| Stock magasin | `stock_site`, sites de type `magasin` | Stock central, source des livraisons d'achats |
+| Stock central d'un article | `articles.stock_global` | Somme des sites de type `magasin` et `entrepot` |
+| Stock d'un dépôt ou d'un site | `stock_site` | Magasin, entrepôt, ou site terrain après réception |
 | Stock d'un département | `stock_departement` | Ce qu'un service détient après réception |
 
-Une réception d'achat **débite le magasin et crédite le département**. Le
-stock global des articles n'est pas ventilé : c'est pourquoi un filtre par
-site ne change pas le compte des alertes de stock.
+Une réception d'achat **débite le magasin et crédite le département**. Une
+distribution sort d'abord du magasin, puis de l'entrepôt ; une commande de
+site débite le dépôt choisi ligne par ligne à l'expédition (§9.7).
 
 L'outil de simulation (§9.6) introduit une **quatrième notion, hors base** :
 le stock **projeté**, un calcul en mémoire qui ne modifie jamais aucune des
@@ -689,7 +692,7 @@ qu'en la relisant.
 
 ### 7.1 Le modèle
 
-**Seize rôles**, **cinquante-sept identifiants de module**, **cinq droits**
+**Seize rôles**, **cinquante-huit identifiants de module**, **cinq droits**
 par module : `can_read`, `can_create`, `can_update`, `can_delete`,
 `can_export`.
 
@@ -697,7 +700,7 @@ La table `permissions` porte une ligne par couple (rôle, module).
 
 | Catégorie | Nombre | Résolution |
 |---|---|---|
-| Exposés dans la matrice Admin → Permissions | 56 | Table `permissions`, administrables depuis l'interface |
+| Exposés dans la matrice Admin → Permissions | 57 | Table `permissions`, administrables depuis l'interface |
 | Hors table par conception | 1 | `inventaire_sessions`, par délégation nominative (7.3) |
 
 **Aucun module contrôlé dans le code n'est absent de la matrice.** Ce n'était
@@ -710,6 +713,34 @@ depuis l'interface comme tous les autres.
 
 L'inverse n'existe pas : aucun module affiché dans la matrice n'est inutilisé
 dans le code.
+
+#### Modules « fonction »
+
+Six modules de la matrice ne protègent pas un écran mais une **fonction**,
+lue par `droit_fonction($module)` (droit `can_update`) et
+`users_fonction($module)` (qui la détient, pour les notifications) :
+
+| Module | Fonction |
+|---|---|
+| `achats_acheteur` | File d'attente et traitement des FEB |
+| `achats_magasin` | Préparation et expédition des commandes, écarts et litiges de réception, réceptions magasin |
+| `inventaire_{bobines,rivets,pmma,equipements}_valider` | Valider, annuler un inventaire, demander une modification au site |
+
+Tant qu'un module fonction n'a aucune ligne en base, `droit_fonction()`
+retombe sur une liste de rôles par défaut (`FONCTIONS_ROLES_REPLI`), qui
+reprend l'ancien comportement codé en dur.
+
+**Le droit `can_export`** est contrôlé par `require_export($module)` sur
+les exports PMMA, stock bobines, rapports GSB, inventaires, rivets,
+équipements, résumé superviseur et sites ; les boutons sont masqués sans
+ce droit. **Les pièces jointes** servies par `pages/fichier.php` exigent le
+droit de lecture de l'écran du type de pièce. Le rôle `admin` n'est pas
+modifiable depuis l'écran, et chaque enregistrement journalise le
+différentiel avant / après.
+
+**Rôle hors carte des menus.** Un rôle créé depuis l'écran Permissions,
+absent de `groupes_config.php`, reçoit les groupes de menus déduits des
+droits accordés (hors Administration et Inventaire).
 
 #### Le piège de la liste recopiée
 
@@ -748,7 +779,7 @@ piège de diagnostic — c'est la page qui dit la vérité, pas l'accueil.
 
 **Conséquence de sécurité** : livrer un écran sans livrer sa ligne de
 permission le rend invisible à tous sauf `admin` et `superadmin`, et aucune
-erreur ne le signale. C'est arrivé sur six écrans en septembre 2026 (9.4).
+erreur ne le signale. C'est arrivé sur six écrans d'inventaire en septembre 2026, corrigé depuis.
 
 ### 7.3 Trois accès qui ne passent pas par la table
 
@@ -796,11 +827,12 @@ sous-rôles actifs portés par `support_it_roles`, résolus à chaque requête p
 | `controleur_production` | `import_emuci`, `point_emuci`, `equipements`, `sites` |
 | `gestionnaire_bobines` | `bobines`, `inventaire_bobines`, `equipements`, `sites` |
 
-**Une exception, et elle est nécessaire.** Le module `demandes` est transverse
-— il concerne tous les employés, quel que soit leur métier. S'il était filtré
-par sous-rôle IT, aucun compte `support_it` n'y accéderait jamais, quoi que
-porte la table `permissions`. Il est donc évalué directement sur
-`permissions`, sans passer par la grille ci-dessus.
+**Les sous-rôles ne filtrent que ces modules techniques.** Tout autre
+module (demandes, rapport journalier, achats, vue exécutive…) est évalué
+directement sur `permissions`, comme pour les autres rôles. Auparavant, tout
+ce qui sortait de la grille était refusé : cocher une case pour Support IT
+n'avait aucun effet. Les droits jamais exercés ont été remis à zéro par
+`migration_permissions_revue.sql` pour ne rien ouvrir d'imprévu.
 
 > **Le risque de bascule.** Un compte migré vers `support_it` sans qu'un
 > sous-rôle soit activé dans le même mouvement perd tout accès, sans message
@@ -822,8 +854,29 @@ personne absente.
 ### 8.1 Le point journalier
 
 Entité centrale : `op_points_journaliers`. Un relevé porte un site, une date,
-un type, et les quantités produites — véhicules par catégorie, plaques,
-rivets utilisés et endommagés, heures de travail.
+un type (`point_9h`, `point_13h`, `point_18h`, plus `historique` pour les
+points reconstitués depuis OptoPlate), et les quantités produites :
+véhicules par catégorie, plaques, rivets posés et endommagés **par type**
+(`rivets_gonflables_end`, `rivets_eclates_end`), heures de travail. Les
+films sont déclarés par bobine dans `op_films_utilises` (utilisés,
+endommagés, `non_conformes`), les PMMA par type dans `op_pmma_utilises`
+(idem).
+
+**Sites en Re-Immatriculation** (`sites.operation = 'reimmat_post'`) : deux
+jeux de compteurs supplémentaires, Duplicatas et Post-Immat, stockés à part
+(`total_engins` ne les inclut jamais). Pour un duplicata de VP ou de camion,
+les plaques réellement posées sont saisies (1 ou 2 par véhicule). Le V/H se
+calcule sur le total des engins posés des trois sections.
+
+**Journée sans production** : un point 18h peut être déclaré à zéro avec un
+motif (liste fermée, commentaire obligatoire pour « Autre »), sans mouvement
+de stock ; il est dispensé de la règle ci-dessous et les moyennes V/H
+l'ignorent.
+
+**Règle de soumission** : un point ne peut être soumis (18h) ni validé
+s'il ne contient pas des films utilisés, des rivets posés **et** des PMMA
+utilisés. Le brouillon reste possible, avec un badge listant ce qui manque.
+Une même bobine ne peut figurer deux fois dans un point.
 
 #### Cycle de vie
 
@@ -831,25 +884,50 @@ rivets utilisés et endommagés, heures de travail.
 stateDiagram-v2
     direction LR
     [*] --> brouillon : saisie par le coordinateur
-    brouillon --> en_attente_validation : soumission
-    en_attente_validation --> valide : validation superviseur
-    en_attente_validation --> rejete : rejet, motif obligatoire
-    rejete --> brouillon : reprise par le coordinateur
-    valide --> valide : correction acceptée
-    valide --> [*]
+    brouillon --> en_attente_validation : soumission (18h)
+    brouillon --> valide : validation coordinateur (9h, 13h)
+    en_attente_validation --> valide : validation superviseur après comparaison OptoPlate
+    en_attente_validation --> rejete : demande de modification, motif obligatoire
+    valide --> rejete : demande de modification
+    rejete --> brouillon : correction par le coordinateur
+    brouillon --> [*] : suppression du brouillon
 ```
 
-| Statut | Qui agit | Effet |
-|---|---|---|
-| `brouillon` | Coordinateur | Saisi, non transmis. **N'entre dans aucun agrégat.** |
-| `en_attente_validation` | — | Transmis, attend le superviseur |
-| `valide` | Superviseur | Compte dans tous les indicateurs |
-| `rejete` | Superviseur | Refusé avec motif ; le coordinateur reprend |
+| Statut | Libellé | Qui agit | Effet |
+|---|---|---|---|
+| `brouillon` | Brouillon | Coordinateur | Visible de son seul auteur. **N'entre dans aucun agrégat.** |
+| `en_attente_validation` | Soumis | — | Attend le superviseur |
+| `valide` | Validé | Superviseur (18h) ou coordinateur (9h, 13h) | Le 18h validé compte dans les agrégats de production |
+| `rejete` | Modif. demandée | Superviseur | Renvoyé avec motif (`motif_rejet`) ; le coordinateur le corrige |
 
-> **Trois statuts, pas deux.** La distinction `brouillon` /
-> `en_attente_validation` est structurante : un brouillon n'est visible que de
-> son auteur, un point en attente est dans la file du superviseur. Les
-> confondre fait chercher des points là où ils ne sont pas.
+#### Retrait du stock à la validation du 18h
+
+**Les films, rivets et PMMA ne sortent du stock qu'à la validation du point
+18h par le superviseur** (`_pj_deduire_stock()`). Brouillon, point soumis,
+modification demandée, points 9h et 13h : aucun mouvement. La validation
+vérifie d'abord tout (bobines, rivets par type, PMMA par type), puis retire ;
+si un élément manque, elle est refusée avec le détail et rien n'est modifié.
+
+`op_points_journaliers.stock_deduit` trace l'état :
+
+| Valeur | Sens |
+|---|---|
+| `0` | Rien n'a été retiré |
+| `1` | Retiré à la validation 18h ; remis en stock si le point est renvoyé en modification |
+| `2` | Point antérieur à la règle, retrait acquis : jamais remis en stock, jamais retiré une seconde fois |
+
+Les films **non conformes** ne sortent pas du stock de la bobine ; les PMMA
+non conformes, si. Une fois un inventaire validé, les points datés du jour
+de l'inventaire ou d'avant ne touchent plus au stock (garde-fou §9.4).
+
+#### Endommagements
+
+Toute quantité endommagée se justifie unité par unité dans
+`op_endommagements` (colonnes `objet` film / rivet / PMMA, `sous_type`,
+`etape`, `cause` en texte libre, `numero_consommable` obligatoire pour un
+film, `film_no`). Étapes d'un film : vérification, lamination, percée,
+fissurée (l'ancienne étape « pose » reste lisible) ; PMMA : lamination,
+percée. Les déclarations sont rechargées à la réouverture du point.
 
 #### Correction d'un point validé
 
@@ -879,14 +957,46 @@ même date passe au statut `reajuste`. Les deux domaines sont liés, parce
 qu'un chiffre de production corrigé invalide le rapprochement de stock qui en
 découlait.
 
-### 8.2 Rapprochement EMUCI
+### 8.2 OptoPlate et comparaison avant validation
 
-**Import** (`import_optoplate`, `import_optotrace`, `import_sessions_emuci`) :
-chargement du fichier de la plateforme nationale, donnant le nombre de
-plaques par site et par `statut_plaque` (`in_use`, `declared_broken`, …).
+**Imports** (`pages/import_emuci.php`) :
 
-Le fichier est refusé si des colonnes attendues manquent, avec la liste des
-colonnes absentes.
+- **OptoTrace** (`import_optotrace`) : quantité EMUCI de chaque bobine. Pour
+  une bobine déjà connue de l'ERP, l'import ne met à jour que
+  `stock_systeme` et le format : ni le statut ni le site.
+- **OptoPlate** (`import_optoplate`) : plaques posées et désactivations
+  (duplicata, modification POST, incident) dans un seul fichier, upsert par
+  N° consommable. `date_impression` est figée au premier import qui voit la
+  plaque. Lecture tolérante (UTF-8, Windows-1252, UTF-16 ; séparateur
+  détecté ; noms de colonnes normalisés). L'import vérifie l'index unique
+  avant de commencer (`correctif_optoplate_doublons.sql` sinon).
+
+**Comparaison** (`includes/optoplate_comparaison.php`) : `op_calc_jour_site()`
+reconstitue ce qu'OptoPlate a enregistré pour un site et un jour ;
+`op_comparer_point()` le compare au point 18h, tolérance zéro, sur :
+
+- Primo par catégorie (VP, camion, semi, moto — tricycles, quadricycles et
+  scooters classés en moto) ;
+- Duplicatas et Post-Immat (pose d'un véhicule déjà désactivé à une date
+  antérieure, désactivations cherchées tous sites) et leurs plaques ;
+- endommagés par motif ;
+- films par bobine : une plaque compte en film le jour de l'impression
+  (posée ou réservée), en engin le jour de la pose. Les films déjà décomptés
+  à l'entrée d'une bobine dans l'ERP (`op_films_deja_decomptes()`) sont
+  retirés du côté OptoPlate.
+
+Le superviseur voit la comparaison avant de valider. En cas d'écart, il
+valide avec une **justification obligatoire** (contrôlée côté serveur), ou
+demande une modification. La justification et l'instantané de l'écart sont
+conservés (`justification_superviseur`, `ecart_optoplate`) et repris dans
+le détail et le PDF.
+
+**Historique et sites sans saisie.** `includes/historique_optoplate.php`
+reconstitue des points `historique` par site et par jour depuis les
+plaques importées (encadré « Alimenter le dashboard », simulation préalable,
+aucun stock touché, jour déjà saisi jamais modifié). Un site réglé sur
+`sites.point_auto_depuis` voit son point recalculé ainsi à chaque import,
+jusqu'à son premier point saisi.
 
 **Point EMUCI** : compare le déclaré et le remonté, et expose les écarts.
 Les sites présents dans le fichier mais inconnus de l'ERP sont isolés dans
@@ -938,125 +1048,188 @@ affichés.
 
 | Statut | Signification |
 |---|---|
-| `en_stock` | Reçue, non ouverte |
-| `en_cours` | Ouverte, en consommation |
-| `epuisee` | Films consommés |
+| `en_stock` | Sur un site, non ouverte |
+| `en_cours` | Ouverte après une demande d'utilisation approuvée |
+| `epuisee` | Films consommés ; repasse `en_cours` si une quantité positive lui est rendue |
 | `retiree` | Sortie du circuit |
+| `absente` | Non trouvée à l'inventaire ; rangée à l'entrepôt principal, hors stock disponible |
+| `perdue` | Perte déclarée (GSB, écart de réception) ; mouvement `perte` |
 
-Une bobine porte `films_total`, `films_utilises`, `films_endommages`,
-`films_restants`.
+Une bobine porte `qte_initiale`, `stock_systeme` (quantité EMUCI, écrite par
+l'import OptoTrace), `films_restants` (stock déclaré ERP), `films_utilises`,
+`films_endommages`.
 
-> **Seules les bobines `en_cours` comptent** dans les films restants affichés
-> par les tableaux de bord.
+- **Arrivée sur un site toujours `en_stock`** : réception d'une commande,
+  transfert GSB, affectation. Le passage `en_cours` passe par une demande
+  d'utilisation.
+- **Le statut et le site relèvent de l'ERP.** L'import OptoTrace ne les
+  modifie plus pour une bobine existante ; seule une bobine créée par
+  l'import reçoit un statut calculé.
+- **Correction de la quantité initiale** (`can_update`, hors coordinateur) :
+  seule `qte_initiale` change ; le stock restant et le statut restent ;
+  mouvement `correction_qte_initiale` de quantité 0.
+- La **série** est lue au catalogue (`serie_de_type_bobine()`) : A à D pour
+  les plaques, TL et WSL pour les vignettes.
 
-### 9.2 Validation du stock du matin
+### 9.2 Validation du stock du jour
 
-Déclaration quotidienne par site (`validations_stock_matin`). Trois issues :
-`valide`, `valide_avec_ecarts`, `valide_auto`. Le nombre d'écarts est stocké
-(`nb_ecarts`) avec leur détail.
+Chaîne : **point 18h validé par le superviseur → import OptoTrace de la
+date → comparaison**. `includes/validation_stock.php` porte la règle unique :
 
-### 9.3 Rivets
+- `vsm_calculer()` reconstitue le stock ERP du soir de la date et le compare
+  à l'import OptoTrace **de cette date**, bobine par bobine ;
+- `vs_evaluer_site_gsb()` est appelée par la validation du point 18h **et**
+  par l'import : l'ordre des deux n'a pas d'importance. Sans écart, le site
+  est validé automatiquement (`valide_auto`) ; avec écart, le GSB est
+  notifié ;
+- un site n'est réexaminé que par un import plus récent que sa validation,
+  et jamais une décision du GSB n'est écrasée par la validation automatique.
 
-`op_stock_rivets`, par site et par type. **Seuil d'alerte : 200 unités.** En
-dessous, le site remonte dans les alertes.
+| Statut (`validations_stock_matin.statut`) | Libellé | Origine |
+|---|---|---|
+| `valide_auto` / `valide_gsb` | Conforme | Aucun écart |
+| `autorise_ecart` | Avec écart | Le GSB accepte l'écart |
+| `reajuste` | Réajusté | Le GSB aligne `films_restants` sur EMUCI ; le coordinateur répond avec ses corrections (`corrections_bobines`) |
+| `refuse` | Bloqué | Le GSB bloque le site |
+
+Pour chaque bobine en écart, le détail chiffre les causes repérées :
+plaques imprimées ce jour mais posées plus tard, posées ce jour mais
+imprimées avant, export pris après la journée, films retirés par des points
+postérieurs, non conformes, même écart déjà constaté sans réajustement.
+Les décisions du GSB exigent le point 18h validé et l'import, relisent les
+valeurs côté serveur, et écrivent le statut de la bobine selon la quantité.
+L'instantané des bobines est conservé (`bobines_snapshot`).
+
+### 9.3 Rivets et PMMA
+
+`op_stock_rivets`, par site et **par type** (`gonflable`, `eclate`). Le type
+est obligatoire à l'approvisionnement et à l'ajustement. **Seuil d'alerte :
+200 unités.**
+
+`stock_pmma_site`, par site et par type, compté en **unités** ; l'équivalent
+en cartons (`op_types_pmma.unites_par_carton`) est affiché et sert à la
+conversion des lignes de commande en CARTON et de l'import.
+
+- Le `gestionnaire_stock` n'approvisionne que les sites `entrepot` et
+  `magasin` (contrôle serveur).
+- Le coordinateur n'a ni entrée, ni sortie, ni import PMMA : son stock
+  arrive par les commandes et sort par le point 18h validé.
+- Les imports (rivets, PMMA) **remplacent** le stock du site et du type.
 
 ### 9.4 Inventaires
 
 Quatre natures de stock sont inventoriées — bobines, rivets, PMMA,
-équipements — sur le même modèle en trois tables : l'inventaire
-(`inventaires_*`), son détail ligne à ligne (`inventaire_details_*`), et les
-écarts constatés (`ecarts_*`). Une quatrième table par nature
-(`inventaire_corrections_*`) porte les demandes de correction.
+équipements — sur le même modèle : l'inventaire (`inventaires_*`), son
+détail ligne à ligne (`inventaire_details_*`), les écarts (`ecarts_*`) et
+les demandes de correction (`inventaire_corrections_*`). La logique commune
+vit dans `includes/inventaire.php`.
 
 #### La session, et ce qu'elle déclenche
 
-La session (`inventaire_sessions`) est l'objet d'administration : elle porte
-une périodicité, une date de début, et la liste des sites concernés
-(`inventaire_session_sites`). Elle passe de `ouverte` à `cloturee`.
+La session (`inventaire_sessions`) porte une périodicité (mensuel,
+trimestriel, semestriel, annuel), une date de début, et les sites concernés
+(`inventaire_session_sites`). **La date de fin est déduite** de la
+périodicité ; le libellé aussi, à défaut d'être saisi.
 
-| Périodicité | Durée |
-|---|---|
-| `mensuel` | 1 mois |
-| `trimestriel` | 3 mois |
-| `semestriel` | 6 mois |
-| `annuel` | 12 mois |
+L'ouverture provisionne, pour chaque site, l'inventaire de chaque nature qui
+a quelque chose à compter (`inv_rien_a_compter()`), avec ses lignes de
+détail. Un site est clôturé quand chaque nature est validée, **sans objet**
+ou **annulée**. Un inventaire manquant se crée tant que la session est
+ouverte (`CURRENT_DATE >= date_debut`), même après la période.
 
-**La date de fin n'est jamais saisie** : elle est déduite de la périodicité
-(`inv_date_fin()` — début + N mois − 1 jour). Le libellé l'est aussi quand
-l'administrateur n'en fournit pas : « Inventaire mensuel — mars 2026 »,
-« Inventaire trimestriel — T2 2026 ».
+#### Date de stock et moment du comptage
 
-> **L'ouverture d'une session provisionne les inventaires.** Pour chaque site
-> rattaché, l'application crée l'inventaire de chaque nature et **génère
-> toutes ses lignes de détail** à partir du stock du moment. L'inventaire naît
-> donc rempli du théorique, prêt à recevoir le physique.
+Un inventaire de session est **daté du jour de la première saisie**
+(`inv_dater_comptage()`), pas de l'ouverture. `comptage_matin` (NULL tant
+que non choisi) fixe la règle de fin de journée :
+
+| Moment | Le chiffre compté est… | Date de stock (`inv_date_stock()`) |
+|---|---|---|
+| Soir (`comptage_matin = 0`) | le stock de fin de journée du jour | J |
+| Matin (`comptage_matin = 1`) | le stock de fin de journée de la veille | J − 1 |
+
+Le moment est **demandé avant la première saisie** (`inv_moment_a_choisir()`
+refuse toute saisie tant qu'il est NULL, avec une proposition selon
+l'heure) et reste modifiable (`inv_changer_moment()`). Chaque ligne porte
+`saisi_at` : sa date de stock est celle de son propre jour
+(`inv_date_stock_ligne()`), ce qui permet un comptage sur plusieurs jours.
+
+#### Validation
+
+Une seule fonction par nature, appelée par la fiche **et** par la liste :
+`inv_valider_bobines()`, `inv_valider_agrege('rivets'|'pmma')`,
+`inv_valider_equipements()`. Elles exigent :
+
+- le droit fonction `inventaire_*_valider` (§7.1) ;
+- toutes les lignes comptées (0 ou « absente » compris) ;
+- le **point 18h validé** de chaque jour de comptage ;
+- aucun inventaire validé plus récent sur le site ;
+- pour les équipements, aucune déclaration « trouvé hors système » en
+  attente.
+
+La consommation des points validés après la date de stock de chaque ligne
+est déduite du chiffre compté. **Rivets et PMMA** : `stock_reference` est
+notée à la saisie, et la validation applique l'écart au stock **actuel** —
+une entrée reçue entre saisie et validation est conservée. **Bobines** : le
+chiffre compté devient `films_restants` ; `stock_systeme` n'est pas écrasé.
+L'inventaire validé prend la date du dernier jour de comptage.
+
+**Garde-fou** : une fois l'inventaire validé, les points datés du jour de
+l'inventaire ou d'avant ne touchent plus au stock, ni le réajustement de la
+validation du stock du jour.
+
+#### Verrous et demandes de modification
+
+Une ligne saisie est verrouillée côté serveur. Elle se rouvre par une
+demande : du coordinateur vers les profils qui valident, ou de ces profils
+vers le site (`inv_peut_demander_site()`). Seul le site ou un administrateur
+corrige une ligne rouverte, et la saisie clôt la demande. Le coordinateur ne
+reçoit jamais la quantité de référence ni l'écart.
 
 #### Ce qui distingue les quatre natures
 
-| Nature | Unité de comptage | Source du théorique | Particularité |
-|---|---|---|---|
-| Bobines | La bobine, objet individuel | `op_bobines.stock_systeme` | Seule nature à calculer aussi la consommation quotidienne moyenne sur 30 jours et l'écart entre saisie terrain et données EMUCI du jour |
-| Rivets | Le **type** de rivet, quantité agrégée par site | `op_stock_rivets` | Le détail est clé sur `type_rivet`, pas sur un identifiant d'objet |
-| PMMA | Le **type** de PMMA, quantité agrégée | `stock_pmma_site` | Le type est un texte libre : la liste dépend de ce qui existe en stock |
-| Équipements | L'équipement, objet individuel | `equipements` actifs du site | **Pas de quantité** — c'est une checklist de présence : trouvé / manquant |
-
-L'inventaire des équipements est le seul à ne figer aucun stock système : un
-équipement est présent ou absent, il n'a pas de quantité à comparer.
+| Nature | Unité de comptage | Particularité |
+|---|---|---|
+| Bobines | La bobine | `absente` à la validation → entrepôt principal ; bobine retrouvée ajoutée en cours d'inventaire ; épuisées encore vues par OptoTrace comptées ; même bobine sur deux sites d'une campagne signalée au GSB |
+| Rivets | Le type, par site | Référence notée à la saisie |
+| PMMA | Le type, par site | Référence notée à la saisie |
+| Équipements | L'équipement | Présence trouvé / manquant ; équipements « trouvés hors système » (`inventaire_equipements_trouves`) : créés, transférés ou refusés par le gestionnaire de stock |
 
 #### L'écart déjà connu ne se recompte pas
 
 Chaque ligne de détail porte `ecart_connu_avant` : la somme des écarts
-**déjà ouverts** sur cet objet au moment où l'inventaire est créé.
-
-C'est ce qui évite de compter deux fois le même manquant — une fois au
-constat initial, une fois à l'inventaire suivant tant que le traitement n'est
-pas terminé. Le compteur lit les écarts au statut `ouvert` uniquement.
-
-#### Les refus, et pourquoi ils sont explicites
-
-Deux cas refusent la création plutôt que de produire un inventaire vide ou
-doublon :
-
-- un inventaire de même nature existe déjà pour ce site, cette date et cette
-  périodicité, sans être annulé ;
-- le site n'a rien à compter — aucune bobine active, aucun stock de rivets ou
-  de PMMA, aucun équipement affecté.
-
-Le second cas mérite le message explicite qu'il reçoit : un inventaire vide
-serait indiscernable d'un inventaire non saisi.
+**déjà ouverts** sur cet objet à la création de l'inventaire.
 
 #### Cycles de vie
 
 | Objet | États |
 |---|---|
-| Session | `ouverte` → `cloturee` (ou `annule`) |
-| Inventaire | `brouillon` → `valide` (ou `annule`) |
-| Écart | `ouvert` → `resolu` |
+| Session | `ouverte` → `cloturee` |
+| Inventaire | `brouillon` (en cours) → `valide`, ou `annule` (motif obligatoire, aucun stock touché) |
+| Écart | `ouvert` → `resolu` ; équipement : `perdu` |
 | Demande de correction | `en_attente` → `autorise` ou `refuse` → `traite` |
 
-**La création d'un inventaire journalier par un coordinateur de site n'est
-plus possible** : elle dépend désormais de la session ouverte par
-l'administration.
+**Équipement perdu** : `inv_declarer_equipement_perdu()` ferme l'écart,
+passe l'équipement `statut_stock = 'perdu'`, `actif = 0`, sans site ni
+utilisateur, et écrit un mouvement `sortie`.
 
-#### Les six écrans ont failli être invisibles
-
-Les écrans Inventaire et Écarts pour les équipements, le PMMA et les rivets
-ont été livrés et déployés **sans les lignes de permission correspondantes**.
-Conséquence de la règle 7.1 — module absent vaut refus — ils étaient
-invisibles pour tous les rôles sauf `admin` et `superadmin`, sans qu'aucune
-erreur ne le signale. Corrigé en septembre 2026.
+**Export** (`inventaire_export.php`) : Excel (synthèse puis détail par
+type) et PDF, filtres période, types, statut, site et session ; la
+référence vaut compté − écart. Refusé au coordinateur.
 
 ### 9.5 Traçabilité des endommagements
 
-Un film endommagé se déclare **film par film**, avec sa cause, depuis le
-pop-up dédié du point journalier, et se stocke dans `op_endommagements` — une
-ligne par film, et non un compteur agrégé : six films abîmés sur une même
+Un film, un rivet ou un PMMA endommagé se déclare **unité par unité**, avec
+sa cause, depuis le pop-up dédié du point journalier, et se stocke dans
+`op_endommagements` (§8.1) — une ligne par unité, et non un compteur agrégé : six films abîmés sur une même
 bobine peuvent l'avoir été à six moments et pour six causes distinctes, ce
 que seule une ligne par film restitue.
 
 L'écran `tracabilite_endommagements.php` ne fait **que lire** cette table :
 la saisie reste exclusivement dans le point journalier, pour garder un seul
-chemin d'écriture. Le coordinateur de site n'y voit que son propre site ;
+chemin d'écriture. La période porte sur la date du point ; les points
+renvoyés en modification sont exclus, et les déclarations d'un brouillon ne
+sont visibles que de son auteur. Le coordinateur de site n'y voit que son propre site ;
 l'écran propose des filtres et un export sur le même périmètre.
 
 ### 9.6 Simulation & projection de stocks
@@ -1124,6 +1297,102 @@ encore la seule saisie manuelle.
 Tous les paramètres de simulation sont portés par les paramètres de l'URL :
 la page est intégralement rejouable et partageable par lien, sans aucun état
 à enregistrer côté serveur.
+
+### 9.7 Commandes de site
+
+`pages/commandes.php` porte le circuit unique d'approvisionnement d'un site ;
+les règles de stock de l'expédition et de la réception vivent dans
+`includes/reception_commande.php` (`rcp_stock`, `rcp_mouvement`,
+`rcp_statut_ligne`…). L'ancien écran Commande bobines ne crée plus de
+demande.
+
+| Statut (`commandes.statut`) | Libellé | Étape |
+|---|---|---|
+| `en_attente` | À valider | Créée par le coordinateur (une seule en attente par site, vérifiée sous verrou) |
+| `modification_demandee` | À corriger | Lignes renvoyées ; seul le coordinateur du site corrige |
+| `en_attente_livraison` | À préparer | Validée ; choix des bobines par le GSB, puis expédition |
+| `en_cours_livraison` | En livraison | Expédiée ; dépôts débités |
+| `recu` | Reçu | Réceptionnée par le site |
+| `rejete`, `annule` | Rejeté, Annulé | Annulation avec motif, selon le statut et l'acteur |
+
+**Lignes.** Types : article, PMMA, rivets, bobine, vignette, équipement
+informatique, équipement opérationnel ; unités UNITÉ, CARTON, BOBINE, BOÎTE.
+Le superviseur décide **ligne par ligne** (`valide`, `rejete`,
+`modification_demandee`) ; une décision est exigée pour chaque ligne.
+
+**Bobines et vignettes** (`commande_ligne_bobines`). Le GSB choisit les
+rouleaux en stock à l'entrepôt : la somme de leurs quantités système doit
+égaler la quantité demandée (BOBINE = N × contenance du type, UNITÉ = films ;
+une bobine à 497-499 compte pour 500). Les rouleaux restent à l'entrepôt,
+réservés, jusqu'à la réception ; leurs films sont figés à l'expédition
+(`films_expedies`). Le gestionnaire peut renvoyer des lignes au GSB tant que
+la commande n'est pas expédiée.
+
+**Expédition.** Chaque ligne article, PMMA ou rivets a son dépôt de sortie
+(`commande_lignes.depot_source_id`, entrepôt ou magasin), débité à
+l'expédition, bloquant si insuffisant ; une ligne PMMA en CARTON est
+convertie en unités. Quantité livrée bornée entre 0 et la quantité
+commandée ; une ligne rejetée est forcée à 0. Le passage « En livraison »
+se fait d'abord, sous condition du statut : une double soumission ne
+débite pas deux fois. Le bon de livraison s'imprime dès l'expédition (pas
+pour le coordinateur).
+
+**Réception ligne par ligne.** Le coordinateur du site destinataire déclare
+chaque ligne (tout, partiel avec quantité, rien) et coche les rouleaux
+arrivés ; motif obligatoire pour un manque ; BL signé obligatoire, archivé en
+base (`commande_bl`). Le site n'est crédité que du reçu ; les bobines lui
+passent `en_stock`. Chaque manque ouvre un écart
+(`commande_ecarts_reception`), traité par la fonction Magasin (le GSB pour
+les rouleaux) : remise au dépôt d'origine, renvoi (nouvelle commande « À
+préparer ») ou perte — perte en transport imputée au dépôt d'origine (écart
+rivets / PMMA source `reception`, mouvement `perte`).
+
+**Statut de ligne** (`rcp_statut_ligne()`, même calcul pour l'écran et le
+PDF) : Validé, En livraison, Non livré, Livré partiellement, Livré, Non reçu,
+Reçu partiel. La consommation hebdomadaire et l'historique des commandes
+reposent sur la quantité **reçue**.
+
+**Visibilité.** Le coordinateur ne voit que les commandes de son site, sans
+prix ni stock central. La liste est triée selon ce que chaque rôle doit
+traiter.
+
+### 9.8 Équipements et articles
+
+**Équipements** (`equipements`). Champs ajoutés : `emplacement`, `agent_id`
+(utilisateur, annuaire des agents), `numero_serie_origine` (N° série
+fabricant ; `numero_serie` est le N° interne généré). `nomenclature_id` est
+obligatoire.
+
+| `statut_stock` | Sens |
+|---|---|
+| `en_stock` | Disponible |
+| `affecte`, `en_utilisation` | Mis en service (date, agent) |
+| `hs` | Déclaré hors service, motif |
+| `epuise` | Consommable arrivé au bout ; `actif = 0`, fiche conservée |
+| `perdu` | Déclaré perdu depuis un écart d'inventaire ; `actif = 0` |
+| `en_transit`, `en_attente_affectation`, `affectation_en_cours` | Transfert ou affectation (circuit Achats) en cours |
+
+Chaque changement est tracé dans `mouvements_equipements` et l'audit. Une
+modification ne change pas un statut de circuit (transfert, affectation) et
+trace le changement de site ; la suppression (`actif = 0`) est refusée
+pendant une affectation ou une intervention non résolue. Le retour en stock
+remet `en_stock`, sans utilisateur. L'import refuse un N° série externe déjà
+connu.
+
+**Articles.** Le stock central (`articles.stock_global`) suit les sites
+`magasin` et `entrepot` ; la distribution débite le magasin puis l'entrepôt ;
+l'ajustement d'un site terrain ne touche pas le stock central. Le
+coordinateur enregistre une **sortie** sur le stock de son site
+(consommation, perte, casse, autre), tracée dans `mouvements_stock`. Les
+articles des familles « Matériel et outillage industriel » et
+« Consommables informatiques » (`includes/articles_equipements.php`)
+deviennent, à la réception ou à la distribution, une fiche d'équipement par
+unité (`articles.nomenclature_id`).
+
+**Rafraîchissement.** Les zones `data-live` (commandes, réceptions,
+équipements, bobines, interventions) sont relues toutes les 30 s, à
+l'arrivée d'une notification et au retour sur l'onglet, sauf pendant une
+saisie. Les listes `data-paginer` sont découpées par 25 côté navigateur.
 
 ---
 
@@ -1215,14 +1484,29 @@ Implémentée dans `di_user_roles()` et `di_can_validate()`.
 | `directeur_general`, `lecteur` | `dg` |
 | `admin`, `superadmin` | toutes |
 
-**Trois règles complémentaires :**
+**Règles complémentaires :**
 
-1. **`n1` n'est pas un rôle** : c'est le responsable du département du
-   demandeur, résolu dynamiquement.
+1. **`n1` n'est pas un rôle** : ce sont les N+1 (`user_departements.is_n1`)
+   du département retenu, figé sur la demande (`di_demandes.n1_departement_id`)
+   à la soumission. Le département est celui du **bénéficiaire** : compte
+   ERP de l'agent (même e-mail), sinon annuaire des agents, sinon champ
+   « Département » du formulaire ; à défaut, celui du demandeur (signalé
+   dans l'historique). **Tous** les N+1 actifs du département voient la
+   demande, sont notifiés et peuvent la viser (`di_peut_viser()`).
+   Validation d'office seulement si le demandeur est N+1 de ce département.
+   Département sans N+1 : administrateurs et demandeur prévenus, les
+   administrateurs visent. Les FEB gardent la règle à un seul N+1.
 2. **Une étape rattachée à un département** (`di_roles.departement_id`) peut
    être visée par n'importe quel membre de ce département. C'est ce qui fait
    vivre le visa « Administration », dont le rôle ERP a été supprimé.
 3. **Personne ne vise sa propre demande**, administrateurs compris.
+4. Visa et rejet sont relus sous verrou ; un rejet est refusé une fois la
+   demande approuvée. Les porteurs du rôle ERP d'une étape (RAF, DAF, PDG,
+   IT) sont notifiés à son ouverture.
+5. Un **brouillon** se reprend depuis la fiche et se soumet avec le même
+   numéro ; les champs obligatoires et le type actif sont contrôlés côté
+   serveur. Numéro : dernier du jour + 1, avec nouvelle tentative en cas de
+   collision.
 
 ### 10.4 Prérequis de dépôt
 
@@ -1465,9 +1749,16 @@ minutes et un rapport en pièce jointe.
 | Statut après intervention | Signification |
 |---|---|
 | `en_attente` | Déclarée, non traitée |
-| `en_cours` | Prise en charge |
 | `partiel` | Traitée partiellement |
+| `escalade` | Escaladée |
 | `resolu` | Terminée |
+
+Trois types : préventive (`maintenance_preventive`), curative
+(`maintenance_corrective`) et **autre** (installation de matériel,
+remplacement, diagnostic, autre — stocké dans `type_action`). Le statut
+affiché est dérivé de `statut_apres` ; toute intervention ouverte se
+termine par « Terminer ». La liste des équipements est filtrée sur le site
+choisi.
 
 ### 12.2 Parc et fin de cycle
 
@@ -1495,8 +1786,19 @@ Deux canaux distincts :
 
 - **En application** : table `notifications`, cloche avec compteur de non-lus
   dans la barre du haut.
-- **Par e-mail** : `mailer_send()`, avec configuration SMTP ou API Brevo
-  éditable depuis l'administration.
+- **Par e-mail** : toute nouvelle notification entre dans une file
+  (`notifications.mail_statut` = `attente`, `mail_tentatives`,
+  `mail_erreur`, `mail_envoye_le`). `cron_mails.php`, protégé par
+  `CRON_TOKEN`, l'envoie par SMTP (PHPMailer, variables `MAIL_*`) toutes les
+  cinq minutes — par la tâche planifiée du serveur, ou par GitHub Actions
+  quand l'hébergeur bloque le SMTP sortant (Render). Ne partent pas : une
+  notification déjà lue, sans destinataire valide, de plus de 48 h, ou dont
+  le destinataire a coupé ses mails (`users.notif_mail = 0`, réglable dans
+  Mon Profil et par l'administration ; les mails en attente sont alors
+  abandonnés). Trois essais, puis `echec`. L'écran Administration → Mails
+  suit les envois, relance et envoie un mail de test.
+- **Alertes planifiées** (`cron/check_alerts.php`) : fins de cycle
+  d'équipements et stock bas, sans doublon, regroupées au-delà de cinq.
 
 ### 13.2 Journal d'audit
 
@@ -1507,7 +1809,12 @@ exploitable.
 ### 13.3 Documents PDF
 
 Dompdf. Trois documents pour les achats — fiche seule, fiche avec circuit de
-validation, bon de commande — et l'impression du point journalier.
+validation, bon de commande — l'impression du point journalier, le bon de
+commande et le **bon de livraison** des commandes de site, l'export des
+inventaires et la vue stock bobines. Les pièces déposées (pièces jointes
+de FEB, BL, bons de transfert, fiches signées) sont archivées en base
+(`fichiers_archives`, `commande_bl`) et servies par `pages/fichier.php` et
+`pages/commandes_bl.php`, connexion et droit exigés.
 
 ### 13.4 Authentification
 
@@ -1520,6 +1827,9 @@ validation, bon de commande — et l'impression du point journalier.
   (`reset_token`, `reset_token_expiry`), qui lève la contrainte.
 - Les mots de passe sont nettoyés de leurs espaces de bord à la saisie comme
   à la connexion, un collage depuis un e-mail en traînant souvent.
+- Session de 15 minutes d'inactivité ; quand la vérification des
+  notifications ramène la page de connexion, un bandeau « Votre session a
+  expiré » propose de se reconnecter dans un nouvel onglet.
 
 ### 13.5 Tableau de bord KPI
 
@@ -1612,6 +1922,27 @@ rechargement de page — le même moteur que `pdg_overview.php`.
 
 Protégé par le module `kpi_dashboard`, `can_read`.
 
+#### Évolutions d'octobre et novembre 2026
+
+- **Production = points 18h validés.** Les chiffres de production (vue
+  PDG, dashboard KPI, accueil, consommation) ne comptent que les points
+  `point_18h` au statut `valide`, plus les points `historique`. Le suivi de
+  saisie (points en attente, taux de validation) et les prévisions de
+  stock portent sur tous les points.
+- **Panneau « Fiabilité & pertes »** : sites sans point soumis au jour de
+  référence (sites attendus = sites actifs de type Pose ou Mixte détenant
+  une bobine active), rapprochement EMUCI (plaques `in_use` contre plaques
+  déclarées, jours couverts par un import), taux de films endommagés,
+  causes et étapes. Aucun classement nominatif.
+- **Bandeau « Points d'attention »** en tête, avec un lien vers l'écran de
+  détail de chaque ligne et de chaque panneau.
+- **Duplicatas & Post-Immat** : section affichée si le périmètre compte un
+  site en Re-Immatriculation.
+- Couverture plafonnée, pourcentages entiers (« < 1 % » pour une valeur
+  non nulle), « Tous les sites » coché explicitement.
+- **Vue exécutive** : option « Depuis le début de l'activité »
+  (`annee=tout`, `periode_contexte($avec_tout)`), sans période précédente.
+
 ### 13.6 Référentiels & capacités
 
 `admin/referentiels_operations.php` administre les **capacités de
@@ -1678,6 +2009,10 @@ Protégé par le module `referentiels_operations`, `can_read`.
    production : chaque requête à syntaxe propriétaire existe en deux versions,
    et rien n'empêche mécaniquement les deux branches de diverger.
 
+7. **Migrations à usage unique.** Les migrations qui ne doivent jouer qu'une
+   fois (remise à zéro de droits) s'enregistrent dans
+   `migrations_ponctuelles` ; les autres doivent rester rejouables.
+
 > **Résolu depuis la v3.0.** Le point « quatre modules Achats hors matrice »
 > était vrai sur RUTHAXELLE/stockapp à fin août 2026 ; il ne l'est pas sur le
 > dépôt de référence GayeGuy/ERP-EMUCI-V2, où ces quatre modules sont
@@ -1711,3 +2046,4 @@ Protégé par le module `referentiels_operations`, `can_read`.
 | 4.1 | 2026-09-24 | `59e3b0d` (GayeGuy/ERP-EMUCI-V2) | Tableau de bord KPI : période de comparaison choisie par l'utilisateur — précédente, l'an dernier ou libre —, règle de durée, calcul par intervalles de dates, moyenne par jour, brouillons exclus de PMMA/rivets, sélecteur hebdomadaire en liste (13.5). **Corrigé** : deux renvois au tableau de bord KPI pointaient vers un §8.4 inexistant (13.5). |
 | 4.2 | 2026-09-24 | `ab9f7ff` (GayeGuy/ERP-EMUCI-V2) | Tableau de bord KPI : bandeau « Aujourd'hui » retiré, il doublait la comparaison et ignorait les filtres (13.5). |
 | 4.3 | 2026-09-24 | `2d9e32f` (GayeGuy/ERP-EMUCI-V2) | Consommation de films : points journaliers et saisie manuelle additionnés (9.6) ; couverture du tableau de bord KPI sur la sélection de sites, les bobines actives et le premier format épuisé (13.5). |
+| 5.0 | 2026-11-19 | `5866232` (GayeGuy/ERP-EMUCI-V2) | Remise à niveau sur 197 commits. **Réécrit** : point journalier — retrait du stock à la validation du 18h, `stock_deduit`, non conformes, endommagements par unité, Re-Immatriculation, journée sans production (8.1) ; imports et comparaison OptoPlate, historique, point automatique (8.2) ; bobines (9.1) ; validation du stock du jour (9.2) ; inventaires — date de stock, moment du comptage, validation unique, verrous, absentes, équipements trouvés et perdus, export (9.4). **Ajouté** : commandes de site (9.7), équipements et articles (9.8), modules fonction et `can_export` (7.1), sous-rôles Support IT limités aux modules techniques (7.5), N+1 du bénéficiaire et tous les N+1 du département (10.3), interventions « autre » (12.1), envoi des notifications par mail (13.1), archivage des pièces en base (13.3). 133 tables, 121 fichiers SQL, 57 modules dans la matrice. |

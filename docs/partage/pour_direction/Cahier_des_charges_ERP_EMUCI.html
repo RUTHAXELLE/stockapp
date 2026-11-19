@@ -4,11 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cahier des charges — ERP EMUCI</title>
-<meta name="description" content="Cahier des charges de l'ERP EMUCI, arrêté au commit ff9fc2c">
+<meta name="description" content="Cahier des charges de l'ERP EMUCI, arrêté au commit 5866232">
+<meta name="author" content="GAYE Emmanuel">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
 <style>
+
+
+
 
 
 
@@ -238,6 +242,30 @@ h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
   color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
   border-bottom:2px solid var(--accent)}
 figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+.contact{margin:.6rem 0 0;font-size:.85rem;color:var(--muted,#4d5876)}
+.contact b{color:inherit;font-weight:700}
+.contact a{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+.contact{margin:.6rem 0 0;font-size:.85rem;color:var(--muted,#4d5876)}
+.contact b{color:inherit;font-weight:700}
+.contact a{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+.contact{margin:.6rem 0 0;font-size:.85rem;color:var(--muted,#4d5876)}
+.contact b{color:inherit;font-weight:700}
+.contact a{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor}
 </style>
 </head>
 <body>
@@ -265,7 +293,8 @@ figure .mermaid{background:transparent}
 <p class="eyebrow">ERP EMUCI</p>
 <h1>Cahier des charges — ERP EMUCI</h1>
 <p class="lede">Ce que le système doit faire, pour qui, sous quelles contraintes, et à quoi se mesure qu&#x27;il le fait.</p>
-<div class="meta"><span class="chip"><b>Version du logiciel</b> 24 septembre 2026</span><span class="chip"><b>Version du cahier des charges</b> 2.3</span><span class="chip"><b>Objet</b> établir ce que le système doit faire, pour qui, sous quelles</span></div>
+<div class="meta"><span class="chip"><b>Version du logiciel</b> 19 novembre 2026</span><span class="chip"><b>Version du cahier des charges</b> 3.0</span><span class="chip"><b>Objet</b> établir ce que le système doit faire, pour qui, sous quelles</span></div>
+<p class="contact"><b>Auteur</b> GAYE Emmanuel · <a href="mailto:gayerodrigue@gmail.com">gayerodrigue@gmail.com</a> · <a href="tel:+2250103559652" style="white-space:nowrap">+225 01 03 55 96 52</a></p>
 </header>
 <div class="note note-info"><span class="note-t">Provenance</span><p> Ce document est établi par lecture du code source, du
 schéma de base et de la configuration des menus. Il décrit le besoin <strong>tel
@@ -376,8 +405,8 @@ de navigation (<code>includes/groupes_config.php</code>).</p>
 </tr>
 <tr>
 <td><strong>Stock</strong></td>
-<td>Parc équipements (IT et opérationnel), articles, consommables, PMMA, bobines, vignettes, rivets, commandes</td>
-<td><code>equipements</code>, <code>articles</code>, <code>consommables</code>, <code>pmma</code>, <code>commandes</code>, <code>mouvements_equipements</code></td>
+<td>Parc équipements (IT et opérationnel), articles, PMMA, bobines, vignettes, rivets, commandes de site, archives des bons de livraison</td>
+<td><code>equipements</code>, <code>articles</code>, <code>pmma</code>, <code>commandes</code>, <code>commandes_bl</code>, <code>mouvements_equipements</code></td>
 </tr>
 <tr>
 <td><strong>Bobines</strong></td>
@@ -386,8 +415,8 @@ de navigation (<code>includes/groupes_config.php</code>).</p>
 </tr>
 <tr>
 <td><strong>Inventaire</strong></td>
-<td>Inventaire périodique et écarts, sur quatre natures de stock</td>
-<td><code>inventaire_sessions</code>, <code>inventaire_{bobines,rivets,pmma,equipements}</code>, <code>ecarts_*</code></td>
+<td>Inventaire périodique, écarts et export, sur quatre natures de stock</td>
+<td><code>inventaire_sessions</code>, <code>inventaire_{bobines,rivets,pmma,equipements}</code>, <code>ecarts_*</code>, <code>inventaire_export</code></td>
 </tr>
 <tr>
 <td><strong>Opérations</strong></td>
@@ -416,14 +445,14 @@ de navigation (<code>includes/groupes_config.php</code>).</p>
 </tr>
 <tr>
 <td><strong>Administration</strong></td>
-<td>Utilisateurs, permissions, nomenclatures, audit, délégations, sites, départements, référentiels de capacités</td>
-<td><code>admin/*</code>, dont <code>admin/referentiels_operations</code></td>
+<td>Utilisateurs, permissions, nomenclatures, audit, délégations, sites, départements, référentiels de capacités, suivi des mails</td>
+<td><code>admin/*</code>, dont <code>admin/referentiels_operations</code> et <code>admin/mails</code></td>
 </tr>
 </tbody>
 </table></div>
-<p><strong>Volumétrie de référence</strong> : 81 écrans sous <code>pages/</code>, 6 points d'entrée à la
-racine, 114 tables, 16 rôles, 21 sites actifs, et 57 identifiants de module
-contrôlés dans le code — dont 56 administrables depuis l'interface
+<p><strong>Volumétrie de référence</strong> : 85 écrans sous <code>pages/</code>, 7 points d'entrée à la
+racine, 133 tables, 16 rôles, 21 sites actifs, 73 entrées de menu, et 58
+identifiants de module contrôlés dans le code — dont 57 administrables depuis l'interface
 (Admin → Permissions) et 1 (<code>inventaire_sessions</code>) résolu par délégation
 nominative sans passer par la table des permissions. <strong>Aucun module n'est
 plus contrôlé dans le code sans être administrable depuis l'interface</strong> —
@@ -542,9 +571,9 @@ des <strong>sous-rôles actifs</strong> portés par la table <code>support_it_ro
 C'est le comportement voulu, mais il rend la bascule d'un compte vers ce
 profil risquée : si le sous-rôle n'est pas posé dans le même mouvement, le
 compte perd tout accès sans message explicite.</p>
-<p><strong>EF-HAB-2</strong> — Le module <code>demandes</code> échappe à ce filtrage : il est transverse
-(« tous les employés ») et s'évalue directement sur la table <code>permissions</code>,
-quel que soit le sous-rôle actif.</p>
+<p><strong>EF-HAB-2</strong> — Les sous-rôles ne filtrent <strong>que</strong> les modules techniques
+ci-dessus. Tout autre module (demandes, rapport journalier, achats…)
+s'évalue directement sur la table <code>permissions</code>, comme pour les autres rôles.</p>
 <h3>4.3 Règles d'habilitation</h3>
 <p><strong>EF-HAB-3</strong> — Les droits sont stockés en base, par couple (rôle, module),
 avec cinq actions : <code>can_read</code>, <code>can_create</code>, <code>can_update</code>, <code>can_delete</code>,
@@ -591,6 +620,17 @@ directs sur les actions AJAX du même fichier.</p>
 sont appliquées par filtrage SQL, pas par la table de permissions.</p>
 <p><strong>EF-HAB-8</strong> — Une délégation nominative (table <code>delegations</code>) peut ouvrir un
 module à un compte précis, sans modifier le rôle.</p>
+<p><strong>EF-HAB-9</strong> — Les fonctions métier qui ne sont pas des écrans se règlent
+dans la matrice comme des modules, pour n'importe quel rôle : <strong>Acheteur</strong>,
+<strong>Magasin</strong>, et le droit <strong>Valider</strong> de chacun des quatre inventaires. Tant
+qu'une fonction n'est pas paramétrée, la liste de rôles historique
+s'applique.</p>
+<p><strong>EF-HAB-10</strong> — Le droit <code>can_export</code> commande réellement les exports :
+sans lui, le bouton n'apparaît pas et l'export est refusé.</p>
+<p><strong>EF-HAB-11</strong> — Une pièce jointe (BL, FEB, document fournisseur) ne s'ouvre
+qu'avec le droit de lecture de l'écran auquel elle appartient.</p>
+<p><strong>EF-HAB-12</strong> — Le rôle <code>admin</code> n'est pas modifiable depuis la matrice ;
+toute modification de droits est journalisée droit par droit.</p>
 <hr>
 </section>
 <section id="s5"><h2><span class="n">5</span> Exigences fonctionnelles</h2>
@@ -605,10 +645,13 @@ alerte, relance, incident, urgence, autre), pas un champ libre. L'ancien format
 texte reste lisible pour les points antérieurs. Chacune porte désormais un
 <strong>cycle de vie propre</strong>, suivi depuis l'écran dédié (§5.9).</p>
 <p><strong>EF-OP-3</strong> — Le point suit le cycle : <code>brouillon</code> → <code>en_attente_validation</code> →
-<code>valide</code>, avec <code>rejete</code> (motif obligatoire) et <code>suivi</code> comme états
-complémentaires.</p>
-<p><strong>EF-OP-4</strong> — Un point vide ne peut pas être soumis : la soumission vérifie
-qu'au moins une ligne de film est saisie.</p>
+<code>valide</code>, avec <code>rejete</code> (affiché « Modif. demandée », motif obligatoire). Les
+points 9h et 13h sont validés par le coordinateur ; le point 18h par le
+superviseur.</p>
+<p><strong>EF-OP-4</strong> — Un point ne peut être soumis ni validé sans films utilisés,
+rivets posés <strong>et</strong> PMMA utilisés, sauf journée sans production déclarée
+avec motif. Le brouillon reste possible. Une bobine ne figure qu'une fois
+dans un point.</p>
 <p><strong>EF-OP-5</strong> — La reprise d'un brouillon doit restaurer <strong>tous</strong> les champs
 saisis, y compris les lignes de bobines et de rivets.</p>
 <p><strong>EF-OP-6</strong> — La modification d'un point déjà enregistré ne doit pas déduire le
@@ -619,20 +662,52 @@ correction est tracée séparément (<code>correction_gp</code>, <code>motif_cor
 <code>corrected_by_gp</code>, <code>corrected_at</code>).</p>
 <p><strong>EF-OP-8</strong> — Le point journalier est exportable en PDF. <strong>Un brouillon n'est
 consultable que par son auteur.</strong></p>
-<p><strong>EF-OP-9</strong> — Les données EMUCI (plaques posées, réservées) sont importées par
-fichier (OptoPlate en CSV, OptoTrace en XLSX) et rapprochées de la saisie
-terrain ; les sites inconnus de l'import sont isolés pour rattachement manuel.</p>
-<p><strong>EF-OP-10</strong> — Un film endommagé se déclare <strong>film par film</strong>, avec sa cause,
-depuis le point journalier ; l'historique complet est consultable et
-exportable séparément (§5.10).</p>
+<p><strong>EF-OP-9</strong> — Les données EMUCI sont importées par fichier (OptoPlate :
+plaques posées et désactivations ; OptoTrace : quantité par bobine) et
+rapprochées de la saisie terrain ; les sites inconnus de l'import sont isolés
+pour rattachement manuel. L'import OptoTrace ne modifie ni le statut ni le
+site d'une bobine connue de l'ERP.</p>
+<p><strong>EF-OP-10</strong> — Un film, un rivet ou un PMMA endommagé se déclare <strong>unité par
+unité</strong> (étape, cause, numéro du consommable pour un film) depuis le point
+journalier ; l'historique complet est consultable et exportable séparément
+(§5.10).</p>
+<p><strong>EF-OP-11</strong> — <strong>Le stock ne bouge qu'à la validation du point 18h par le
+superviseur</strong> : films (utilisés + endommagés), rivets par type, PMMA. La
+validation vérifie tout avant de retirer, et refuse avec le détail si un
+élément manque. Un point renvoyé en modification remet son stock en place.
+Les films non conformes sont tracés sans sortir du stock de la bobine.</p>
+<p><strong>EF-OP-12</strong> — Avant de valider un point 18h, le superviseur voit la
+<strong>comparaison avec OptoPlate</strong> (Primo par catégorie, duplicatas,
+post-immat, endommagés, films par bobine). En cas d'écart, il valide avec une
+justification obligatoire, conservée avec le point, ou demande une
+modification.</p>
+<p><strong>EF-OP-13</strong> — Un site en <strong>Re-Immatriculation</strong> déclare aussi ses
+duplicatas (avec les plaques réellement posées) et post-immat, comptés à
+part de la production Primo.</p>
+<p><strong>EF-OP-14</strong> — Les chiffres de production de tous les tableaux de bord ne
+comptent que les points 18h validés, plus les points historiques
+reconstitués depuis OptoPlate.</p>
+<p><strong>EF-OP-15</strong> — Un site peut voir son point généré depuis OptoPlate tant
+qu'il ne saisit pas, sans aucun mouvement de stock ; l'historique d'avant
+l'ERP peut être reconstitué de la même façon, sans toucher un jour déjà
+saisi.</p>
 <h3>5.2 Stock bobines</h3>
 <p><strong>EF-BOB-1</strong> — Une bobine est un objet individuel identifié par son numéro,
 porteur d'un type, d'une série, d'un stock système et d'un stock temps réel.</p>
-<p><strong>EF-BOB-2</strong> — Le gestionnaire stock bobines valide chaque matin le stock
-déclaré par site. Quatre issues : <code>Conforme</code>, <code>Avec écart</code>, <code>Réajusté</code>,
-<code>Bloqué</code>.</p>
-<p><strong>EF-BOB-3</strong> — En cas d'écart, le gestionnaire ouvre une demande de correction
-adressée au coordinateur, qui répond dans l'outil.</p>
+<p><strong>EF-BOB-2</strong> — Le stock ERP du soir de chaque site est comparé à l'import
+OptoTrace de la même date dès que le point 18h est validé et l'import
+chargé, dans n'importe quel ordre. Sans écart, le site est validé
+automatiquement ; avec écart, le gestionnaire stock bobines décide. Quatre
+issues : <code>Conforme</code>, <code>Avec écart</code> (écart autorisé), <code>Réajusté</code> (stock ERP
+aligné sur EMUCI), <code>Bloqué</code>. Une décision du GSB n'est jamais écrasée par la
+validation automatique.</p>
+<p><strong>EF-BOB-3</strong> — Pour chaque bobine en écart, l'outil présente les causes
+possibles, chiffrées quand c'est possible. Après un réajustement, le
+coordinateur répond avec ses corrections dans l'outil.</p>
+<p><strong>EF-BOB-3 bis</strong> — Une bobine arrive sur un site toujours <strong>en stock</strong> et
+passe en utilisation par une demande d'utilisation. Statuts : en stock, en
+cours, épuisée, retirée, absente, perdue. Le statut suit la quantité lors
+d'un réajustement ou d'un recomptage.</p>
 <p><strong>EF-BOB-4</strong> — Les rapports GSB produisent un export Excel à trois feuilles et
 un export PDF.</p>
 <p><strong>EF-BOB-5</strong> — La vue « stock par site » est exportable en XLSX et en PPTX.</p>
@@ -679,14 +754,16 @@ l'inventaire de chaque site rattaché, sur quatre natures de stock :</p>
 <p><strong>EF-INV-4</strong> — Chaque ligne d'inventaire porte l'<strong>écart déjà ouvert avant
 l'inventaire</strong> (<code>ecart_connu_avant</code>), afin de ne pas recompter deux fois un
 écart déjà constaté et en cours de traitement.</p>
-<p><strong>EF-INV-5</strong> — Pour les bobines, l'inventaire calcule en plus la consommation
-quotidienne moyenne sur 30 jours et l'écart entre la saisie terrain et les
-données EMUCI du jour.</p>
+<p><strong>EF-INV-5</strong> — Le chiffre compté est un <strong>stock de fin de journée</strong>. Le moment
+du comptage (matin avant les activités = fin de journée de la veille, ou
+soir = fin de journée du jour) est demandé avant la première saisie et
+reste modifiable. Un comptage peut s'étaler sur plusieurs jours, chaque ligne
+se rapportant à son propre jour.</p>
 <p><strong>EF-INV-6</strong> — Un inventaire ne peut pas être créé deux fois pour le même site,
 la même date et la même périodicité.</p>
-<p><strong>EF-INV-7</strong> — Un inventaire sans objet à compter (site sans bobine active,
-sans stock de rivets, sans PMMA, sans équipement affecté) est refusé avec un
-message explicite plutôt que créé vide.</p>
+<p><strong>EF-INV-7</strong> — Un inventaire sans objet à compter est refusé avec un message
+explicite plutôt que créé vide ; dans une session, ce type est « sans objet »
+et ne bloque pas la clôture, pas plus qu'un inventaire annulé.</p>
 <p><strong>EF-INV-8</strong> — Tout écart constaté devient un objet de suivi (<code>ecarts_bobines</code>,
 <code>ecarts_rivets</code>, <code>ecarts_pmma</code>, <code>ecarts_equipements</code>) avec un statut <code>ouvert</code>
 puis <code>resolu</code>.</p>
@@ -694,7 +771,23 @@ puis <code>resolu</code>.</p>
 <code>en_attente</code> → <code>autorise</code> ou <code>refuse</code> → <code>traite</code>.</p>
 <p><strong>EF-INV-10</strong> — La création d'un inventaire journalier par un coordinateur de
 site n'est plus possible : elle dépend de la session ouverte par
-l'administrateur.</p>
+l'administrateur. Tant que la session est ouverte, un inventaire manquant
+peut être créé, même après sa période.</p>
+<p><strong>EF-INV-11</strong> — Un inventaire ne se valide que si toutes ses lignes sont
+comptées et que le point 18h de chaque jour de comptage est validé. La
+consommation validée après le comptage est déduite. Pour les rivets et le
+PMMA, une entrée reçue entre la saisie et la validation est conservée.</p>
+<p><strong>EF-INV-12</strong> — Une ligne saisie est verrouillée et se rouvre par une
+demande (du site vers les valideurs, ou des valideurs vers le site) ; seul
+le site ou un administrateur la corrige. Le coordinateur ne voit jamais la
+référence ni l'écart.</p>
+<p><strong>EF-INV-13</strong> — Une bobine non trouvée est déclarée absente et rangée à
+l'entrepôt principal ; une bobine retrouvée s'ajoute en cours d'inventaire.
+Un équipement trouvé hors système est déclaré par le site et traité par le
+gestionnaire de stock ; un équipement manquant peut être déclaré perdu.</p>
+<p><strong>EF-INV-14</strong> — Un inventaire en cours peut être annulé avec un motif, sans
+toucher au stock. Les inventaires s'exportent tous sites (Excel, PDF), hors
+coordinateur.</p>
 <h3>5.4 Demandes internes</h3>
 <p><strong>EF-DEM-1</strong> — Une demande porte un type, un demandeur, une plateforme, et un
 circuit de validation.</p>
@@ -709,6 +802,11 @@ appliqué <strong>en plus</strong> du contrôle de module : <code>can_read</code
 interrupteur général, pas un remplacement de la logique de circuit.</p>
 <p><strong>EF-DEM-5</strong> — Un annuaire d'agents alimente les demandes ; il accepte l'import
 Excel et la saisie manuelle.</p>
+<p><strong>EF-DEM-6</strong> — Le visa N+1 revient aux <strong>N+1 du département du
+bénéficiaire</strong> de la demande (à défaut, du demandeur). Tous les N+1 du
+département voient la demande, sont prévenus et peuvent la viser. Un
+département sans N+1 est signalé et les administrateurs visent à sa place.</p>
+<p><strong>EF-DEM-7</strong> — Un brouillon se reprend et se soumet avec le même numéro.</p>
 <h3>5.5 Achats — la FEB</h3>
 <p><strong>EF-ACH-1</strong> — Une FEB (fiche d'expression de besoin) porte des lignes, des
 pièces jointes, un montant, un code analytique et une urgence
@@ -776,20 +874,29 @@ rattachés à un site ou à un utilisateur.</p>
 <p><strong>EF-ACH-10</strong> — Trois retours en arrière sont prévus dans le circuit ; chacun
 exige un motif.</p>
 <p><strong>EF-ACH-11</strong> — La fiche FEB et la fiche de validation sont exportables en PDF.</p>
+<p><strong>EF-ACH-12</strong> — Les pièces déposées (pièces jointes, BL, bons de transfert,
+fiches signées, documents fournisseurs) sont conservées en base, à l'abri
+des redéploiements, et ne s'ouvrent qu'avec connexion et droit.</p>
 <h3>5.6 Informatique</h3>
-<p><strong>EF-IT-1</strong> — Une intervention est préventive ou curative, portée par un
-technicien, rattachée à un site et éventuellement à un équipement.</p>
+<p><strong>EF-IT-1</strong> — Une intervention est préventive, curative ou <strong>autre</strong>
+(installation de matériel, remplacement, diagnostic), portée par un
+technicien, rattachée à un site et éventuellement à un équipement de ce site.</p>
 <p><strong>EF-IT-2</strong> — Un coordinateur peut signaler une panne (<code>demande_coordinateur</code>),
 ce qui notifie les profils de maintenance. <strong>Cette action exige le droit de
 création sur <code>interventions</code>.</strong></p>
 <p><strong>EF-IT-3</strong> — Le transfert d'équipement entre sites et le retour en stock sont
 tracés dans un historique des mouvements, séparé de l'écran d'affectation.</p>
+<p><strong>EF-IT-5</strong> — Un équipement porte un N° interne, un N° série fabricant, une
+marque, un modèle, un emplacement et un utilisateur (agent). Le site peut le
+mettre en utilisation, le déclarer épuisé (consommable) ou hors service ;
+chaque changement est tracé. Un équipement affecté ou en intervention ne se
+supprime pas.</p>
 <p><strong>EF-IT-4</strong> — Les sous-rôles Support IT s'affectent depuis un écran dédié.
 <strong>L'affectation et la promotion exigent le droit de modification sur
 <code>affectations_it</code>.</strong></p>
 <h3>5.7 Administration</h3>
 <p><strong>EF-ADM-1</strong> — La matrice rôle × module est éditable depuis l'interface, pour
-la totalité des 56 modules administrables (§3).</p>
+la totalité des 57 modules administrables (§3).</p>
 <p><strong>EF-ADM-2</strong> — La liste des modules envoyée au serveur lors de la sauvegarde
 doit être <strong>dérivée de la liste affichée</strong>, et non recopiée à la main : une
 liste recopiée se désynchronise et remet silencieusement à zéro les droits des
@@ -798,6 +905,9 @@ modules oubliés.</p>
 description, valeurs avant/après, adresse IP et horodatage.</p>
 <p><strong>EF-ADM-4</strong> — La création d'un utilisateur impose une validation stricte des
 champs et un changement de mot de passe à la première connexion.</p>
+<p><strong>EF-ADM-5</strong> — Un site porte son opération (Primo ou Re-Immatriculation) et,
+le cas échéant, la date à partir de laquelle son point est généré depuis
+OptoPlate.</p>
 <h3>5.8 Tableau de bord KPI</h3>
 <p>Écran centralisé, distinct du tableau de bord opérationnel (<code>dashboard</code>, orienté
 action du jour) et de la vue exécutive (<code>pdg_overview</code>, narrative). Il donne une
@@ -883,6 +993,12 @@ stock.</p>
 brouillon, comme la production : deux panneaux voisins comptent sur la même
 base. Un site sans production sur A mais actif sur B reste affiché au
 classement — c'est précisément ce qu'une comparaison doit faire voir.</p>
+<p><strong>EF-KPI-13</strong> — Le tableau de bord KPI ouvre sur un bandeau <strong>« Points
+d'attention »</strong> (sites sans point soumis, points à valider, écarts avec
+EMUCI, couverture de stock basse, interventions ouvertes), chaque ligne
+menant à l'écran de détail. Un panneau <strong>« Fiabilité &amp; pertes »</strong> contrôle la
+saisie, le rapprochement avec EMUCI et le taux de films endommagés, sans
+classement nominatif.</p>
 <h3>5.9 Suivi des observations</h3>
 <p><strong>EF-OBS-1</strong> — Chaque observation saisie dans un point journalier suit un
 cycle de vie propre : <code>en_attente</code> → <code>en_cours</code> → <code>traite</code> → <code>cloture</code>, avec
@@ -984,6 +1100,36 @@ valeur vide enregistrée.</p>
 d'exploitation courante — une capacité fausse se propage silencieusement à
 toutes les projections et à tout stock créé ensuite, sans se signaler à
 l'écran.</p>
+<h3>5.13 Commandes de site</h3>
+<p><strong>EF-CMD-1</strong> — Un site s'approvisionne par une commande unique couvrant
+articles, PMMA, rivets, bobines, vignettes et équipements, avec une seule
+commande en attente par site.</p>
+<p><strong>EF-CMD-2</strong> — Le superviseur décide ligne par ligne : valider, rejeter ou
+demander une modification. Seul le coordinateur du site corrige les lignes
+renvoyées.</p>
+<p><strong>EF-CMD-3</strong> — Pour les lignes de bobines et de vignettes, le gestionnaire
+stock bobines choisit les rouleaux précis à l'entrepôt ; la somme de leurs
+films égale la quantité demandée. Les rouleaux restent réservés à l'entrepôt
+jusqu'à la réception.</p>
+<p><strong>EF-CMD-4</strong> — À l'expédition, chaque ligne est débitée d'un dépôt choisi
+(entrepôt ou magasin), sans jamais passer en négatif. Un bon de livraison
+est imprimable dès l'expédition.</p>
+<p><strong>EF-CMD-5</strong> — Le site réceptionne <strong>ligne par ligne</strong> (tout, partiel, rien),
+motif obligatoire pour tout manque, bon de livraison signé obligatoire et
+archivé. Le site n'est crédité que de ce qu'il a reçu.</p>
+<p><strong>EF-CMD-6</strong> — Chaque manque ouvre un écart, traité par une remise au dépôt
+d'origine, un renvoi ou une perte imputée au dépôt d'origine.</p>
+<p><strong>EF-CMD-7</strong> — Le coordinateur ne voit que les commandes de son site, sans
+prix ni stock central. Les bons de livraison signés sont consultables et
+exportables par le magasin, les superviseurs et l'administration.</p>
+<h3>5.14 Notifications par mail</h3>
+<p><strong>EF-MAIL-1</strong> — Toute notification de l'application est aussi envoyée par
+mail, en file d'attente, sans bloquer l'action qui la déclenche.</p>
+<p><strong>EF-MAIL-2</strong> — Chaque utilisateur peut couper ses mails (et un
+administrateur pour lui) ; les notifications restent visibles dans
+l'application, et les mails déjà en attente sont abandonnés.</p>
+<p><strong>EF-MAIL-3</strong> — L'administration suit les envois : état, motif d'erreur,
+relance, mail de test, alerte si des mails attendent trop longtemps.</p>
 <hr>
 </section>
 <section id="s6"><h2><span class="n">6</span> Exigences non fonctionnelles</h2>
@@ -1266,6 +1412,26 @@ KPI et la simulation de stocks reposent sur cette consommation.</p>
 <td>La simulation de stock répond aux deux cas d'usage du comité de pilotage sans écrire aucun stock réel</td>
 <td>Comparaison du stock avant/après simulation</td>
 </tr>
+<tr>
+<td><strong>CA-13</strong></td>
+<td>Le stock ne bouge qu'à la validation du point 18h, et la comparaison OptoPlate s'affiche avant</td>
+<td>Un point de chaque statut, stock relevé avant et après</td>
+</tr>
+<tr>
+<td><strong>CA-14</strong></td>
+<td>Une commande de site parcourt le circuit jusqu'à la réception, avec un manque traité en écart</td>
+<td>Une ligne bobine et une ligne article, réception partielle</td>
+</tr>
+<tr>
+<td><strong>CA-15</strong></td>
+<td>Un inventaire compté le matin se valide après le point 18h du jour, sans double déduction</td>
+<td>Un site pilote, rivets et bobines</td>
+</tr>
+<tr>
+<td><strong>CA-16</strong></td>
+<td>Une notification part par mail, et s'arrête quand l'utilisateur coupe ses mails</td>
+<td>Mail de test et suivi dans Administration → Mails</td>
+</tr>
 </tbody>
 </table></div>
 <hr>
@@ -1334,6 +1500,11 @@ KPI et la simulation de stocks reposent sur cette consommation.</p>
 <td>EN-ERG-2</td>
 <td>Onze pages débordent à 375 px, libellés modaux manquants</td>
 <td>Moyenne, relevée par la confirmation de l'usage mobile</td>
+</tr>
+<tr>
+<td>EF-MAIL-1</td>
+<td>Sur le serveur VPS, l'envoi des mails dépend de la configuration SMTP (<code>MAIL_*</code>) et de la tâche planifiée, à finaliser</td>
+<td>Moyenne</td>
 </tr>
 </tbody>
 </table></div>
@@ -1417,6 +1588,11 @@ ajustées dans les écrans de paramétrage avant la mise en service.</strong></p
 <td>24 septembre 2026</td>
 <td>Consommation de films calculée sur toutes les sorties, points journaliers compris (RG-8) : couverture du tableau de bord KPI (EF-KPI-3 bis) et simulation (EF-SIM-6 bis). Seule la saisie manuelle était lue jusque-là : la couverture restait incalculable sur un parc géré par points journaliers.</td>
 </tr>
+<tr>
+<td>3.0</td>
+<td>19 novembre 2026</td>
+<td>Remise à niveau sur les évolutions d'octobre et novembre. <strong>Ajouté</strong> : retrait du stock à la validation du 18h, comparaison OptoPlate, Re-Immatriculation, production sur points 18h validés, point généré depuis OptoPlate (EF-OP-11 à 15) ; validation du stock du jour par chaîne point 18h → import (EF-BOB-2, 3 bis) ; inventaires — fin de journée, moment du comptage, verrous, absentes, équipements trouvés et perdus, annulation, export (EF-INV-11 à 14) ; visa des N+1 du bénéficiaire (EF-DEM-6, 7) ; archivage des pièces (EF-ACH-12) ; interventions « autre » et fiche équipement (EF-IT-1, 5) ; habilitations par fonction, export et pièces jointes (EF-HAB-9 à 12) ; commandes de site (§5.13) ; notifications par mail (§5.14) ; critères CA-13 à CA-16. Volumétrie : 85 écrans, 133 tables, 58 identifiants de module.</td>
+</tr>
 </tbody>
 </table></div>
 </section>
@@ -1426,8 +1602,9 @@ ajustées dans les écrans de paramétrage avant la mise en service.</strong></p
 <div class="impr-pied" style="margin-top:10mm;padding-top:4mm;border-top:1px solid #c3ccdf;
      font-size:9pt;color:#4d5876">
   Cahier des charges — ERP EMUCI — document interne. État du logiciel au commit
-  <code>ff9fc2c</code>. Toute évolution fonctionnelle rend une section caduque :
-  vérifiez la version avant de vous y fier.
+  <code>5866232</code>. Toute évolution fonctionnelle rend une section caduque :
+  vérifiez la version avant de vous y fier.<br>
+  Auteur : GAYE Emmanuel — gayerodrigue@gmail.com — <span style="white-space:nowrap">+225 01 03 55 96 52</span>
 </div>
 
 <script>document.body.dataset.pret = '1';</script>

@@ -4,11 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spécification fonctionnelle et technique — ERP EMUCI</title>
-<meta name="description" content="Spécification fonctionnelle et technique de l'ERP EMUCI, arrêté au commit ff9fc2c">
+<meta name="description" content="Spécification fonctionnelle et technique de l'ERP EMUCI, arrêté au commit 5866232">
+<meta name="author" content="GAYE Emmanuel">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
 <style>
+
+
+
 
 
 
@@ -238,6 +242,30 @@ h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
   color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
   border-bottom:2px solid var(--accent)}
 figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+.contact{margin:.6rem 0 0;font-size:.85rem;color:var(--muted,#4d5876)}
+.contact b{color:inherit;font-weight:700}
+.contact a{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+.contact{margin:.6rem 0 0;font-size:.85rem;color:var(--muted,#4d5876)}
+.contact b{color:inherit;font-weight:700}
+.contact a{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+.contact{margin:.6rem 0 0;font-size:.85rem;color:var(--muted,#4d5876)}
+.contact b{color:inherit;font-weight:700}
+.contact a{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor}
 </style>
 </head>
 <body>
@@ -269,7 +297,8 @@ figure .mermaid{background:transparent}
 <p class="eyebrow">ERP EMUCI</p>
 <h1>Spécification fonctionnelle et technique — ERP EMUCI</h1>
 <p class="lede">Ce que le système est, les règles qu&#x27;il applique, et les limites qu&#x27;il porte.</p>
-<div class="meta"><span class="chip"><b>Version du logiciel</b> 24 septembre 2026</span><span class="chip"><b>Version de la spécification</b> 4.3</span><span class="chip"><b>Objet</b> décrire ce que le système est, comment il est construit, les</span></div>
+<div class="meta"><span class="chip"><b>Version du logiciel</b> 19 novembre 2026</span><span class="chip"><b>Version de la spécification</b> 5.0</span><span class="chip"><b>Objet</b> décrire ce que le système est, comment il est construit, les</span></div>
+<p class="contact"><b>Auteur</b> GAYE Emmanuel · <a href="mailto:gayerodrigue@gmail.com">gayerodrigue@gmail.com</a> · <a href="tel:+2250103559652" style="white-space:nowrap">+225 01 03 55 96 52</a></p>
 </header>
 <div class="note note-info"><span class="note-t">Provenance</span><p> Établie par lecture du code source et interrogation de la
 base. Chaque chiffre et chaque règle cités sont vérifiables à l'endroit
@@ -362,8 +391,13 @@ client.</p>
 </tr>
 <tr>
 <td>Excel</td>
-<td>PhpSpreadsheet 5.9</td>
-<td>Montée depuis 1.30.5 en septembre 2026, trois CVE de gravité haute (mémoire, SSRF)</td>
+<td>PhpSpreadsheet 5.10</td>
+<td>Montée depuis 1.30.5 en septembre 2026, puis 5.10.0 en novembre (quatre CVE corrigées)</td>
+</tr>
+<tr>
+<td>Mail</td>
+<td>PHPMailer 6.9</td>
+<td>Envoi SMTP des notifications (§13.1)</td>
 </tr>
 <tr>
 <td>PPTX</td>
@@ -377,8 +411,8 @@ client.</p>
 </tr>
 </tbody>
 </table></div>
-<p>Les deux seules dépendances applicatives du <code>composer.json</code> sont
-PhpSpreadsheet et Dompdf. Elles sont auditées automatiquement à chaque envoi
+<p>Les trois dépendances applicatives du <code>composer.json</code> sont
+PhpSpreadsheet, Dompdf et PHPMailer. Elles sont auditées automatiquement à chaque envoi
 sur <code>main</code> (voir 6.5).</p>
 <h3>2.2 Il n'y a pas de framework, et cela se paie</h3>
 <p>C'est le choix structurant. Quatre conséquences directes :</p>
@@ -395,7 +429,7 @@ ignoraient jusque-là totalement la table des permissions.</p>
 utilitaires dans <code>includes/db.php</code> (<code>db_query</code>, <code>db_fetch_all</code>,
 <code>db_fetch_one</code>, <code>db_fetch_value</code>, <code>db_begin</code>, <code>db_commit</code>, <code>db_rollback</code>…).</p>
 <p><strong>3. Pas de migrations versionnées.</strong> Les évolutions de schéma sont des
-fichiers dans <code>sql/</code> (78 fichiers), appliqués manuellement. Un outil
+fichiers dans <code>sql/</code> (121 fichiers), appliqués manuellement. Un outil
 d'inventaire détecte désormais leur état réel sur une base donnée (6.3), mais
 rien ne garantit qu'un environnement les a toutes reçues, ni dans quel ordre.</p>
 <p><strong>4. La logique métier vit dans <code>includes/</code></strong>, pas dans des modèles.</p>
@@ -441,7 +475,23 @@ rien ne garantit qu'un environnement les a toutes reçues, ni dans quel ordre.</
 </tr>
 <tr>
 <td><code>inventaire.php</code></td>
-<td>Provisionnement des sessions d'inventaire</td>
+<td>Sessions d'inventaire, date de stock, validation unique par type</td>
+</tr>
+<tr>
+<td><code>validation_stock.php</code></td>
+<td>Comparaison ERP / OptoTrace du soir, évaluation d'un site pour le GSB</td>
+</tr>
+<tr>
+<td><code>optoplate_comparaison.php</code></td>
+<td>Comparaison d'un point 18h avec OptoPlate, reconstitution de l'historique</td>
+</tr>
+<tr>
+<td><code>reception_commande.php</code></td>
+<td>Expédition, réception ligne par ligne et écarts des commandes de site</td>
+</tr>
+<tr>
+<td><code>notifications.php</code></td>
+<td>Notifications applicatives et file d'envoi par mail</td>
 </tr>
 <tr>
 <td><code>periode.php</code></td>
@@ -486,7 +536,8 @@ il attend du JSON. <code>require_auth()</code> traite les deux cas séparément.
 <hr>
 </section>
 <section id="s3"><h2><span class="n">3</span> Modèle de données</h2>
-<p><strong>114 tables.</strong></p>
+<p><strong>133 tables</strong> (base locale à jour de toutes les migrations ; la base
+de production peut en compter moins selon les migrations passées).</p>
 <div class="tw"><table>
 <thead>
 <tr>
@@ -537,9 +588,14 @@ il attend du JSON. <code>require_auth()</code> traite les deux cas séparément.
 <td><code>vues_enregistrees</code> (vues KPI), <code>preferences_utilisateur</code>, <code>defauts_affichage</code></td>
 </tr>
 <tr>
+<td>Commandes de site</td>
+<td>6</td>
+<td><code>commandes</code>, <code>commande_lignes</code>, <code>commande_ligne_bobines</code>, <code>commande_ecarts_reception</code>, <code>commande_bl</code></td>
+</tr>
+<tr>
 <td>Autres</td>
-<td>19</td>
-<td><code>articles</code>, <code>stock_site</code>, <code>stock_departement</code>, <code>notifications</code>, <code>audit_log</code></td>
+<td>20</td>
+<td><code>articles</code>, <code>stock_site</code>, <code>stock_departement</code>, <code>notifications</code>, <code>audit_log</code>, <code>fichiers_archives</code>, <code>migrations_ponctuelles</code></td>
 </tr>
 </tbody>
 </table></div>
@@ -590,14 +646,14 @@ interroger les visas en SQL aussi simplement qu'une table de jointure.</p>
 </thead>
 <tbody>
 <tr>
-<td>Stock global d'un article</td>
+<td>Stock central d'un article</td>
 <td><code>articles.stock_global</code></td>
-<td>Aucune ventilation par site</td>
+<td>Somme des sites de type <code>magasin</code> et <code>entrepot</code></td>
 </tr>
 <tr>
-<td>Stock magasin</td>
-<td><code>stock_site</code>, sites de type <code>magasin</code></td>
-<td>Stock central, source des livraisons d'achats</td>
+<td>Stock d'un dépôt ou d'un site</td>
+<td><code>stock_site</code></td>
+<td>Magasin, entrepôt, ou site terrain après réception</td>
 </tr>
 <tr>
 <td>Stock d'un département</td>
@@ -606,9 +662,9 @@ interroger les visas en SQL aussi simplement qu'une table de jointure.</p>
 </tr>
 </tbody>
 </table></div>
-<p>Une réception d'achat <strong>débite le magasin et crédite le département</strong>. Le
-stock global des articles n'est pas ventilé : c'est pourquoi un filtre par
-site ne change pas le compte des alertes de stock.</p>
+<p>Une réception d'achat <strong>débite le magasin et crédite le département</strong>. Une
+distribution sort d'abord du magasin, puis de l'entrepôt ; une commande de
+site débite le dépôt choisi ligne par ligne à l'expédition (§9.7).</p>
 <p>L'outil de simulation (§9.6) introduit une <strong>quatrième notion, hors base</strong> :
 le stock <strong>projeté</strong>, un calcul en mémoire qui ne modifie jamais aucune des
 trois tables ci-dessus.</p>
@@ -1447,7 +1503,7 @@ qu'en la relisant.</p>
 </section>
 <section id="s7"><h2><span class="n">7</span> Habilitations</h2>
 <h3>7.1 Le modèle</h3>
-<p><strong>Seize rôles</strong>, <strong>cinquante-sept identifiants de module</strong>, <strong>cinq droits</strong>
+<p><strong>Seize rôles</strong>, <strong>cinquante-huit identifiants de module</strong>, <strong>cinq droits</strong>
 par module : <code>can_read</code>, <code>can_create</code>, <code>can_update</code>, <code>can_delete</code>,
 <code>can_export</code>.</p>
 <p>La table <code>permissions</code> porte une ligne par couple (rôle, module).</p>
@@ -1462,7 +1518,7 @@ par module : <code>can_read</code>, <code>can_create</code>, <code>can_update</c
 <tbody>
 <tr>
 <td>Exposés dans la matrice Admin → Permissions</td>
-<td>56</td>
+<td>57</td>
 <td>Table <code>permissions</code>, administrables depuis l'interface</td>
 </tr>
 <tr>
@@ -1480,6 +1536,45 @@ ajuster leurs droits. Ils sont désormais administrables depuis l'interface
 comme tous les autres.</p>
 <p>L'inverse n'existe pas : aucun module affiché dans la matrice n'est inutilisé
 dans le code.</p>
+<h4>Modules « fonction »</h4>
+<p>Six modules de la matrice ne protègent pas un écran mais une <strong>fonction</strong>,
+lue par <code>droit_fonction($module)</code> (droit <code>can_update</code>) et
+<code>users_fonction($module)</code> (qui la détient, pour les notifications) :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Fonction</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>achats_acheteur</code></td>
+<td>File d'attente et traitement des FEB</td>
+</tr>
+<tr>
+<td><code>achats_magasin</code></td>
+<td>Préparation et expédition des commandes, écarts et litiges de réception, réceptions magasin</td>
+</tr>
+<tr>
+<td><code>inventaire_{bobines,rivets,pmma,equipements}_valider</code></td>
+<td>Valider, annuler un inventaire, demander une modification au site</td>
+</tr>
+</tbody>
+</table></div>
+<p>Tant qu'un module fonction n'a aucune ligne en base, <code>droit_fonction()</code>
+retombe sur une liste de rôles par défaut (<code>FONCTIONS_ROLES_REPLI</code>), qui
+reprend l'ancien comportement codé en dur.</p>
+<p><strong>Le droit <code>can_export</code></strong> est contrôlé par <code>require_export($module)</code> sur
+les exports PMMA, stock bobines, rapports GSB, inventaires, rivets,
+équipements, résumé superviseur et sites ; les boutons sont masqués sans
+ce droit. <strong>Les pièces jointes</strong> servies par <code>pages/fichier.php</code> exigent le
+droit de lecture de l'écran du type de pièce. Le rôle <code>admin</code> n'est pas
+modifiable depuis l'écran, et chaque enregistrement journalise le
+différentiel avant / après.</p>
+<p><strong>Rôle hors carte des menus.</strong> Un rôle créé depuis l'écran Permissions,
+absent de <code>groupes_config.php</code>, reçoit les groupes de menus déduits des
+droits accordés (hors Administration et Inventaire).</p>
 <h4>Le piège de la liste recopiée</h4>
 <p>L'écran de permissions construit ses lignes depuis un tableau PHP, mais
 envoyait autrefois au serveur une <strong>liste de modules recopiée à la main en
@@ -1527,7 +1622,7 @@ tableau de bord paraît complet. L'écart entre les deux impressions est un
 piège de diagnostic — c'est la page qui dit la vérité, pas l'accueil.</p>
 <p><strong>Conséquence de sécurité</strong> : livrer un écran sans livrer sa ligne de
 permission le rend invisible à tous sauf <code>admin</code> et <code>superadmin</code>, et aucune
-erreur ne le signale. C'est arrivé sur six écrans en septembre 2026 (9.4).</p>
+erreur ne le signale. C'est arrivé sur six écrans d'inventaire en septembre 2026, corrigé depuis.</p>
 <h3>7.3 Trois accès qui ne passent pas par la table</h3>
 <p><code>can()</code> traite trois cas avant de consulter les permissions. Chacun répond à
 un besoin que la matrice rôle × module ne sait pas exprimer.</p>
@@ -1582,11 +1677,12 @@ sous-rôles actifs portés par <code>support_it_roles</code>, résolus à chaque
 </tr>
 </tbody>
 </table></div>
-<p><strong>Une exception, et elle est nécessaire.</strong> Le module <code>demandes</code> est transverse
-— il concerne tous les employés, quel que soit leur métier. S'il était filtré
-par sous-rôle IT, aucun compte <code>support_it</code> n'y accéderait jamais, quoi que
-porte la table <code>permissions</code>. Il est donc évalué directement sur
-<code>permissions</code>, sans passer par la grille ci-dessus.</p>
+<p><strong>Les sous-rôles ne filtrent que ces modules techniques.</strong> Tout autre
+module (demandes, rapport journalier, achats, vue exécutive…) est évalué
+directement sur <code>permissions</code>, comme pour les autres rôles. Auparavant, tout
+ce qui sortait de la grille était refusé : cocher une case pour Support IT
+n'avait aucun effet. Les droits jamais exercés ont été remis à zéro par
+<code>migration_permissions_revue.sql</code> pour ne rien ouvrir d'imprévu.</p>
 <div class="note note-warn"><span class="note-t">Le risque de bascule</span><p> Un compte migré vers <code>support_it</code> sans qu'un
 sous-rôle soit activé dans le même mouvement perd tout accès, sans message
 explicite — l'inverse d'un compte resté sur son ancien rôle, qui
@@ -1603,22 +1699,42 @@ personne absente.</p>
 <section id="s8"><h2><span class="n">8</span> Domaine Opérations</h2>
 <h3>8.1 Le point journalier</h3>
 <p>Entité centrale : <code>op_points_journaliers</code>. Un relevé porte un site, une date,
-un type, et les quantités produites — véhicules par catégorie, plaques,
-rivets utilisés et endommagés, heures de travail.</p>
+un type (<code>point_9h</code>, <code>point_13h</code>, <code>point_18h</code>, plus <code>historique</code> pour les
+points reconstitués depuis OptoPlate), et les quantités produites :
+véhicules par catégorie, plaques, rivets posés et endommagés <strong>par type</strong>
+(<code>rivets_gonflables_end</code>, <code>rivets_eclates_end</code>), heures de travail. Les
+films sont déclarés par bobine dans <code>op_films_utilises</code> (utilisés,
+endommagés, <code>non_conformes</code>), les PMMA par type dans <code>op_pmma_utilises</code>
+(idem).</p>
+<p><strong>Sites en Re-Immatriculation</strong> (<code>sites.operation = 'reimmat_post'</code>) : deux
+jeux de compteurs supplémentaires, Duplicatas et Post-Immat, stockés à part
+(<code>total_engins</code> ne les inclut jamais). Pour un duplicata de VP ou de camion,
+les plaques réellement posées sont saisies (1 ou 2 par véhicule). Le V/H se
+calcule sur le total des engins posés des trois sections.</p>
+<p><strong>Journée sans production</strong> : un point 18h peut être déclaré à zéro avec un
+motif (liste fermée, commentaire obligatoire pour « Autre »), sans mouvement
+de stock ; il est dispensé de la règle ci-dessous et les moyennes V/H
+l'ignorent.</p>
+<p><strong>Règle de soumission</strong> : un point ne peut être soumis (18h) ni validé
+s'il ne contient pas des films utilisés, des rivets posés <strong>et</strong> des PMMA
+utilisés. Le brouillon reste possible, avec un badge listant ce qui manque.
+Une même bobine ne peut figurer deux fois dans un point.</p>
 <h4>Cycle de vie</h4>
 <figure><pre class="mermaid">stateDiagram-v2
     direction LR
     [*] --&gt; brouillon : saisie par le coordinateur
-    brouillon --&gt; en_attente_validation : soumission
-    en_attente_validation --&gt; valide : validation superviseur
-    en_attente_validation --&gt; rejete : rejet, motif obligatoire
-    rejete --&gt; brouillon : reprise par le coordinateur
-    valide --&gt; valide : correction acceptée
-    valide --&gt; [*]</pre></figure>
+    brouillon --&gt; en_attente_validation : soumission (18h)
+    brouillon --&gt; valide : validation coordinateur (9h, 13h)
+    en_attente_validation --&gt; valide : validation superviseur après comparaison OptoPlate
+    en_attente_validation --&gt; rejete : demande de modification, motif obligatoire
+    valide --&gt; rejete : demande de modification
+    rejete --&gt; brouillon : correction par le coordinateur
+    brouillon --&gt; [*] : suppression du brouillon</pre></figure>
 <div class="tw"><table>
 <thead>
 <tr>
 <th>Statut</th>
+<th>Libellé</th>
 <th>Qui agit</th>
 <th>Effet</th>
 </tr>
@@ -1626,31 +1742,69 @@ rivets utilisés et endommagés, heures de travail.</p>
 <tbody>
 <tr>
 <td><code>brouillon</code></td>
+<td>Brouillon</td>
 <td>Coordinateur</td>
-<td>Saisi, non transmis. <strong>N'entre dans aucun agrégat.</strong></td>
+<td>Visible de son seul auteur. <strong>N'entre dans aucun agrégat.</strong></td>
 </tr>
 <tr>
 <td><code>en_attente_validation</code></td>
+<td>Soumis</td>
 <td>—</td>
-<td>Transmis, attend le superviseur</td>
+<td>Attend le superviseur</td>
 </tr>
 <tr>
 <td><code>valide</code></td>
-<td>Superviseur</td>
-<td>Compte dans tous les indicateurs</td>
+<td>Validé</td>
+<td>Superviseur (18h) ou coordinateur (9h, 13h)</td>
+<td>Le 18h validé compte dans les agrégats de production</td>
 </tr>
 <tr>
 <td><code>rejete</code></td>
+<td>Modif. demandée</td>
 <td>Superviseur</td>
-<td>Refusé avec motif ; le coordinateur reprend</td>
+<td>Renvoyé avec motif (<code>motif_rejet</code>) ; le coordinateur le corrige</td>
 </tr>
 </tbody>
 </table></div>
-<div class="note note-info"><span class="note-t">Trois statuts, pas deux</span><p> La distinction <code>brouillon</code> /
-<code>en_attente_validation</code> est structurante : un brouillon n'est visible que de
-son auteur, un point en attente est dans la file du superviseur. Les
-confondre fait chercher des points là où ils ne sont pas.</p>
-</div>
+<h4>Retrait du stock à la validation du 18h</h4>
+<p><strong>Les films, rivets et PMMA ne sortent du stock qu'à la validation du point
+18h par le superviseur</strong> (<code>_pj_deduire_stock()</code>). Brouillon, point soumis,
+modification demandée, points 9h et 13h : aucun mouvement. La validation
+vérifie d'abord tout (bobines, rivets par type, PMMA par type), puis retire ;
+si un élément manque, elle est refusée avec le détail et rien n'est modifié.</p>
+<p><code>op_points_journaliers.stock_deduit</code> trace l'état :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Valeur</th>
+<th>Sens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code></td>
+<td>Rien n'a été retiré</td>
+</tr>
+<tr>
+<td><code>1</code></td>
+<td>Retiré à la validation 18h ; remis en stock si le point est renvoyé en modification</td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>Point antérieur à la règle, retrait acquis : jamais remis en stock, jamais retiré une seconde fois</td>
+</tr>
+</tbody>
+</table></div>
+<p>Les films <strong>non conformes</strong> ne sortent pas du stock de la bobine ; les PMMA
+non conformes, si. Une fois un inventaire validé, les points datés du jour
+de l'inventaire ou d'avant ne touchent plus au stock (garde-fou §9.4).</p>
+<h4>Endommagements</h4>
+<p>Toute quantité endommagée se justifie unité par unité dans
+<code>op_endommagements</code> (colonnes <code>objet</code> film / rivet / PMMA, <code>sous_type</code>,
+<code>etape</code>, <code>cause</code> en texte libre, <code>numero_consommable</code> obligatoire pour un
+film, <code>film_no</code>). Étapes d'un film : vérification, lamination, percée,
+fissurée (l'ancienne étape « pose » reste lisible) ; PMMA : lamination,
+percée. Les déclarations sont rechargées à la réouverture du point.</p>
 <h4>Correction d'un point validé</h4>
 <p>Un point <code>valide</code> n'est plus modifiable directement. La correction suit son
 propre circuit :</p>
@@ -1673,12 +1827,44 @@ seulement le point. La <strong>validation du stock du matin</strong> du même si
 même date passe au statut <code>reajuste</code>. Les deux domaines sont liés, parce
 qu'un chiffre de production corrigé invalide le rapprochement de stock qui en
 découlait.</p>
-<h3>8.2 Rapprochement EMUCI</h3>
-<p><strong>Import</strong> (<code>import_optoplate</code>, <code>import_optotrace</code>, <code>import_sessions_emuci</code>) :
-chargement du fichier de la plateforme nationale, donnant le nombre de
-plaques par site et par <code>statut_plaque</code> (<code>in_use</code>, <code>declared_broken</code>, …).</p>
-<p>Le fichier est refusé si des colonnes attendues manquent, avec la liste des
-colonnes absentes.</p>
+<h3>8.2 OptoPlate et comparaison avant validation</h3>
+<p><strong>Imports</strong> (<code>pages/import_emuci.php</code>) :</p>
+<ul>
+<li><strong>OptoTrace</strong> (<code>import_optotrace</code>) : quantité EMUCI de chaque bobine. Pour
+  une bobine déjà connue de l'ERP, l'import ne met à jour que
+  <code>stock_systeme</code> et le format : ni le statut ni le site.</li>
+<li><strong>OptoPlate</strong> (<code>import_optoplate</code>) : plaques posées et désactivations
+  (duplicata, modification POST, incident) dans un seul fichier, upsert par
+  N° consommable. <code>date_impression</code> est figée au premier import qui voit la
+  plaque. Lecture tolérante (UTF-8, Windows-1252, UTF-16 ; séparateur
+  détecté ; noms de colonnes normalisés). L'import vérifie l'index unique
+  avant de commencer (<code>correctif_optoplate_doublons.sql</code> sinon).</li>
+</ul>
+<p><strong>Comparaison</strong> (<code>includes/optoplate_comparaison.php</code>) : <code>op_calc_jour_site()</code>
+reconstitue ce qu'OptoPlate a enregistré pour un site et un jour ;
+<code>op_comparer_point()</code> le compare au point 18h, tolérance zéro, sur :</p>
+<ul>
+<li>Primo par catégorie (VP, camion, semi, moto — tricycles, quadricycles et
+  scooters classés en moto) ;</li>
+<li>Duplicatas et Post-Immat (pose d'un véhicule déjà désactivé à une date
+  antérieure, désactivations cherchées tous sites) et leurs plaques ;</li>
+<li>endommagés par motif ;</li>
+<li>films par bobine : une plaque compte en film le jour de l'impression
+  (posée ou réservée), en engin le jour de la pose. Les films déjà décomptés
+  à l'entrée d'une bobine dans l'ERP (<code>op_films_deja_decomptes()</code>) sont
+  retirés du côté OptoPlate.</li>
+</ul>
+<p>Le superviseur voit la comparaison avant de valider. En cas d'écart, il
+valide avec une <strong>justification obligatoire</strong> (contrôlée côté serveur), ou
+demande une modification. La justification et l'instantané de l'écart sont
+conservés (<code>justification_superviseur</code>, <code>ecart_optoplate</code>) et repris dans
+le détail et le PDF.</p>
+<p><strong>Historique et sites sans saisie.</strong> <code>includes/historique_optoplate.php</code>
+reconstitue des points <code>historique</code> par site et par jour depuis les
+plaques importées (encadré « Alimenter le dashboard », simulation préalable,
+aucun stock touché, jour déjà saisi jamais modifié). Un site réglé sur
+<code>sites.point_auto_depuis</code> voit son point recalculé ainsi à chaque import,
+jusqu'à son premier point saisi.</p>
 <p><strong>Point EMUCI</strong> : compare le déclaré et le remonté, et expose les écarts.
 Les sites présents dans le fichier mais inconnus de l'ERP sont isolés dans
 <code>emuci_sites_inconnus</code> plutôt que rejetés.</p>
@@ -1744,135 +1930,219 @@ affichés.</p>
 <tbody>
 <tr>
 <td><code>en_stock</code></td>
-<td>Reçue, non ouverte</td>
+<td>Sur un site, non ouverte</td>
 </tr>
 <tr>
 <td><code>en_cours</code></td>
-<td>Ouverte, en consommation</td>
+<td>Ouverte après une demande d'utilisation approuvée</td>
 </tr>
 <tr>
 <td><code>epuisee</code></td>
-<td>Films consommés</td>
+<td>Films consommés ; repasse <code>en_cours</code> si une quantité positive lui est rendue</td>
 </tr>
 <tr>
 <td><code>retiree</code></td>
 <td>Sortie du circuit</td>
 </tr>
+<tr>
+<td><code>absente</code></td>
+<td>Non trouvée à l'inventaire ; rangée à l'entrepôt principal, hors stock disponible</td>
+</tr>
+<tr>
+<td><code>perdue</code></td>
+<td>Perte déclarée (GSB, écart de réception) ; mouvement <code>perte</code></td>
+</tr>
 </tbody>
 </table></div>
-<p>Une bobine porte <code>films_total</code>, <code>films_utilises</code>, <code>films_endommages</code>,
-<code>films_restants</code>.</p>
-<div class="note note-info"><span class="note-t">Seules les bobines <code>en_cours</code> comptent</span><p> dans les films restants affichés
-par les tableaux de bord.</p>
-</div>
-<h3>9.2 Validation du stock du matin</h3>
-<p>Déclaration quotidienne par site (<code>validations_stock_matin</code>). Trois issues :
-<code>valide</code>, <code>valide_avec_ecarts</code>, <code>valide_auto</code>. Le nombre d'écarts est stocké
-(<code>nb_ecarts</code>) avec leur détail.</p>
-<h3>9.3 Rivets</h3>
-<p><code>op_stock_rivets</code>, par site et par type. <strong>Seuil d'alerte : 200 unités.</strong> En
-dessous, le site remonte dans les alertes.</p>
-<h3>9.4 Inventaires</h3>
-<p>Quatre natures de stock sont inventoriées — bobines, rivets, PMMA,
-équipements — sur le même modèle en trois tables : l'inventaire
-(<code>inventaires_*</code>), son détail ligne à ligne (<code>inventaire_details_*</code>), et les
-écarts constatés (<code>ecarts_*</code>). Une quatrième table par nature
-(<code>inventaire_corrections_*</code>) porte les demandes de correction.</p>
-<h4>La session, et ce qu'elle déclenche</h4>
-<p>La session (<code>inventaire_sessions</code>) est l'objet d'administration : elle porte
-une périodicité, une date de début, et la liste des sites concernés
-(<code>inventaire_session_sites</code>). Elle passe de <code>ouverte</code> à <code>cloturee</code>.</p>
+<p>Une bobine porte <code>qte_initiale</code>, <code>stock_systeme</code> (quantité EMUCI, écrite par
+l'import OptoTrace), <code>films_restants</code> (stock déclaré ERP), <code>films_utilises</code>,
+<code>films_endommages</code>.</p>
+<ul>
+<li><strong>Arrivée sur un site toujours <code>en_stock</code></strong> : réception d'une commande,
+  transfert GSB, affectation. Le passage <code>en_cours</code> passe par une demande
+  d'utilisation.</li>
+<li><strong>Le statut et le site relèvent de l'ERP.</strong> L'import OptoTrace ne les
+  modifie plus pour une bobine existante ; seule une bobine créée par
+  l'import reçoit un statut calculé.</li>
+<li><strong>Correction de la quantité initiale</strong> (<code>can_update</code>, hors coordinateur) :
+  seule <code>qte_initiale</code> change ; le stock restant et le statut restent ;
+  mouvement <code>correction_qte_initiale</code> de quantité 0.</li>
+<li>La <strong>série</strong> est lue au catalogue (<code>serie_de_type_bobine()</code>) : A à D pour
+  les plaques, TL et WSL pour les vignettes.</li>
+</ul>
+<h3>9.2 Validation du stock du jour</h3>
+<p>Chaîne : <strong>point 18h validé par le superviseur → import OptoTrace de la
+date → comparaison</strong>. <code>includes/validation_stock.php</code> porte la règle unique :</p>
+<ul>
+<li><code>vsm_calculer()</code> reconstitue le stock ERP du soir de la date et le compare
+  à l'import OptoTrace <strong>de cette date</strong>, bobine par bobine ;</li>
+<li><code>vs_evaluer_site_gsb()</code> est appelée par la validation du point 18h <strong>et</strong>
+  par l'import : l'ordre des deux n'a pas d'importance. Sans écart, le site
+  est validé automatiquement (<code>valide_auto</code>) ; avec écart, le GSB est
+  notifié ;</li>
+<li>un site n'est réexaminé que par un import plus récent que sa validation,
+  et jamais une décision du GSB n'est écrasée par la validation automatique.</li>
+</ul>
 <div class="tw"><table>
 <thead>
 <tr>
-<th>Périodicité</th>
-<th>Durée</th>
+<th>Statut (<code>validations_stock_matin.statut</code>)</th>
+<th>Libellé</th>
+<th>Origine</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>mensuel</code></td>
-<td>1 mois</td>
+<td><code>valide_auto</code> / <code>valide_gsb</code></td>
+<td>Conforme</td>
+<td>Aucun écart</td>
 </tr>
 <tr>
-<td><code>trimestriel</code></td>
-<td>3 mois</td>
+<td><code>autorise_ecart</code></td>
+<td>Avec écart</td>
+<td>Le GSB accepte l'écart</td>
 </tr>
 <tr>
-<td><code>semestriel</code></td>
-<td>6 mois</td>
+<td><code>reajuste</code></td>
+<td>Réajusté</td>
+<td>Le GSB aligne <code>films_restants</code> sur EMUCI ; le coordinateur répond avec ses corrections (<code>corrections_bobines</code>)</td>
 </tr>
 <tr>
-<td><code>annuel</code></td>
-<td>12 mois</td>
+<td><code>refuse</code></td>
+<td>Bloqué</td>
+<td>Le GSB bloque le site</td>
 </tr>
 </tbody>
 </table></div>
-<p><strong>La date de fin n'est jamais saisie</strong> : elle est déduite de la périodicité
-(<code>inv_date_fin()</code> — début + N mois − 1 jour). Le libellé l'est aussi quand
-l'administrateur n'en fournit pas : « Inventaire mensuel — mars 2026 »,
-« Inventaire trimestriel — T2 2026 ».</p>
-<div class="note note-info"><span class="note-t">L'ouverture d'une session provisionne les inventaires</span><p> Pour chaque site
-rattaché, l'application crée l'inventaire de chaque nature et <strong>génère
-toutes ses lignes de détail</strong> à partir du stock du moment. L'inventaire naît
-donc rempli du théorique, prêt à recevoir le physique.</p>
-</div>
+<p>Pour chaque bobine en écart, le détail chiffre les causes repérées :
+plaques imprimées ce jour mais posées plus tard, posées ce jour mais
+imprimées avant, export pris après la journée, films retirés par des points
+postérieurs, non conformes, même écart déjà constaté sans réajustement.
+Les décisions du GSB exigent le point 18h validé et l'import, relisent les
+valeurs côté serveur, et écrivent le statut de la bobine selon la quantité.
+L'instantané des bobines est conservé (<code>bobines_snapshot</code>).</p>
+<h3>9.3 Rivets et PMMA</h3>
+<p><code>op_stock_rivets</code>, par site et <strong>par type</strong> (<code>gonflable</code>, <code>eclate</code>). Le type
+est obligatoire à l'approvisionnement et à l'ajustement. <strong>Seuil d'alerte :
+200 unités.</strong></p>
+<p><code>stock_pmma_site</code>, par site et par type, compté en <strong>unités</strong> ; l'équivalent
+en cartons (<code>op_types_pmma.unites_par_carton</code>) est affiché et sert à la
+conversion des lignes de commande en CARTON et de l'import.</p>
+<ul>
+<li>Le <code>gestionnaire_stock</code> n'approvisionne que les sites <code>entrepot</code> et
+  <code>magasin</code> (contrôle serveur).</li>
+<li>Le coordinateur n'a ni entrée, ni sortie, ni import PMMA : son stock
+  arrive par les commandes et sort par le point 18h validé.</li>
+<li>Les imports (rivets, PMMA) <strong>remplacent</strong> le stock du site et du type.</li>
+</ul>
+<h3>9.4 Inventaires</h3>
+<p>Quatre natures de stock sont inventoriées — bobines, rivets, PMMA,
+équipements — sur le même modèle : l'inventaire (<code>inventaires_*</code>), son
+détail ligne à ligne (<code>inventaire_details_*</code>), les écarts (<code>ecarts_*</code>) et
+les demandes de correction (<code>inventaire_corrections_*</code>). La logique commune
+vit dans <code>includes/inventaire.php</code>.</p>
+<h4>La session, et ce qu'elle déclenche</h4>
+<p>La session (<code>inventaire_sessions</code>) porte une périodicité (mensuel,
+trimestriel, semestriel, annuel), une date de début, et les sites concernés
+(<code>inventaire_session_sites</code>). <strong>La date de fin est déduite</strong> de la
+périodicité ; le libellé aussi, à défaut d'être saisi.</p>
+<p>L'ouverture provisionne, pour chaque site, l'inventaire de chaque nature qui
+a quelque chose à compter (<code>inv_rien_a_compter()</code>), avec ses lignes de
+détail. Un site est clôturé quand chaque nature est validée, <strong>sans objet</strong>
+ou <strong>annulée</strong>. Un inventaire manquant se crée tant que la session est
+ouverte (<code>CURRENT_DATE &gt;= date_debut</code>), même après la période.</p>
+<h4>Date de stock et moment du comptage</h4>
+<p>Un inventaire de session est <strong>daté du jour de la première saisie</strong>
+(<code>inv_dater_comptage()</code>), pas de l'ouverture. <code>comptage_matin</code> (NULL tant
+que non choisi) fixe la règle de fin de journée :</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Moment</th>
+<th>Le chiffre compté est…</th>
+<th>Date de stock (<code>inv_date_stock()</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Soir (<code>comptage_matin = 0</code>)</td>
+<td>le stock de fin de journée du jour</td>
+<td>J</td>
+</tr>
+<tr>
+<td>Matin (<code>comptage_matin = 1</code>)</td>
+<td>le stock de fin de journée de la veille</td>
+<td>J − 1</td>
+</tr>
+</tbody>
+</table></div>
+<p>Le moment est <strong>demandé avant la première saisie</strong> (<code>inv_moment_a_choisir()</code>
+refuse toute saisie tant qu'il est NULL, avec une proposition selon
+l'heure) et reste modifiable (<code>inv_changer_moment()</code>). Chaque ligne porte
+<code>saisi_at</code> : sa date de stock est celle de son propre jour
+(<code>inv_date_stock_ligne()</code>), ce qui permet un comptage sur plusieurs jours.</p>
+<h4>Validation</h4>
+<p>Une seule fonction par nature, appelée par la fiche <strong>et</strong> par la liste :
+<code>inv_valider_bobines()</code>, <code>inv_valider_agrege('rivets'|'pmma')</code>,
+<code>inv_valider_equipements()</code>. Elles exigent :</p>
+<ul>
+<li>le droit fonction <code>inventaire_*_valider</code> (§7.1) ;</li>
+<li>toutes les lignes comptées (0 ou « absente » compris) ;</li>
+<li>le <strong>point 18h validé</strong> de chaque jour de comptage ;</li>
+<li>aucun inventaire validé plus récent sur le site ;</li>
+<li>pour les équipements, aucune déclaration « trouvé hors système » en
+  attente.</li>
+</ul>
+<p>La consommation des points validés après la date de stock de chaque ligne
+est déduite du chiffre compté. <strong>Rivets et PMMA</strong> : <code>stock_reference</code> est
+notée à la saisie, et la validation applique l'écart au stock <strong>actuel</strong> —
+une entrée reçue entre saisie et validation est conservée. <strong>Bobines</strong> : le
+chiffre compté devient <code>films_restants</code> ; <code>stock_systeme</code> n'est pas écrasé.
+L'inventaire validé prend la date du dernier jour de comptage.</p>
+<p><strong>Garde-fou</strong> : une fois l'inventaire validé, les points datés du jour de
+l'inventaire ou d'avant ne touchent plus au stock, ni le réajustement de la
+validation du stock du jour.</p>
+<h4>Verrous et demandes de modification</h4>
+<p>Une ligne saisie est verrouillée côté serveur. Elle se rouvre par une
+demande : du coordinateur vers les profils qui valident, ou de ces profils
+vers le site (<code>inv_peut_demander_site()</code>). Seul le site ou un administrateur
+corrige une ligne rouverte, et la saisie clôt la demande. Le coordinateur ne
+reçoit jamais la quantité de référence ni l'écart.</p>
 <h4>Ce qui distingue les quatre natures</h4>
 <div class="tw"><table>
 <thead>
 <tr>
 <th>Nature</th>
 <th>Unité de comptage</th>
-<th>Source du théorique</th>
 <th>Particularité</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>Bobines</td>
-<td>La bobine, objet individuel</td>
-<td><code>op_bobines.stock_systeme</code></td>
-<td>Seule nature à calculer aussi la consommation quotidienne moyenne sur 30 jours et l'écart entre saisie terrain et données EMUCI du jour</td>
+<td>La bobine</td>
+<td><code>absente</code> à la validation → entrepôt principal ; bobine retrouvée ajoutée en cours d'inventaire ; épuisées encore vues par OptoTrace comptées ; même bobine sur deux sites d'une campagne signalée au GSB</td>
 </tr>
 <tr>
 <td>Rivets</td>
-<td>Le <strong>type</strong> de rivet, quantité agrégée par site</td>
-<td><code>op_stock_rivets</code></td>
-<td>Le détail est clé sur <code>type_rivet</code>, pas sur un identifiant d'objet</td>
+<td>Le type, par site</td>
+<td>Référence notée à la saisie</td>
 </tr>
 <tr>
 <td>PMMA</td>
-<td>Le <strong>type</strong> de PMMA, quantité agrégée</td>
-<td><code>stock_pmma_site</code></td>
-<td>Le type est un texte libre : la liste dépend de ce qui existe en stock</td>
+<td>Le type, par site</td>
+<td>Référence notée à la saisie</td>
 </tr>
 <tr>
 <td>Équipements</td>
-<td>L'équipement, objet individuel</td>
-<td><code>equipements</code> actifs du site</td>
-<td><strong>Pas de quantité</strong> — c'est une checklist de présence : trouvé / manquant</td>
+<td>L'équipement</td>
+<td>Présence trouvé / manquant ; équipements « trouvés hors système » (<code>inventaire_equipements_trouves</code>) : créés, transférés ou refusés par le gestionnaire de stock</td>
 </tr>
 </tbody>
 </table></div>
-<p>L'inventaire des équipements est le seul à ne figer aucun stock système : un
-équipement est présent ou absent, il n'a pas de quantité à comparer.</p>
 <h4>L'écart déjà connu ne se recompte pas</h4>
 <p>Chaque ligne de détail porte <code>ecart_connu_avant</code> : la somme des écarts
-<strong>déjà ouverts</strong> sur cet objet au moment où l'inventaire est créé.</p>
-<p>C'est ce qui évite de compter deux fois le même manquant — une fois au
-constat initial, une fois à l'inventaire suivant tant que le traitement n'est
-pas terminé. Le compteur lit les écarts au statut <code>ouvert</code> uniquement.</p>
-<h4>Les refus, et pourquoi ils sont explicites</h4>
-<p>Deux cas refusent la création plutôt que de produire un inventaire vide ou
-doublon :</p>
-<ul>
-<li>un inventaire de même nature existe déjà pour ce site, cette date et cette
-  périodicité, sans être annulé ;</li>
-<li>le site n'a rien à compter — aucune bobine active, aucun stock de rivets ou
-  de PMMA, aucun équipement affecté.</li>
-</ul>
-<p>Le second cas mérite le message explicite qu'il reçoit : un inventaire vide
-serait indiscernable d'un inventaire non saisi.</p>
+<strong>déjà ouverts</strong> sur cet objet à la création de l'inventaire.</p>
 <h4>Cycles de vie</h4>
 <div class="tw"><table>
 <thead>
@@ -1884,15 +2154,15 @@ serait indiscernable d'un inventaire non saisi.</p>
 <tbody>
 <tr>
 <td>Session</td>
-<td><code>ouverte</code> → <code>cloturee</code> (ou <code>annule</code>)</td>
+<td><code>ouverte</code> → <code>cloturee</code></td>
 </tr>
 <tr>
 <td>Inventaire</td>
-<td><code>brouillon</code> → <code>valide</code> (ou <code>annule</code>)</td>
+<td><code>brouillon</code> (en cours) → <code>valide</code>, ou <code>annule</code> (motif obligatoire, aucun stock touché)</td>
 </tr>
 <tr>
 <td>Écart</td>
-<td><code>ouvert</code> → <code>resolu</code></td>
+<td><code>ouvert</code> → <code>resolu</code> ; équipement : <code>perdu</code></td>
 </tr>
 <tr>
 <td>Demande de correction</td>
@@ -1900,24 +2170,23 @@ serait indiscernable d'un inventaire non saisi.</p>
 </tr>
 </tbody>
 </table></div>
-<p><strong>La création d'un inventaire journalier par un coordinateur de site n'est
-plus possible</strong> : elle dépend désormais de la session ouverte par
-l'administration.</p>
-<h4>Les six écrans ont failli être invisibles</h4>
-<p>Les écrans Inventaire et Écarts pour les équipements, le PMMA et les rivets
-ont été livrés et déployés <strong>sans les lignes de permission correspondantes</strong>.
-Conséquence de la règle 7.1 — module absent vaut refus — ils étaient
-invisibles pour tous les rôles sauf <code>admin</code> et <code>superadmin</code>, sans qu'aucune
-erreur ne le signale. Corrigé en septembre 2026.</p>
+<p><strong>Équipement perdu</strong> : <code>inv_declarer_equipement_perdu()</code> ferme l'écart,
+passe l'équipement <code>statut_stock = 'perdu'</code>, <code>actif = 0</code>, sans site ni
+utilisateur, et écrit un mouvement <code>sortie</code>.</p>
+<p><strong>Export</strong> (<code>inventaire_export.php</code>) : Excel (synthèse puis détail par
+type) et PDF, filtres période, types, statut, site et session ; la
+référence vaut compté − écart. Refusé au coordinateur.</p>
 <h3>9.5 Traçabilité des endommagements</h3>
-<p>Un film endommagé se déclare <strong>film par film</strong>, avec sa cause, depuis le
-pop-up dédié du point journalier, et se stocke dans <code>op_endommagements</code> — une
-ligne par film, et non un compteur agrégé : six films abîmés sur une même
+<p>Un film, un rivet ou un PMMA endommagé se déclare <strong>unité par unité</strong>, avec
+sa cause, depuis le pop-up dédié du point journalier, et se stocke dans
+<code>op_endommagements</code> (§8.1) — une ligne par unité, et non un compteur agrégé : six films abîmés sur une même
 bobine peuvent l'avoir été à six moments et pour six causes distinctes, ce
 que seule une ligne par film restitue.</p>
 <p>L'écran <code>tracabilite_endommagements.php</code> ne fait <strong>que lire</strong> cette table :
 la saisie reste exclusivement dans le point journalier, pour garder un seul
-chemin d'écriture. Le coordinateur de site n'y voit que son propre site ;
+chemin d'écriture. La période porte sur la date du point ; les points
+renvoyés en modification sont exclus, et les déclarations d'un brouillon ne
+sont visibles que de son auteur. Le coordinateur de site n'y voit que son propre site ;
 l'écran propose des filtres et un export sur le même périmètre.</p>
 <h3>9.6 Simulation &amp; projection de stocks</h3>
 <p><code>simulation_stocks.php</code> est un outil de <strong>projection en lecture seule</strong> : il
@@ -2007,6 +2276,146 @@ encore la seule saisie manuelle.</p>
 <p>Tous les paramètres de simulation sont portés par les paramètres de l'URL :
 la page est intégralement rejouable et partageable par lien, sans aucun état
 à enregistrer côté serveur.</p>
+<h3>9.7 Commandes de site</h3>
+<p><code>pages/commandes.php</code> porte le circuit unique d'approvisionnement d'un site ;
+les règles de stock de l'expédition et de la réception vivent dans
+<code>includes/reception_commande.php</code> (<code>rcp_stock</code>, <code>rcp_mouvement</code>,
+<code>rcp_statut_ligne</code>…). L'ancien écran Commande bobines ne crée plus de
+demande.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Statut (<code>commandes.statut</code>)</th>
+<th>Libellé</th>
+<th>Étape</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>en_attente</code></td>
+<td>À valider</td>
+<td>Créée par le coordinateur (une seule en attente par site, vérifiée sous verrou)</td>
+</tr>
+<tr>
+<td><code>modification_demandee</code></td>
+<td>À corriger</td>
+<td>Lignes renvoyées ; seul le coordinateur du site corrige</td>
+</tr>
+<tr>
+<td><code>en_attente_livraison</code></td>
+<td>À préparer</td>
+<td>Validée ; choix des bobines par le GSB, puis expédition</td>
+</tr>
+<tr>
+<td><code>en_cours_livraison</code></td>
+<td>En livraison</td>
+<td>Expédiée ; dépôts débités</td>
+</tr>
+<tr>
+<td><code>recu</code></td>
+<td>Reçu</td>
+<td>Réceptionnée par le site</td>
+</tr>
+<tr>
+<td><code>rejete</code>, <code>annule</code></td>
+<td>Rejeté, Annulé</td>
+<td>Annulation avec motif, selon le statut et l'acteur</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Lignes.</strong> Types : article, PMMA, rivets, bobine, vignette, équipement
+informatique, équipement opérationnel ; unités UNITÉ, CARTON, BOBINE, BOÎTE.
+Le superviseur décide <strong>ligne par ligne</strong> (<code>valide</code>, <code>rejete</code>,
+<code>modification_demandee</code>) ; une décision est exigée pour chaque ligne.</p>
+<p><strong>Bobines et vignettes</strong> (<code>commande_ligne_bobines</code>). Le GSB choisit les
+rouleaux en stock à l'entrepôt : la somme de leurs quantités système doit
+égaler la quantité demandée (BOBINE = N × contenance du type, UNITÉ = films ;
+une bobine à 497-499 compte pour 500). Les rouleaux restent à l'entrepôt,
+réservés, jusqu'à la réception ; leurs films sont figés à l'expédition
+(<code>films_expedies</code>). Le gestionnaire peut renvoyer des lignes au GSB tant que
+la commande n'est pas expédiée.</p>
+<p><strong>Expédition.</strong> Chaque ligne article, PMMA ou rivets a son dépôt de sortie
+(<code>commande_lignes.depot_source_id</code>, entrepôt ou magasin), débité à
+l'expédition, bloquant si insuffisant ; une ligne PMMA en CARTON est
+convertie en unités. Quantité livrée bornée entre 0 et la quantité
+commandée ; une ligne rejetée est forcée à 0. Le passage « En livraison »
+se fait d'abord, sous condition du statut : une double soumission ne
+débite pas deux fois. Le bon de livraison s'imprime dès l'expédition (pas
+pour le coordinateur).</p>
+<p><strong>Réception ligne par ligne.</strong> Le coordinateur du site destinataire déclare
+chaque ligne (tout, partiel avec quantité, rien) et coche les rouleaux
+arrivés ; motif obligatoire pour un manque ; BL signé obligatoire, archivé en
+base (<code>commande_bl</code>). Le site n'est crédité que du reçu ; les bobines lui
+passent <code>en_stock</code>. Chaque manque ouvre un écart
+(<code>commande_ecarts_reception</code>), traité par la fonction Magasin (le GSB pour
+les rouleaux) : remise au dépôt d'origine, renvoi (nouvelle commande « À
+préparer ») ou perte — perte en transport imputée au dépôt d'origine (écart
+rivets / PMMA source <code>reception</code>, mouvement <code>perte</code>).</p>
+<p><strong>Statut de ligne</strong> (<code>rcp_statut_ligne()</code>, même calcul pour l'écran et le
+PDF) : Validé, En livraison, Non livré, Livré partiellement, Livré, Non reçu,
+Reçu partiel. La consommation hebdomadaire et l'historique des commandes
+reposent sur la quantité <strong>reçue</strong>.</p>
+<p><strong>Visibilité.</strong> Le coordinateur ne voit que les commandes de son site, sans
+prix ni stock central. La liste est triée selon ce que chaque rôle doit
+traiter.</p>
+<h3>9.8 Équipements et articles</h3>
+<p><strong>Équipements</strong> (<code>equipements</code>). Champs ajoutés : <code>emplacement</code>, <code>agent_id</code>
+(utilisateur, annuaire des agents), <code>numero_serie_origine</code> (N° série
+fabricant ; <code>numero_serie</code> est le N° interne généré). <code>nomenclature_id</code> est
+obligatoire.</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th><code>statut_stock</code></th>
+<th>Sens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>en_stock</code></td>
+<td>Disponible</td>
+</tr>
+<tr>
+<td><code>affecte</code>, <code>en_utilisation</code></td>
+<td>Mis en service (date, agent)</td>
+</tr>
+<tr>
+<td><code>hs</code></td>
+<td>Déclaré hors service, motif</td>
+</tr>
+<tr>
+<td><code>epuise</code></td>
+<td>Consommable arrivé au bout ; <code>actif = 0</code>, fiche conservée</td>
+</tr>
+<tr>
+<td><code>perdu</code></td>
+<td>Déclaré perdu depuis un écart d'inventaire ; <code>actif = 0</code></td>
+</tr>
+<tr>
+<td><code>en_transit</code>, <code>en_attente_affectation</code>, <code>affectation_en_cours</code></td>
+<td>Transfert ou affectation (circuit Achats) en cours</td>
+</tr>
+</tbody>
+</table></div>
+<p>Chaque changement est tracé dans <code>mouvements_equipements</code> et l'audit. Une
+modification ne change pas un statut de circuit (transfert, affectation) et
+trace le changement de site ; la suppression (<code>actif = 0</code>) est refusée
+pendant une affectation ou une intervention non résolue. Le retour en stock
+remet <code>en_stock</code>, sans utilisateur. L'import refuse un N° série externe déjà
+connu.</p>
+<p><strong>Articles.</strong> Le stock central (<code>articles.stock_global</code>) suit les sites
+<code>magasin</code> et <code>entrepot</code> ; la distribution débite le magasin puis l'entrepôt ;
+l'ajustement d'un site terrain ne touche pas le stock central. Le
+coordinateur enregistre une <strong>sortie</strong> sur le stock de son site
+(consommation, perte, casse, autre), tracée dans <code>mouvements_stock</code>. Les
+articles des familles « Matériel et outillage industriel » et
+« Consommables informatiques » (<code>includes/articles_equipements.php</code>)
+deviennent, à la réception ou à la distribution, une fiche d'équipement par
+unité (<code>articles.nomenclature_id</code>).</p>
+<p><strong>Rafraîchissement.</strong> Les zones <code>data-live</code> (commandes, réceptions,
+équipements, bobines, interventions) sont relues toutes les 30 s, à
+l'arrivée d'une notification et au retour sur l'onglet, sauf pendant une
+saisie. Les listes <code>data-paginer</code> sont découpées par 25 côté navigateur.</p>
 <hr>
 </section>
 <section id="s10"><h2><span class="n">10</span> Domaine Demandes internes</h2>
@@ -2134,14 +2543,29 @@ tant que l'informatique ne l'a pas marquée traitée (<code>traite_it</code>), a
 </tr>
 </tbody>
 </table></div>
-<p><strong>Trois règles complémentaires :</strong></p>
+<p><strong>Règles complémentaires :</strong></p>
 <ol>
-<li><strong><code>n1</code> n'est pas un rôle</strong> : c'est le responsable du département du
-   demandeur, résolu dynamiquement.</li>
+<li><strong><code>n1</code> n'est pas un rôle</strong> : ce sont les N+1 (<code>user_departements.is_n1</code>)
+   du département retenu, figé sur la demande (<code>di_demandes.n1_departement_id</code>)
+   à la soumission. Le département est celui du <strong>bénéficiaire</strong> : compte
+   ERP de l'agent (même e-mail), sinon annuaire des agents, sinon champ
+   « Département » du formulaire ; à défaut, celui du demandeur (signalé
+   dans l'historique). <strong>Tous</strong> les N+1 actifs du département voient la
+   demande, sont notifiés et peuvent la viser (<code>di_peut_viser()</code>).
+   Validation d'office seulement si le demandeur est N+1 de ce département.
+   Département sans N+1 : administrateurs et demandeur prévenus, les
+   administrateurs visent. Les FEB gardent la règle à un seul N+1.</li>
 <li><strong>Une étape rattachée à un département</strong> (<code>di_roles.departement_id</code>) peut
    être visée par n'importe quel membre de ce département. C'est ce qui fait
    vivre le visa « Administration », dont le rôle ERP a été supprimé.</li>
 <li><strong>Personne ne vise sa propre demande</strong>, administrateurs compris.</li>
+<li>Visa et rejet sont relus sous verrou ; un rejet est refusé une fois la
+   demande approuvée. Les porteurs du rôle ERP d'une étape (RAF, DAF, PDG,
+   IT) sont notifiés à son ouverture.</li>
+<li>Un <strong>brouillon</strong> se reprend depuis la fiche et se soumet avec le même
+   numéro ; les champs obligatoires et le type actif sont contrôlés côté
+   serveur. Numéro : dernier du jour + 1, avec nouvelle tentative en cas de
+   collision.</li>
 </ol>
 <h3>10.4 Prérequis de dépôt</h3>
 <p>Un utilisateur doit être <strong>rattaché à un département</strong> pour soumettre. Sans
@@ -2555,12 +2979,12 @@ minutes et un rapport en pièce jointe.</p>
 <td>Déclarée, non traitée</td>
 </tr>
 <tr>
-<td><code>en_cours</code></td>
-<td>Prise en charge</td>
-</tr>
-<tr>
 <td><code>partiel</code></td>
 <td>Traitée partiellement</td>
+</tr>
+<tr>
+<td><code>escalade</code></td>
+<td>Escaladée</td>
 </tr>
 <tr>
 <td><code>resolu</code></td>
@@ -2568,6 +2992,12 @@ minutes et un rapport en pièce jointe.</p>
 </tr>
 </tbody>
 </table></div>
+<p>Trois types : préventive (<code>maintenance_preventive</code>), curative
+(<code>maintenance_corrective</code>) et <strong>autre</strong> (installation de matériel,
+remplacement, diagnostic, autre — stocké dans <code>type_action</code>). Le statut
+affiché est dérivé de <code>statut_apres</code> ; toute intervention ouverte se
+termine par « Terminer ». La liste des équipements est filtrée sur le site
+choisi.</p>
 <h3>12.2 Parc et fin de cycle</h3>
 <p>Un équipement porte un état (<code>neuf</code>, <code>bon</code>, <code>usage</code>, <code>reforme</code>), une date de
 mise en service et une <strong>date de fin de cycle</strong>, dérivée de la durée de vie
@@ -2587,8 +3017,19 @@ l'écran des équipements. L'écran des rapports propose en outre une vue à
 <ul>
 <li><strong>En application</strong> : table <code>notifications</code>, cloche avec compteur de non-lus
   dans la barre du haut.</li>
-<li><strong>Par e-mail</strong> : <code>mailer_send()</code>, avec configuration SMTP ou API Brevo
-  éditable depuis l'administration.</li>
+<li><strong>Par e-mail</strong> : toute nouvelle notification entre dans une file
+  (<code>notifications.mail_statut</code> = <code>attente</code>, <code>mail_tentatives</code>,
+  <code>mail_erreur</code>, <code>mail_envoye_le</code>). <code>cron_mails.php</code>, protégé par
+  <code>CRON_TOKEN</code>, l'envoie par SMTP (PHPMailer, variables <code>MAIL_*</code>) toutes les
+  cinq minutes — par la tâche planifiée du serveur, ou par GitHub Actions
+  quand l'hébergeur bloque le SMTP sortant (Render). Ne partent pas : une
+  notification déjà lue, sans destinataire valide, de plus de 48 h, ou dont
+  le destinataire a coupé ses mails (<code>users.notif_mail = 0</code>, réglable dans
+  Mon Profil et par l'administration ; les mails en attente sont alors
+  abandonnés). Trois essais, puis <code>echec</code>. L'écran Administration → Mails
+  suit les envois, relance et envoie un mail de test.</li>
+<li><strong>Alertes planifiées</strong> (<code>cron/check_alerts.php</code>) : fins de cycle
+  d'équipements et stock bas, sans doublon, regroupées au-delà de cinq.</li>
 </ul>
 <h3>13.2 Journal d'audit</h3>
 <p><code>audit_log</code>, alimenté par <code>audit_log()</code>. Trace qui a fait quoi et quand. Un
@@ -2596,7 +3037,12 @@ compte désactivé n'est jamais supprimé, précisément pour que sa trace reste
 exploitable.</p>
 <h3>13.3 Documents PDF</h3>
 <p>Dompdf. Trois documents pour les achats — fiche seule, fiche avec circuit de
-validation, bon de commande — et l'impression du point journalier.</p>
+validation, bon de commande — l'impression du point journalier, le bon de
+commande et le <strong>bon de livraison</strong> des commandes de site, l'export des
+inventaires et la vue stock bobines. Les pièces déposées (pièces jointes
+de FEB, BL, bons de transfert, fiches signées) sont archivées en base
+(<code>fichiers_archives</code>, <code>commande_bl</code>) et servies par <code>pages/fichier.php</code> et
+<code>pages/commandes_bl.php</code>, connexion et droit exigés.</p>
 <h3>13.4 Authentification</h3>
 <ul>
 <li>Mot de passe haché (<code>password_hash</code>).</li>
@@ -2608,6 +3054,9 @@ validation, bon de commande — et l'impression du point journalier.</p>
   (<code>reset_token</code>, <code>reset_token_expiry</code>), qui lève la contrainte.</li>
 <li>Les mots de passe sont nettoyés de leurs espaces de bord à la saisie comme
   à la connexion, un collage depuis un e-mail en traînant souvent.</li>
+<li>Session de 15 minutes d'inactivité ; quand la vérification des
+  notifications ramène la page de connexion, un bandeau « Votre session a
+  expiré » propose de se reconnecter dans un nouvel onglet.</li>
 </ul>
 <h3>13.5 Tableau de bord KPI</h3>
 <p><code>kpi_dashboard.php</code> est un tableau de bord distinct des deux existants —
@@ -2734,6 +3183,27 @@ personnelle ou partagée ; seul son propriétaire peut la supprimer, même
 partagée. Le rafraîchissement au changement de filtre est animé, sans
 rechargement de page — le même moteur que <code>pdg_overview.php</code>.</p>
 <p>Protégé par le module <code>kpi_dashboard</code>, <code>can_read</code>.</p>
+<h4>Évolutions d'octobre et novembre 2026</h4>
+<ul>
+<li><strong>Production = points 18h validés.</strong> Les chiffres de production (vue
+  PDG, dashboard KPI, accueil, consommation) ne comptent que les points
+  <code>point_18h</code> au statut <code>valide</code>, plus les points <code>historique</code>. Le suivi de
+  saisie (points en attente, taux de validation) et les prévisions de
+  stock portent sur tous les points.</li>
+<li><strong>Panneau « Fiabilité &amp; pertes »</strong> : sites sans point soumis au jour de
+  référence (sites attendus = sites actifs de type Pose ou Mixte détenant
+  une bobine active), rapprochement EMUCI (plaques <code>in_use</code> contre plaques
+  déclarées, jours couverts par un import), taux de films endommagés,
+  causes et étapes. Aucun classement nominatif.</li>
+<li><strong>Bandeau « Points d'attention »</strong> en tête, avec un lien vers l'écran de
+  détail de chaque ligne et de chaque panneau.</li>
+<li><strong>Duplicatas &amp; Post-Immat</strong> : section affichée si le périmètre compte un
+  site en Re-Immatriculation.</li>
+<li>Couverture plafonnée, pourcentages entiers (« &lt; 1 % » pour une valeur
+  non nulle), « Tous les sites » coché explicitement.</li>
+<li><strong>Vue exécutive</strong> : option « Depuis le début de l'activité »
+  (<code>annee=tout</code>, <code>periode_contexte($avec_tout)</code>), sans période précédente.</li>
+</ul>
 <h3>13.6 Référentiels &amp; capacités</h3>
 <p><code>admin/referentiels_operations.php</code> administre les <strong>capacités de
 conditionnement</strong> — films par bobine selon la série, unités par carton PMMA —
@@ -2815,9 +3285,16 @@ toutes les projections (§9.6) et à tout stock créé ensuite.</p>
    existe désormais (<code>tools/inventaire_migrations.php</code>, 6.3), mais il inspecte
    l'état d'une base à un instant donné : il ne remplace pas un
    enregistrement systématique de ce qui a été joué, ni quand.</li>
-<li><strong>Deux moteurs à maintenir en parallèle.</strong> PostgreSQL en recette, MySQL en
+<li>
+<p><strong>Deux moteurs à maintenir en parallèle.</strong> PostgreSQL en recette, MySQL en
    production : chaque requête à syntaxe propriétaire existe en deux versions,
-   et rien n'empêche mécaniquement les deux branches de diverger.</li>
+   et rien n'empêche mécaniquement les deux branches de diverger.</p>
+</li>
+<li>
+<p><strong>Migrations à usage unique.</strong> Les migrations qui ne doivent jouer qu'une
+   fois (remise à zéro de droits) s'enregistrent dans
+   <code>migrations_ponctuelles</code> ; les autres doivent rester rejouables.</p>
+</li>
 </ol>
 <div class="note note-info"><span class="note-t">Résolu depuis la v3.0</span><p> Le point « quatre modules Achats hors matrice »
 ne se vérifie plus : ces quatre modules sont administrables depuis
@@ -2892,6 +3369,11 @@ l'interface au même titre que les cinquante-deux autres (7.1).</p>
 <td>2026-09-24</td>
 <td>Consommation de films : points journaliers et saisie manuelle additionnés (9.6) ; couverture du tableau de bord KPI sur la sélection de sites, les bobines actives et le premier format épuisé (13.5).</td>
 </tr>
+<tr>
+<td>5.0</td>
+<td>2026-11-19</td>
+<td>Remise à niveau sur 197 commits. <strong>Réécrit</strong> : point journalier — retrait du stock à la validation du 18h, <code>stock_deduit</code>, non conformes, endommagements par unité, Re-Immatriculation, journée sans production (8.1) ; imports et comparaison OptoPlate, historique, point automatique (8.2) ; bobines (9.1) ; validation du stock du jour (9.2) ; inventaires — date de stock, moment du comptage, validation unique, verrous, absentes, équipements trouvés et perdus, export (9.4). <strong>Ajouté</strong> : commandes de site (9.7), équipements et articles (9.8), modules fonction et <code>can_export</code> (7.1), sous-rôles Support IT limités aux modules techniques (7.5), N+1 du bénéficiaire et tous les N+1 du département (10.3), interventions « autre » (12.1), envoi des notifications par mail (13.1), archivage des pièces en base (13.3). 133 tables, 121 fichiers SQL, 57 modules dans la matrice.</td>
+</tr>
 </tbody>
 </table></div>
 </section>
@@ -2901,8 +3383,9 @@ l'interface au même titre que les cinquante-deux autres (7.1).</p>
 <div class="impr-pied" style="margin-top:10mm;padding-top:4mm;border-top:1px solid #c3ccdf;
      font-size:9pt;color:#4d5876">
   Spécification fonctionnelle et technique — ERP EMUCI — document interne. État du logiciel au commit
-  <code>ff9fc2c</code>. Toute évolution fonctionnelle rend une section caduque :
-  vérifiez la version avant de vous y fier.
+  <code>5866232</code>. Toute évolution fonctionnelle rend une section caduque :
+  vérifiez la version avant de vous y fier.<br>
+  Auteur : GAYE Emmanuel — gayerodrigue@gmail.com — <span style="white-space:nowrap">+225 01 03 55 96 52</span>
 </div>
 
 <script type="module">
