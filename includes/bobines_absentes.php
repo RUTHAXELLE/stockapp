@@ -130,7 +130,8 @@ function bab_comptee_ailleurs(int $bobine_id, array $inv, bool $retrouvee_seulem
          JOIN inventaires_bobines i ON i.id = d.inventaire_id
          LEFT JOIN sites s ON s.id = i.site_id
          WHERE d.bobine_id = ? AND i.statut = 'valide' AND i.site_id <> ? AND i.id <> ?
-           AND d.absente = 0 AND (d.stock_physique > 0 OR d.ecart <> 0)" . ($retrouvee_seulement ? " AND d.ajoutee = 1" : ""),
+           AND d.absente = 0 AND (d.stock_physique > 0 OR d.ecart <> 0"
+           . (db_colonne_existe('inventaire_details_bobines', 'saisi_at') ? " OR d.saisi_at IS NOT NULL" : "") . ")" . ($retrouvee_seulement ? " AND d.ajoutee = 1" : ""),
         [$bobine_id, (int)$inv['site_id'], (int)$inv['id']]) as $o) {
         if (bab_meme_campagne($o, $inv)) return (string)($o['site_nom'] ?? ('inventaire #' . $o['id']));
     }

@@ -173,7 +173,7 @@ if ($site_force) {
         "SELECT se.id, se.libelle, se.date_debut, se.date_fin, se.type_periode,
                 ir.id AS inv_id, ir.statut AS inv_statut, ir.nb_types,
                 (SELECT COUNT(*) FROM inventaire_details_rivets d
-                 WHERE d.inventaire_id = ir.id AND (d.stock_physique > 0 OR d.ecart != 0)) AS nb_saisis
+                 WHERE d.inventaire_id = ir.id AND " . inv_sql_ligne_saisie('rivets') . ") AS nb_saisis
          FROM inventaire_sessions se
          JOIN inventaire_session_sites iss ON iss.session_id = se.id
          LEFT JOIN inventaires_rivets ir ON ir.session_id = se.id AND ir.site_id = iss.site_id AND ir.statut != 'annule'

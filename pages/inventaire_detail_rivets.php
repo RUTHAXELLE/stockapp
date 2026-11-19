@@ -42,7 +42,10 @@ $can_edit     = $inv['statut'] === 'brouillon' && can('inventaire_rivets','can_u
 $can_validate = $inv['statut'] === 'brouillon'
     && droit_fonction(FONCTION_INV_VALIDER['rivets']);
 $is_coord           = ($role_slug === 'coordinateur_site');
-$can_demander_site  = can('inventaire_sessions','can_read');
+$can_demander_site  = inv_peut_demander_site('rivets');
+// Ligne rouverte par une demande : c'est le site qui corrige (coordinateur),
+// à défaut un administrateur ; pas un autre profil à sa place.
+$peut_corriger = ($user['role_slug'] ?? '') === 'coordinateur_site' || in_array($user['role_slug'] ?? '', ['admin', 'superadmin'], true);
 $page_title  = 'Inventaire rivets du ' . fmt_date($inv['date_inventaire']);
 $active_page = 'inventaire_rivets';
 $types_rivets = ['gonflable' => 'Gonflables', 'eclate' => 'Éclatés'];
@@ -64,18 +67,18 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $det = db_fetch_one("SELECT * FROM inventaire_details_rivets WHERE id=? AND inventaire_id=?", [$detail_id, $inv_id]);
         if (!$det) json_response(false,'Ligne introuvable.');
         // Verrou côté serveur : le champ grisé de l'écran ne protégeait rien.
-        if (inv_ag_ligne_saisie($det) && !inv_ligne_deverrouillee('inventaire_corrections_rivets', $detail_id))
+        if (inv_ag_ligne_saisie($det) && !(inv_ligne_deverrouillee('inventaire_corrections_rivets', $detail_id) && $peut_corriger))
             json_response(false,'Ligne déjà saisie : passez par une demande de modification.');
         try {
             $inv = inv_dater_comptage('rivets', $inv);
             $ecart_mesure = inv_ag_enregistrer('rivets', $inv, $det, $stock_physique, $notes, (int)$user['id']);
         } catch (Exception $e) { json_response(false, $e->getMessage()); }
 
-        json_response(true,'Sauvegardé.',['ecart_mesure'=>$ecart_mesure]);
+        json_response(true,'Sauvegardé.', $is_coord ? [] : ['ecart_mesure'=>$ecart_mesure]);
     }
 
     if ($action==='demander_modif') {
-        if (!$can_demander_site) json_response(false,'Action réservée à l\'administrateur ou au responsable de session.');
+        if (!$can_demander_site) json_response(false,'Action réservée aux profils qui valident l\'inventaire.');
         $detail_id       = (int)($_POST['detail_id'] ?? 0);
         $motif           = trim($_POST['motif'] ?? '');
         $valeur_proposee = ($_POST['valeur_proposee'] ?? '') !== '' ? (int)$_POST['valeur_proposee'] : null;
@@ -137,7 +140,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
         $nom = trim(($user['prenom'] ?? '').' '.($user['nom'] ?? ''));
         $lbl = $types_rivets[$det['type_rivet']] ?? $det['type_rivet'];
-        $admins = array_map(fn($x) => ['id' => $x], inv_destinataires_autorisation());
+        $admins = array_map(fn($x) => ['id' => $x], inv_destinataires_autorisation('rivets'));
         foreach ($admins as $a) {
             db_query(
                 "INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
@@ -151,7 +154,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     }
 
     if ($action==='autoriser_modif') {
-        if (!$can_demander_site) json_response(false,'Action réservée à l\'administrateur ou au responsable de session.');
+        if (!$can_demander_site) json_response(false,'Action réservée aux profils qui valident l\'inventaire.');
         $corr_id = (int)($_POST['correction_id'] ?? 0);
         $corr = db_fetch_one(
             "SELECT * FROM inventaire_corrections_rivets WHERE id=? AND inventaire_id=? AND type='demande_autorisation' AND statut='en_attente'",
@@ -173,7 +176,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     }
 
     if ($action==='refuser_modif') {
-        if (!$can_demander_site) json_response(false,'Action réservée à l\'administrateur ou au responsable de session.');
+        if (!$can_demander_site) json_response(false,'Action réservée aux profils qui valident l\'inventaire.');
         $corr_id = (int)($_POST['correction_id'] ?? 0);
         $motif_refus = trim($_POST['motif'] ?? '');
         $corr = db_fetch_one(
@@ -199,7 +202,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     }
 
     if ($action==='repondre_modif') {
-        if (!$can_edit) json_response(false,'Action non autorisée.');
+        if (!$can_edit || !$peut_corriger) json_response(false,'Seul le site (ou un administrateur) corrige une ligne rouverte.');
         $corr_id       = (int)($_POST['correction_id'] ?? 0);
         $valeur_finale = ($_POST['valeur_finale'] ?? '') !== '' ? (int)$_POST['valeur_finale'] : null;
         $reponse       = trim($_POST['reponse'] ?? '');
@@ -234,7 +237,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
              '/pages/inventaire_detail_rivets.php?id=' . $inv_id]
         );
 
-        json_response(true,'Réponse envoyée.',['ecart_mesure'=>$ecart_mesure]);
+        json_response(true,'Réponse envoyée.', $is_coord ? [] : ['ecart_mesure'=>$ecart_mesure]);
     }
 
     if ($action==='sauver_tout') {
@@ -255,7 +258,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
                 $det = db_fetch_one("SELECT * FROM inventaire_details_rivets WHERE id=? AND inventaire_id=?", [$detail_id, $inv_id]);
                 if (!$det) continue;
                 // Ligne déjà saisie et non rouverte : verrouillée.
-                if (inv_ag_ligne_saisie($det) && !inv_ligne_deverrouillee('inventaire_corrections_rivets', $detail_id)) continue;
+                if (inv_ag_ligne_saisie($det) && !(inv_ligne_deverrouillee('inventaire_corrections_rivets', $detail_id) && $peut_corriger)) continue;
 
                 inv_ag_enregistrer('rivets', $inv, $det, $phy_val, $notes, (int)$user['id']);
                 $saved++;

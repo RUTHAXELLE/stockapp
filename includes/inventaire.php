@@ -138,7 +138,7 @@ function inv_valider_bobines(array $inv, int $user_id): array {
     }
     if ($non_comptees) throw new Exception(count($non_comptees) . ' bobine(s) non comptée(s) : ' . implode(', ', array_slice($non_comptees, 0, 15))
         . (count($non_comptees) > 15 ? '…' : '') . '. Saisissez chaque bobine (0 si vide, ou « absente ») avant de valider.');
-    $conso  = inv_conso_apres((int)$inv['site_id'], inv_date_stock($inv), 'films');
+    inv_verifier_point18h_lignes($inv, $lignes);
     $nb_ecarts = 0;
     $total_physique = 0;
     $bab = bab_actif();
@@ -162,7 +162,7 @@ function inv_valider_bobines(array $inv, int $user_id): array {
              FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id WHERE b.id=? FOR UPDATE OF b", [$l['bobine_id']]);
         if (!$bob) continue;
         $phy       = (int)$l['stock_physique'];
-        $deja      = $conso[(int)$l['bobine_id']] ?? 0;
+        $deja      = inv_conso_apres_memo((int)$inv['site_id'], inv_date_stock_ligne($inv, $l['saisi_at'] ?? null), 'films')[(int)$l['bobine_id']] ?? 0;
         $ailleurs  = $bab && (int)$bob['site_id'] !== $site_inv;
 
         if ($bab && !empty($l['absente'])) {
@@ -258,8 +258,8 @@ function inv_valider_bobines(array $inv, int $user_id): array {
         );
     }
     db_query(
-        "UPDATE inventaires_bobines SET statut='valide',nb_ecarts=?,total_films_physique=?,valide_par=?,valide_at=NOW() WHERE id=?",
-        [$nb_ecarts, $total_physique, $user_id, $inv_id]
+        "UPDATE inventaires_bobines SET statut='valide',nb_ecarts=?,total_films_physique=?,valide_par=?,valide_at=NOW(),date_inventaire=? WHERE id=?",
+        [$nb_ecarts, $total_physique, $user_id, inv_dernier_jour_comptage($inv, $lignes), $inv_id]
     );
     return ['nb_ecarts' => $nb_ecarts, 'total_physique' => $total_physique,
             'absentes' => $absentes, 'retrouvees' => $retrouvees, 'ignorees' => $ignorees, 'conflits' => $conflits];
@@ -310,6 +310,42 @@ function inv_point18h_en_attente(int $site_id, string $date): ?string {
 function inv_date_stock(array $inv): string {
     $d = (string)$inv['date_inventaire'];
     return !empty($inv['comptage_matin']) ? date('Y-m-d', strtotime("$d -1 day")) : $d;
+}
+
+// ── Date du stock d'une LIGNE : le jour où elle a été comptée (saisi_at),
+//    veille comprise pour un comptage du matin. Un site qui compte sur
+//    plusieurs jours voyait la consommation des jours suivants retirée aussi
+//    des lignes comptées après elle. Ligne sans date de saisie : date de
+//    l'inventaire. $saisi_at null pour une saisie en cours : maintenant.
+function inv_date_stock_ligne(array $inv, ?string $saisi_at = null): string {
+    $j = substr($saisi_at ?? date('Y-m-d H:i:s'), 0, 10);
+    if ($j < (string)$inv['date_inventaire']) $j = (string)$inv['date_inventaire'];
+    return !empty($inv['comptage_matin']) ? date('Y-m-d', strtotime("$j -1 day")) : $j;
+}
+
+// ── Consommation après une date, mémorisée pour la durée de la requête.
+function inv_conso_apres_memo(int $site_id, string $date, string $quoi): array {
+    static $memo = [];
+    return $memo["$site_id|$date|$quoi"] ??= inv_conso_apres($site_id, $date, $quoi);
+}
+
+// ── Point 18h attendu pour chaque jour de stock des lignes comptées.
+function inv_verifier_point18h_lignes(array $inv, array $lignes): void {
+    $dates = [inv_date_stock($inv) => true];
+    foreach ($lignes as $l) if (!empty($l['saisi_at'])) $dates[inv_date_stock_ligne($inv, (string)$l['saisi_at'])] = true;
+    foreach (array_keys($dates) as $d) {
+        if (inv_point18h_en_attente((int)$inv['site_id'], $d) !== null)
+            throw new Exception("le point 18h du " . date('d/m/Y', strtotime($d)) . " de ce site n'est pas encore validé par le superviseur."
+                . " Le comptage est le stock de fin de journée : validez d'abord ce point, puis l'inventaire.");
+    }
+}
+
+// ── Dernier jour de comptage des lignes : l'inventaire validé prend cette
+//    date, pour que le garde-fou des points couvre tout le comptage.
+function inv_dernier_jour_comptage(array $inv, array $lignes): string {
+    $d = (string)$inv['date_inventaire'];
+    foreach ($lignes as $l) if (!empty($l['saisi_at']) && substr((string)$l['saisi_at'], 0, 10) > $d) $d = substr((string)$l['saisi_at'], 0, 10);
+    return $d;
 }
 
 function inv_moment_dispo(string $table): bool {
@@ -616,18 +652,33 @@ function inv_changer_moment(string $type, array $inv, bool $matin): void {
     $t = INV_TABLES[$type];
     if (!inv_moment_dispo($t['inv'])) throw new Exception('Option indisponible : migration non passée.');
     if ($inv['statut'] !== 'brouillon') throw new Exception("L'inventaire n'est plus en cours.");
-    $ancienne = inv_date_stock($inv);
+    $avant = $inv;
     $inv['comptage_matin'] = $matin ? 1 : 0;
-    $nouvelle = inv_date_stock($inv);
+    if (!empty($avant['comptage_matin']) === $matin) return;
     db_begin();
     try {
         db_query("UPDATE {$t['inv']} SET comptage_matin=? WHERE id=? AND statut='brouillon'", [$matin ? 1 : 0, (int)$inv['id']]);
-        if ($ancienne !== $nouvelle && isset(INV_AGREGE[$type]) && inv_ag_reference_dispo($type)) {
+        if ($type === 'bobines') {
+            // Écart affiché des lignes déjà comptées, recalculé sur la nouvelle date.
+            foreach (db_fetch_all(
+                "SELECT d.id, d.bobine_id, d.stock_physique, d.saisi_at, b.films_restants FROM inventaire_details_bobines d
+                   JOIN op_bobines b ON b.id = d.bobine_id
+                  WHERE d.inventaire_id=? AND d.saisi_at IS NOT NULL" . (db_colonne_existe('inventaire_details_bobines', 'absente') ? ' AND d.absente = 0' : ''),
+                [(int)$inv['id']]) as $l) {
+                $sys = (int)$l['films_restants']
+                     + (inv_conso_apres_memo((int)$inv['site_id'], inv_date_stock_ligne($inv, (string)$l['saisi_at']), 'films')[(int)$l['bobine_id']] ?? 0);
+                db_query("UPDATE inventaire_details_bobines SET ecart=? WHERE id=?", [(int)$l['stock_physique'] - $sys, (int)$l['id']]);
+            }
+        }
+        if (isset(INV_AGREGE[$type]) && inv_ag_reference_dispo($type)) {
             $c = INV_AGREGE[$type];
-            [$de, $a] = $nouvelle < $ancienne ? [$nouvelle, $ancienne] : [$ancienne, $nouvelle];
-            $signe = $nouvelle < $ancienne ? 1 : -1;
             foreach (db_fetch_all("SELECT * FROM {$c['det']} WHERE inventaire_id=? AND stock_reference IS NOT NULL AND saisi_at IS NOT NULL",
                                   [(int)$inv['id']]) as $l) {
+                $ancienne = inv_date_stock_ligne($avant, (string)$l['saisi_at']);
+                $nouvelle = inv_date_stock_ligne($inv, (string)$l['saisi_at']);
+                if ($ancienne === $nouvelle) continue;
+                [$de, $a] = $nouvelle < $ancienne ? [$nouvelle, $ancienne] : [$ancienne, $nouvelle];
+                $signe = $nouvelle < $ancienne ? 1 : -1;
                 $delta = inv_conso_points((int)$inv['site_id'], $type, 'p.date_point > ? AND p.date_point <= ? AND p.validated_at <= ?',
                                           [$de, $a, (string)$l['saisi_at']])[(string)$l[$c['cle']]] ?? 0;
                 if ($delta === 0) continue;
@@ -670,11 +721,23 @@ function inv_date_valide(string $d): ?string {
 
 // ── Destinataires d'une demande d'autorisation du coordinateur : ceux qui
 //    peuvent l'accorder (administrateurs et délégations de session).
-function inv_destinataires_autorisation(): array {
-    return array_map('intval', array_column(db_fetch_all(
+function inv_destinataires_autorisation(?string $type = null): array {
+    $ids = array_map('intval', array_column(db_fetch_all(
         "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id
           WHERE u.actif=1 AND (r.slug IN ('admin','superadmin')
              OR EXISTS (SELECT 1 FROM delegations dg WHERE dg.gestionnaire_id=u.id AND dg.module='inventaire_sessions' AND dg.actif=1))"), 'id'));
+    // Profils qui valident ce type d'inventaire (GSB, superviseur…), qui
+    // peuvent aussi autoriser la demande.
+    if ($type !== null && isset(FONCTION_INV_VALIDER[$type]))
+        $ids = array_merge($ids, users_fonction(FONCTION_INV_VALIDER[$type], false));
+    return array_values(array_unique($ids));
+}
+
+// ── Peut demander une modification au site, et autoriser ou refuser la
+//    demande du coordinateur : administrateurs, délégations de session, et
+//    profils qui valident ce type d'inventaire.
+function inv_peut_demander_site(string $type): bool {
+    return can('inventaire_sessions', 'can_read') || droit_fonction(FONCTION_INV_VALIDER[$type]);
 }
 
 // ── Une ligne saisie ne se rouvre que par une demande (envoyée par l'admin,
@@ -756,7 +819,7 @@ function inv_ag_enregistrer(string $type, array $inv, array $det, int $phy, ?str
     $sets = 'stock_physique=?, ecart=?';
     if (inv_ag_reference_dispo($type)) {
         $ref = inv_ag_stock_actuel($type, (int)$inv['site_id'], $cle)
-             + (inv_conso_apres((int)$inv['site_id'], inv_date_stock($inv), $type)[$cle] ?? 0);
+             + (inv_conso_apres((int)$inv['site_id'], inv_date_stock_ligne($inv), $type)[$cle] ?? 0);
         $ecart  = $phy - $ref;
         $params = [$phy, $ecart, $ref];
         $sets  .= ', stock_reference=?, saisi_at=NOW()';
@@ -778,8 +841,8 @@ function inv_valider_agrege(string $type, array $inv, int $user_id): array {
     $site   = (int)$inv['site_id'];
     inv_verrouiller_brouillon($c['inv'], $inv_id);
     inv_verifier_pas_plus_recent($c['inv'], $inv);
-    inv_verifier_point18h($inv);
     $lignes = db_fetch_all("SELECT * FROM {$c['det']} WHERE inventaire_id=?", [$inv_id]);
+    inv_verifier_point18h_lignes($inv, $lignes);
     $manque = array_map(fn($l) => $l[$c['cle']], array_filter($lignes, fn($l) => !inv_ag_ligne_saisie($l)));
     if ($manque) throw new Exception('ligne(s) non comptée(s) : ' . implode(', ', $manque) . '. Saisissez chaque ligne (0 si rien) avant de valider.');
     $conso = inv_conso_apres($site, inv_date_stock($inv), $type);
@@ -791,7 +854,7 @@ function inv_valider_agrege(string $type, array $inv, int $user_id): array {
         $actuel = inv_ag_stock_actuel($type, $site, $cle, true);
         if (isset($l['stock_reference']) && $l['stock_reference'] !== null && !empty($l['saisi_at'])) {
             $tardif = inv_conso_points($site, $type, 'p.date_point <= ? AND p.validated_at > ?',
-                [inv_date_stock($inv), (string)$l['saisi_at']])[$cle] ?? 0;
+                [inv_date_stock_ligne($inv, (string)$l['saisi_at']), (string)$l['saisi_at']])[$cle] ?? 0;
             $sys     = (int)$l['stock_reference'] - $tardif;   // stock théorique au comptage
             $ecart   = $phy - $sys;
             $nouveau = max(0, $actuel + $ecart);
@@ -814,8 +877,8 @@ function inv_valider_agrege(string $type, array $inv, int $user_id): array {
                 [$site, $cle, $inv['date_inventaire'], $sys, $phy, $ecart, $l['notes'] ?? '', $inv_id, $user_id, $user_id]);
         }
     }
-    db_query("UPDATE {$c['inv']} SET statut='valide',nb_ecarts=?,total_quantite_physique=?,valide_par=?,valide_at=NOW() WHERE id=?",
-        [$nb_ecarts, $total_physique, $user_id, $inv_id]);
+    db_query("UPDATE {$c['inv']} SET statut='valide',nb_ecarts=?,total_quantite_physique=?,valide_par=?,valide_at=NOW(),date_inventaire=? WHERE id=?",
+        [$nb_ecarts, $total_physique, $user_id, inv_dernier_jour_comptage($inv, $lignes), $inv_id]);
     return ['nb_ecarts' => $nb_ecarts, 'total_physique' => $total_physique];
 }
 

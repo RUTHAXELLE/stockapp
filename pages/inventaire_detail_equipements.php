@@ -44,7 +44,10 @@ $can_edit     = $inv['statut'] === 'brouillon' && can('inventaire_equipements','
 // charge des équipements.
 $can_validate = $inv['statut'] === 'brouillon'
     && droit_fonction(FONCTION_INV_VALIDER['equipements']);
-$can_demander_site  = can('inventaire_sessions','can_read');
+$can_demander_site  = inv_peut_demander_site('equipements');
+// Ligne rouverte par une demande : c'est le site qui corrige (coordinateur),
+// à défaut un administrateur ; pas un autre profil à sa place.
+$peut_corriger = ($user['role_slug'] ?? '') === 'coordinateur_site' || in_array($user['role_slug'] ?? '', ['admin', 'superadmin'], true);
 // Équipements trouvés hors système (includes/equipements_trouves.php) :
 // seul le coordinateur du site déclare ; le gestionnaire de stock (ou un
 // administrateur) décide, avant la validation de l'inventaire.
@@ -73,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $det = db_fetch_one("SELECT * FROM inventaire_details_equipements WHERE id=? AND inventaire_id=?", [$detail_id, $inv_id]);
         if (!$det) json_response(false,'Ligne introuvable.');
         // Verrou côté serveur : le champ grisé de l'écran ne protégeait rien.
-        if ($det['trouve'] !== null && !inv_ligne_deverrouillee('inventaire_corrections_equipements', $detail_id))
+        if ($det['trouve'] !== null && !(inv_ligne_deverrouillee('inventaire_corrections_equipements', $detail_id) && $peut_corriger))
             json_response(false,'Ligne déjà saisie : passez par une demande de modification.');
         $inv = inv_dater_comptage('equipements', $inv);
 
@@ -83,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     }
 
     if ($action==='demander_modif') {
-        if (!$can_demander_site) json_response(false,'Action réservée à l\'administrateur ou au responsable de session.');
+        if (!$can_demander_site) json_response(false,'Action réservée aux profils qui valident l\'inventaire.');
         $detail_id       = (int)($_POST['detail_id'] ?? 0);
         $motif           = trim($_POST['motif'] ?? '');
         $valeur_proposee = ($_POST['valeur_proposee'] ?? '') !== '' ? (int)$_POST['valeur_proposee'] : null;
@@ -151,7 +154,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $corr_id = (int)db_last_id();
 
         $nom = trim(($user['prenom'] ?? '').' '.($user['nom'] ?? ''));
-        $admins = array_map(fn($x) => ['id' => $x], inv_destinataires_autorisation());
+        $admins = array_map(fn($x) => ['id' => $x], inv_destinataires_autorisation('equipements'));
         foreach ($admins as $a) {
             db_query(
                 "INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
@@ -165,7 +168,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     }
 
     if ($action==='autoriser_modif') {
-        if (!$can_demander_site) json_response(false,'Action réservée à l\'administrateur ou au responsable de session.');
+        if (!$can_demander_site) json_response(false,'Action réservée aux profils qui valident l\'inventaire.');
         $corr_id = (int)($_POST['correction_id'] ?? 0);
         $corr = db_fetch_one(
             "SELECT * FROM inventaire_corrections_equipements WHERE id=? AND inventaire_id=? AND type='demande_autorisation' AND statut='en_attente'",
@@ -187,7 +190,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     }
 
     if ($action==='refuser_modif') {
-        if (!$can_demander_site) json_response(false,'Action réservée à l\'administrateur ou au responsable de session.');
+        if (!$can_demander_site) json_response(false,'Action réservée aux profils qui valident l\'inventaire.');
         $corr_id = (int)($_POST['correction_id'] ?? 0);
         $motif_refus = trim($_POST['motif'] ?? '');
         $corr = db_fetch_one(
@@ -213,11 +216,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     }
 
     if ($action==='repondre_modif') {
-        if (!$can_edit) json_response(false,'Action non autorisée.');
+        if (!$can_edit || !$peut_corriger) json_response(false,'Seul le site (ou un administrateur) corrige une ligne rouverte.');
         $corr_id       = (int)($_POST['correction_id'] ?? 0);
         $valeur_finale = ($_POST['valeur_finale'] ?? '') !== '' ? (int)$_POST['valeur_finale'] : null;
         $reponse       = trim($_POST['reponse'] ?? '');
-        if ($valeur_finale === null) json_response(false,'Le statut corrigé est obligatoire.');
+        if ($valeur_finale === null || !in_array($valeur_finale, [0, 1], true)) json_response(false,'Le statut corrigé est obligatoire (trouvé ou manquant).');
 
         $corr = db_fetch_one("SELECT * FROM inventaire_corrections_equipements WHERE id=? AND inventaire_id=? AND statut IN ('en_attente','autorise')", [$corr_id, $inv_id]);
         if (!$corr) json_response(false,'Demande introuvable ou déjà traitée.');
@@ -265,7 +268,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
                 $det = db_fetch_one("SELECT * FROM inventaire_details_equipements WHERE id=? AND inventaire_id=?", [$detail_id, $inv_id]);
                 if (!$det) continue;
-                if ($det['trouve'] !== null && !inv_ligne_deverrouillee('inventaire_corrections_equipements', $detail_id)) continue;
+                if ($det['trouve'] !== null && !(inv_ligne_deverrouillee('inventaire_corrections_equipements', $detail_id) && $peut_corriger)) continue;
 
                 db_query("UPDATE inventaire_details_equipements SET trouve=?,notes=? WHERE id=?", [$trouve,$notes,$detail_id]);
                 if ($det['trouve'] !== null) inv_clore_demandes('inventaire_corrections_equipements', $detail_id, $trouve, (int)$user['id']);

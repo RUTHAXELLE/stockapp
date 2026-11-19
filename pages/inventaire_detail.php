@@ -50,7 +50,10 @@ $is_coord           = ($role_slug === 'coordinateur_site');
 // Seuls l'admin/superadmin (ou une délégation du module) peuvent interpeller
 // directement le site sur une ligne verrouillée, ou autoriser/refuser une
 // demande d'autorisation venue du coordinateur.
-$can_demander_site  = can('inventaire_sessions','can_read');
+$can_demander_site  = inv_peut_demander_site('bobines');
+// Ligne rouverte par une demande : c'est le site qui corrige (coordinateur),
+// à défaut un administrateur ; pas un autre profil à sa place.
+$peut_corriger = ($user['role_slug'] ?? '') === 'coordinateur_site' || in_array($user['role_slug'] ?? '', ['admin', 'superadmin'], true);
 // Bobines absentes / retrouvées (includes/bobines_absentes.php), actives
 // une fois la migration passée.
 $bab = bab_actif();
@@ -96,7 +99,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
             [$detail_id, $inv_id]
         );
         if (!$det) json_response(false,'Ligne introuvable.');
-        if (bab_ligne_saisie($det) && !_inv_ligne_deverrouillee($detail_id))
+        if (bab_ligne_saisie($det) && !(_inv_ligne_deverrouillee($detail_id) && $peut_corriger))
             json_response(false,'Ligne déjà saisie : passez par une demande de modification.');
         if ($absente && !empty($det['ajoutee'])) json_response(false,"Une bobine ajoutée comme retrouvée ne peut pas être déclarée absente : retirez-la de l'inventaire.");
         if ($absente && bab_ligne_saisie($det) && !_inv_ligne_deverrouillee($detail_id)) json_response(false,'Ligne déjà saisie : passez par une demande de modification.');
@@ -110,7 +113,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         // Stock au comptage : ERP actuel + films retirés depuis par les
         // points datés d'après l'inventaire (cf. inv_conso_apres()).
         $stock_sys    = (int)$det['erp_actuel']
-                      + (inv_conso_apres((int)$inv['site_id'], inv_date_stock($inv), 'films')[(int)$det['bobine_id']] ?? 0);
+                      + (inv_conso_apres((int)$inv['site_id'], inv_date_stock_ligne($inv), 'films')[(int)$det['bobine_id']] ?? 0);
         $stock_phy    = $stock_physique !== null ? $stock_physique : (int)$det['stock_physique'];
         $ecart_connu  = (int)($det['ecart_connu_avant'] ?? 0);
         $ecart_mesure = $stock_phy - $stock_sys;       // écart détecté lors de l'inventaire
@@ -136,7 +139,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
             audit_log($user['id'],'UPDATE','inventaire_bobines',$inv_id,"Bobine déclarée absente (ligne #$detail_id) — inventaire #$inv_id");
         }
 
-        json_response(true,'Sauvegardé.',['ecart_mesure'=>$ecart_mesure,'ecart_total'=>$ecart_total,'jours_phy'=>$jours_phy,'date_epuis'=>$date_epuis]);
+        // n° 2.3 CR PDG : aucun chiffre déduit du stock système pour le coordinateur.
+        json_response(true,'Sauvegardé.', $is_coord ? [] : ['ecart_mesure'=>$ecart_mesure,'ecart_total'=>$ecart_total,'jours_phy'=>$jours_phy,'date_epuis'=>$date_epuis]);
     }
 
     // ── DEMANDER UNE MODIFICATION sur une ligne déjà saisie (verrouillée) —
@@ -144,7 +148,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     //    session (délégation) : le site répond directement (ligne déjà
     //    déverrouillée), pas d'étape d'autorisation.
     if ($action==='demander_modif') {
-        if (!$can_demander_site) json_response(false,'Action réservée à l\'administrateur ou au responsable de session.');
+        if (!$can_demander_site) json_response(false,'Action réservée aux profils qui valident l\'inventaire.');
         $detail_id       = (int)($_POST['detail_id'] ?? 0);
         $motif           = trim($_POST['motif'] ?? '');
         $valeur_proposee = ($_POST['valeur_proposee'] ?? '') !== '' ? (int)$_POST['valeur_proposee'] : null;
@@ -215,7 +219,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $corr_id = (int)db_last_id();
 
         $nom = trim(($user['prenom'] ?? '').' '.($user['nom'] ?? ''));
-        $admins = array_map(fn($x) => ['id' => $x], inv_destinataires_autorisation());
+        $admins = array_map(fn($x) => ['id' => $x], inv_destinataires_autorisation('bobines'));
         foreach ($admins as $a) {
             db_query(
                 "INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
@@ -230,7 +234,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
     // ── AUTORISER une demande du coordinateur — déverrouille la ligne
     if ($action==='autoriser_modif') {
-        if (!$can_demander_site) json_response(false,'Action réservée à l\'administrateur ou au responsable de session.');
+        if (!$can_demander_site) json_response(false,'Action réservée aux profils qui valident l\'inventaire.');
         $corr_id = (int)($_POST['correction_id'] ?? 0);
         $corr = db_fetch_one(
             "SELECT * FROM inventaire_corrections WHERE id=? AND inventaire_id=? AND type='demande_autorisation' AND statut='en_attente'",
@@ -253,7 +257,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
     // ── REFUSER une demande du coordinateur — la ligne reste verrouillée
     if ($action==='refuser_modif') {
-        if (!$can_demander_site) json_response(false,'Action réservée à l\'administrateur ou au responsable de session.');
+        if (!$can_demander_site) json_response(false,'Action réservée aux profils qui valident l\'inventaire.');
         $corr_id = (int)($_POST['correction_id'] ?? 0);
         $motif_refus = trim($_POST['motif'] ?? '');
         $corr = db_fetch_one(
@@ -282,7 +286,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     //    Couvre les deux cas : demande directe de l'admin (en_attente) et
     //    demande d'autorisation déjà accordée (autorise).
     if ($action==='repondre_modif') {
-        if (!$can_edit) json_response(false,'Action non autorisée.');
+        if (!$can_edit || !$peut_corriger) json_response(false,'Seul le site (ou un administrateur) corrige une ligne rouverte.');
         $corr_id       = (int)($_POST['correction_id'] ?? 0);
         $valeur_finale = ($_POST['valeur_finale'] ?? '') !== '' ? (int)$_POST['valeur_finale'] : null;
         $reponse       = trim($_POST['reponse'] ?? '');
@@ -304,7 +308,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         // Même référence que sauver_ligne : ERP actuel + films retirés depuis
         // le comptage par les points datés d'après l'inventaire.
         $stock_sys    = (int)$det['erp_actuel']
-                      + (inv_conso_apres((int)$inv['site_id'], inv_date_stock($inv), 'films')[(int)$det['bobine_id']] ?? 0);
+                      + (inv_conso_apres((int)$inv['site_id'], inv_date_stock_ligne($inv), 'films')[(int)$det['bobine_id']] ?? 0);
         $ecart_mesure = $valeur_finale - $stock_sys;
         $conso_moy    = (float)$det['conso_quotidienne_moy'];
         $jours_phy    = $conso_moy > 0 ? (int)ceil($valeur_finale / $conso_moy) : null;
@@ -333,7 +337,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
              '/pages/inventaire_detail.php?id=' . $inv_id]
         );
 
-        json_response(true,'Réponse envoyée.',['ecart_mesure'=>$ecart_mesure,'jours_phy'=>$jours_phy,'date_epuis'=>$date_epuis]);
+        json_response(true,'Réponse envoyée.', $is_coord ? [] : ['ecart_mesure'=>$ecart_mesure,'jours_phy'=>$jours_phy,'date_epuis'=>$date_epuis]);
     }
 
     // ── TOUT SAUVER
@@ -343,7 +347,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         if (!is_array($lignes_data)) json_response(false,'Données invalides.');
         $saved = 0; $errors = 0;
         $inv = inv_dater_comptage('bobines', $inv);
-        $conso_inv = inv_conso_apres((int)$inv['site_id'], inv_date_stock($inv), 'films');
+        $conso_inv = inv_conso_apres((int)$inv['site_id'], inv_date_stock_ligne($inv), 'films');
         db_begin();
         try {
             foreach ($lignes_data as $ld) {
@@ -363,7 +367,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
                 // Déclarée absente : verrouillée, sauf rouverte par une demande.
                 if (!empty($det['absente']) && !_inv_ligne_deverrouillee($detail_id)) continue;
                 // Ligne déjà saisie et non rouverte : verrouillée côté serveur aussi.
-                if (bab_ligne_saisie($det) && !_inv_ligne_deverrouillee($detail_id)) continue;
+                if (bab_ligne_saisie($det) && !(_inv_ligne_deverrouillee($detail_id) && $peut_corriger)) continue;
 
                 // Référence ERP, cf. sauver_ligne (plus de repli sur OptoTrace
                 // quand l'ERP est à zéro : zéro est une quantité comme une autre)

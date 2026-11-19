@@ -164,7 +164,7 @@ if ($site_force) {
         "SELECT se.id, se.libelle, se.date_debut, se.date_fin, se.type_periode,
                 ip.id AS inv_id, ip.statut AS inv_statut, ip.nb_types,
                 (SELECT COUNT(*) FROM inventaire_details_pmma d
-                 WHERE d.inventaire_id = ip.id AND (d.stock_physique > 0 OR d.ecart != 0)) AS nb_saisis
+                 WHERE d.inventaire_id = ip.id AND " . inv_sql_ligne_saisie('pmma') . ") AS nb_saisis
          FROM inventaire_sessions se
          JOIN inventaire_session_sites iss ON iss.session_id = se.id
          LEFT JOIN inventaires_pmma ip ON ip.session_id = se.id AND ip.site_id = iss.site_id AND ip.statut != 'annule'
