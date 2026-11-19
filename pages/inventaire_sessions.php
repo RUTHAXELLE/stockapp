@@ -70,6 +70,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $sites = array_values(array_unique(array_map('intval', $sites)));
 
         if (!$debut) json_response(false, 'Date de début obligatoire.');
+        $dt_debut = DateTime::createFromFormat('!Y-m-d', $debut);
+        if (!$dt_debut || $dt_debut->format('Y-m-d') !== $debut) json_response(false, 'Date de début invalide.');
         if (!isset(INV_PERIODES[$periode])) json_response(false, 'Périodicité invalide.');
         if (empty($sites)) json_response(false, 'Choisissez au moins un site.');
 

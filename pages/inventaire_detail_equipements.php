@@ -12,6 +12,7 @@ require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/upload.php';
 require_once __DIR__ . '/../includes/equipements_trouves.php';
+require_once __DIR__ . '/../includes/inventaire.php';
 
 require_auth();
 // Gate pilotée par la permission DB — cf. pages/inventaire_equipements.php.
@@ -42,7 +43,7 @@ $can_edit     = $inv['statut'] === 'brouillon' && can('inventaire_equipements','
 // Validation : pas le GSB (gestionnaire_stock_bobines), qui n'a pas la
 // charge des équipements.
 $can_validate = $inv['statut'] === 'brouillon'
-    && in_array($role_slug, ['admin','superadmin','superviseur_operation','gestionnaire_stock']);
+    && droit_fonction(FONCTION_INV_VALIDER['equipements']);
 $can_demander_site  = can('inventaire_sessions','can_read');
 // Équipements trouvés hors système (includes/equipements_trouves.php) :
 // seul le coordinateur du site déclare ; le gestionnaire de stock (ou un
@@ -67,12 +68,17 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $detail_id = (int)($_POST['detail_id'] ?? 0);
         $trouve    = $_POST['trouve'] !== '' ? (int)$_POST['trouve'] : null;
         $notes     = trim($_POST['notes'] ?? '');
-        if ($trouve === null) json_response(false,'Statut Trouvé/Manquant obligatoire.');
+        if ($trouve === null || !in_array($trouve, [0, 1], true)) json_response(false,'Statut Trouvé/Manquant obligatoire.');
 
         $det = db_fetch_one("SELECT * FROM inventaire_details_equipements WHERE id=? AND inventaire_id=?", [$detail_id, $inv_id]);
         if (!$det) json_response(false,'Ligne introuvable.');
+        // Verrou côté serveur : le champ grisé de l'écran ne protégeait rien.
+        if ($det['trouve'] !== null && !inv_ligne_deverrouillee('inventaire_corrections_equipements', $detail_id))
+            json_response(false,'Ligne déjà saisie : passez par une demande de modification.');
+        $inv = inv_dater_comptage('equipements', $inv);
 
         db_query("UPDATE inventaire_details_equipements SET trouve=?, notes=? WHERE id=?", [$trouve, $notes, $detail_id]);
+        if ($det['trouve'] !== null) inv_clore_demandes('inventaire_corrections_equipements', $detail_id, $trouve, (int)$user['id']);
         json_response(true,'Sauvegardé.',['trouve'=>$trouve]);
     }
 
@@ -145,7 +151,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $corr_id = (int)db_last_id();
 
         $nom = trim(($user['prenom'] ?? '').' '.($user['nom'] ?? ''));
-        $admins = db_fetch_all("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug IN ('admin','superadmin') AND u.actif=1");
+        $admins = array_map(fn($x) => ['id' => $x], inv_destinataires_autorisation());
         foreach ($admins as $a) {
             db_query(
                 "INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
@@ -246,19 +252,23 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     if ($action==='sauver_tout') {
         if (!$can_edit) json_response(false,'Inventaire non modifiable.');
         $lignes_data = json_decode($_POST['lignes'] ?? '[]', true);
+        if (!is_array($lignes_data)) json_response(false,'Données invalides.');
         $saved = 0;
         db_begin();
         try {
+            $inv = inv_dater_comptage('equipements', $inv);
             foreach ($lignes_data as $ld) {
                 $detail_id = (int)($ld['id'] ?? 0);
                 $trouve    = $ld['trouve'] !== '' ? (int)$ld['trouve'] : null;
                 $notes     = trim($ld['notes'] ?? '');
-                if ($trouve === null) continue;
+                if ($trouve === null || !in_array($trouve, [0, 1], true)) continue;
 
                 $det = db_fetch_one("SELECT * FROM inventaire_details_equipements WHERE id=? AND inventaire_id=?", [$detail_id, $inv_id]);
                 if (!$det) continue;
+                if ($det['trouve'] !== null && !inv_ligne_deverrouillee('inventaire_corrections_equipements', $detail_id)) continue;
 
                 db_query("UPDATE inventaire_details_equipements SET trouve=?,notes=? WHERE id=?", [$trouve,$notes,$detail_id]);
+                if ($det['trouve'] !== null) inv_clore_demandes('inventaire_corrections_equipements', $detail_id, $trouve, (int)$user['id']);
                 $saved++;
             }
             db_commit();
@@ -317,34 +327,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
     if ($action==='valider') {
         if (!$can_validate) json_response(false,'Seul le gestionnaire de stock ou un administrateur peut valider l\'inventaire.');
-        if ($eqt_actif && ($n_att = eqt_nb_en_attente($inv_id)) > 0)
-            json_response(false, "$n_att équipement(s) trouvé(s) attendent la décision du gestionnaire de stock (créer, transférer ou refuser) avant la validation.");
-        $lignes = db_fetch_all("SELECT * FROM inventaire_details_equipements WHERE inventaire_id=?",[$inv_id]);
-        $nb_ecarts = 0; $nb_trouves = 0;
         db_begin();
         try {
-            inv_verrouiller_brouillon('inventaires_equipements', $inv_id);
-            foreach ($lignes as $l) {
-                if ($l['trouve'] === null) continue;
-
-                if ((int)$l['trouve'] === 1) {
-                    $nb_trouves++;
-                    db_query("UPDATE ecarts_equipements SET statut='resolu',resolu_at=NOW(),resolu_par=? WHERE equipement_id=? AND statut='ouvert'",
-                        [$user['id'], $l['equipement_id']]);
-                } else {
-                    $nb_ecarts++;
-                    $deja_ouvert = db_fetch_value("SELECT COUNT(*) FROM ecarts_equipements WHERE equipement_id=? AND statut='ouvert'", [$l['equipement_id']]);
-                    if (!$deja_ouvert) {
-                        db_query("INSERT INTO ecarts_equipements (site_id,equipement_id,date_constat,motif,source,inventaire_id,statut,created_by) VALUES (?,?,?,?,?,?,'ouvert',?)",
-                            [$inv['site_id'],$l['equipement_id'],$inv['date_inventaire'],$l['notes']??'','inventaire',$inv_id,$user['id']]);
-                    }
-                }
-            }
-            db_query("UPDATE inventaires_equipements SET statut='valide',nb_ecarts=?,nb_trouves=?,valide_par=?,valide_at=NOW() WHERE id=?",
-                [$nb_ecarts,$nb_trouves,$user['id'],$inv_id]);
-            audit_log($user['id'],'UPDATE','inventaire_equipements',$inv_id,"Validation inventaire équipements #$inv_id — $nb_ecarts manquant(s)");
+            // Même validation que la liste des inventaires (includes/inventaire.php).
+            $r = inv_valider_equipements($inv, (int)$user['id']);
+            audit_log($user['id'],'UPDATE','inventaire_equipements',$inv_id,"Validation inventaire équipements #$inv_id — {$r['nb_ecarts']} manquant(s)");
             db_commit();
-            json_response(true,"Inventaire validé. $nb_ecarts équipement(s) manquant(s).");
+            json_response(true,"Inventaire validé. {$r['nb_ecarts']} équipement(s) manquant(s).");
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 
@@ -1059,7 +1048,7 @@ function ouvrirRecapValidation(){
   const nonSaisiEl = document.getElementById('recapNonSaisi');
   if(nonSaisis>0){
     nonSaisiEl.style.display='block';
-    nonSaisiEl.innerHTML = `<i class="ph ph-warning" aria-hidden="true"></i> ${nonSaisis} équipement(s) sans statut saisi ne seront pas pris en compte dans la validation.`;
+    nonSaisiEl.innerHTML = `<i class="ph ph-warning" aria-hidden="true"></i> ${nonSaisis} équipement(s) sans statut saisi : à pointer avant la validation.`;
   } else nonSaisiEl.style.display='none';
 
   const recapEl = document.getElementById('recapEcarts');

@@ -129,6 +129,15 @@ function inv_valider_bobines(array $inv, int $user_id): array {
     inv_verifier_pas_plus_recent('inventaires_bobines', $inv);
     inv_verifier_point18h($inv);
     $lignes = db_fetch_all("SELECT * FROM inventaire_details_bobines WHERE inventaire_id=?", [$inv_id]);
+    // Toutes les bobines doivent être comptées (ou déclarées absentes) : une
+    // ligne oubliée était ignorée sans avertissement et l'inventaire validé.
+    $non_comptees = [];
+    foreach ($lignes as $l) {
+        if (!bab_ligne_saisie($l) && empty($l['ajoutee']))
+            $non_comptees[] = db_fetch_value("SELECT numero FROM op_bobines WHERE id=?", [$l['bobine_id']]);
+    }
+    if ($non_comptees) throw new Exception(count($non_comptees) . ' bobine(s) non comptée(s) : ' . implode(', ', array_slice($non_comptees, 0, 15))
+        . (count($non_comptees) > 15 ? '…' : '') . '. Saisissez chaque bobine (0 si vide, ou « absente ») avant de valider.');
     $conso  = inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films');
     $nb_ecarts = 0;
     $total_physique = 0;
@@ -515,4 +524,233 @@ function inv_creer_pmma(int $site_id, string $date, ?int $session_id, int $user_
     }
 
     return ['id' => $inv_id, 'nb' => count($stocks)];
+}
+
+// ============================================================
+//  REVUE INVENTAIRE (19/11/2026)
+// ============================================================
+
+// ── Tables de chaque type d'inventaire.
+const INV_TABLES = [
+    'bobines'     => ['inv' => 'inventaires_bobines',     'det' => 'inventaire_details_bobines'],
+    'rivets'      => ['inv' => 'inventaires_rivets',      'det' => 'inventaire_details_rivets'],
+    'pmma'        => ['inv' => 'inventaires_pmma',        'det' => 'inventaire_details_pmma'],
+    'equipements' => ['inv' => 'inventaires_equipements', 'det' => 'inventaire_details_equipements'],
+];
+
+// ── Condition SQL « ligne saisie » (alias d sur la table détail).
+function inv_sql_ligne_saisie(string $type): string {
+    if ($type === 'equipements') return 'd.trouve IS NOT NULL';
+    $c = '(d.stock_physique > 0 OR d.ecart <> 0';
+    if ($type === 'bobines' && db_colonne_existe('inventaire_details_bobines', 'absente')) $c .= ' OR d.absente = 1';
+    if (db_colonne_existe(INV_TABLES[$type]['det'], 'saisi_at')) $c .= ' OR d.saisi_at IS NOT NULL';
+    return $c . ')';
+}
+
+// ── Date de comptage. Un inventaire provisionné par une session portait la
+//    date d'ouverture de la session, alors que le site compte plus tard :
+//    la règle « stock de fin de journée » retirait une seconde fois tout ce
+//    que les points avaient consommé entre-temps. À la première saisie,
+//    l'inventaire prend la date du jour (jamais dans le futur). Les
+//    inventaires créés à une date choisie (hors session) la gardent.
+//    $type : bobines | rivets | pmma | equipements. Renvoie l'inventaire à jour.
+function inv_dater_comptage(string $type, array $inv): array {
+    if (empty($inv['session_id']) || $inv['statut'] !== 'brouillon') return $inv;
+    $auj = date('Y-m-d');
+    if ((string)$inv['date_inventaire'] === $auj) return $inv;
+    $t = INV_TABLES[$type];
+    $deja = (int)db_fetch_value("SELECT COUNT(*) FROM {$t['det']} d WHERE d.inventaire_id=? AND " . inv_sql_ligne_saisie($type), [(int)$inv['id']]);
+    if ($deja > 0) return $inv;
+    db_query("UPDATE {$t['inv']} SET date_inventaire=? WHERE id=? AND statut='brouillon'", [$auj, (int)$inv['id']]);
+    $inv['date_inventaire'] = $auj;
+    return $inv;
+}
+
+// ── Date saisie à la création d'un inventaire : AAAA-MM-JJ valide, pas dans
+//    le futur (un inventaire daté d'après aujourd'hui, une fois validé,
+//    bloquait toute correction de point du site jusqu'à cette date).
+function inv_date_valide(string $d): ?string {
+    $dt = DateTime::createFromFormat('!Y-m-d', $d);
+    if (!$dt || $dt->format('Y-m-d') !== $d) return 'Date invalide.';
+    if ($d > date('Y-m-d')) return "La date de l'inventaire ne peut pas être dans le futur.";
+    return null;
+}
+
+// ── Destinataires d'une demande d'autorisation du coordinateur : ceux qui
+//    peuvent l'accorder (administrateurs et délégations de session).
+function inv_destinataires_autorisation(): array {
+    return array_map('intval', array_column(db_fetch_all(
+        "SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id
+          WHERE u.actif=1 AND (r.slug IN ('admin','superadmin')
+             OR EXISTS (SELECT 1 FROM delegations dg WHERE dg.gestionnaire_id=u.id AND dg.module='inventaire_sessions' AND dg.actif=1))"), 'id'));
+}
+
+// ── Une ligne saisie ne se rouvre que par une demande (envoyée par l'admin,
+//    ou du coordinateur et autorisée). Une saisie faite pendant cette
+//    ouverture clôt la demande : sans cela la ligne restait modifiable
+//    indéfiniment. $corr : table des demandes du type d'inventaire.
+function inv_ligne_deverrouillee(string $corr, int $detail_id): bool {
+    return (bool)db_fetch_value(
+        "SELECT COUNT(*) FROM $corr WHERE detail_id=?
+            AND ((type='demande_site' AND statut='en_attente')
+              OR (type='demande_autorisation' AND statut='autorise'))", [$detail_id]);
+}
+
+function inv_clore_demandes(string $corr, int $detail_id, int $valeur, int $user_id): void {
+    db_query(
+        "UPDATE $corr SET statut='traite', valeur_finale=?, reponse=COALESCE(reponse, 'Corrigé par une nouvelle saisie'), traite_par=?, traite_at=NOW()
+          WHERE detail_id=? AND ((type='demande_site' AND statut='en_attente') OR (type='demande_autorisation' AND statut='autorise'))",
+        [$valeur, $user_id, $detail_id]);
+}
+
+// ── Consommation retirée par les points d'un site, selon un filtre SQL
+//    (alias p), pour rivets (par type_rivet) ou PMMA (par type_pmma).
+function inv_conso_points(int $site_id, string $quoi, string $filtre, array $params): array {
+    $deduit = db_colonne_existe('op_points_journaliers', 'stock_deduit') ? ' AND p.stock_deduit IN (1,2)' : '';
+    $base = array_merge([$site_id], $params);
+    if ($quoi === 'rivets') {
+        $r = db_fetch_one(
+            "SELECT COALESCE(SUM(p.rivets_gonflables),0) AS g, COALESCE(SUM(p.rivets_eclates),0) AS e
+               FROM op_points_journaliers p WHERE p.site_id = ? AND $filtre$deduit", $base);
+        return ['gonflable' => (int)($r['g'] ?? 0), 'eclate' => (int)($r['e'] ?? 0)];
+    }
+    $nc = db_colonne_existe('op_pmma_utilises', 'non_conformes') ? ' + pm.non_conformes' : '';
+    $rows = db_fetch_all(
+        "SELECT pm.type_pmma AS k, SUM(pm.utilises + pm.endommages$nc) AS n
+           FROM op_pmma_utilises pm JOIN op_points_journaliers p ON p.id = pm.point_id
+          WHERE p.site_id = ? AND $filtre$deduit GROUP BY pm.type_pmma", $base);
+    $res = [];
+    foreach ($rows as $r) $res[$r['k']] = (int)$r['n'];
+    return $res;
+}
+
+// ============================================================
+//  RIVETS ET PMMA : stock agrégé par type
+// ============================================================
+//  À la saisie, on note la référence : stock du site à cet instant + ce que
+//  les points datés d'après le comptage ont déjà retiré, soit le stock
+//  théorique de fin de journée. À la validation, l'écart compté s'applique
+//  au stock ACTUEL au lieu de le remplacer : une entrée ou une réception
+//  faite entre la saisie et la validation est conservée. Un point daté du
+//  jour du comptage (ou d'avant) validé après la saisie a retiré une
+//  consommation déjà absente du comptage : elle est rendue.
+const INV_AGREGE = [
+    'rivets' => ['inv' => 'inventaires_rivets', 'det' => 'inventaire_details_rivets', 'corr' => 'inventaire_corrections_rivets',
+                 'cle' => 'type_rivet', 'stock' => 'op_stock_rivets', 'ecarts' => 'ecarts_rivets'],
+    'pmma'   => ['inv' => 'inventaires_pmma', 'det' => 'inventaire_details_pmma', 'corr' => 'inventaire_corrections_pmma',
+                 'cle' => 'type_pmma', 'stock' => 'stock_pmma_site', 'ecarts' => 'ecarts_pmma'],
+];
+
+function inv_ag_reference_dispo(string $type): bool {
+    return db_colonne_existe(INV_AGREGE[$type]['det'], 'stock_reference');
+}
+
+function inv_ag_ligne_saisie(array $l): bool {
+    return !empty($l['saisi_at']) || (int)$l['stock_physique'] > 0 || (int)$l['ecart'] !== 0;
+}
+
+function inv_ag_stock_actuel(string $type, int $site_id, string $cle, bool $verrou = false): int {
+    $c = INV_AGREGE[$type];
+    return (int)(db_fetch_value("SELECT quantite FROM {$c['stock']} WHERE site_id=? AND {$c['cle']}=?" . ($verrou ? ' FOR UPDATE' : ''),
+        [$site_id, $cle]) ?? 0);
+}
+
+/** Enregistre le comptage d'une ligne ; renvoie l'écart mesuré. */
+function inv_ag_enregistrer(string $type, array $inv, array $det, int $phy, ?string $notes, int $user_id): int {
+    $c = INV_AGREGE[$type];
+    if ($phy < 0) throw new Exception('Le stock physique ne peut pas être négatif.');
+    $cle = (string)$det[$c['cle']];
+    $deja_saisie = inv_ag_ligne_saisie($det);
+    $sets = 'stock_physique=?, ecart=?';
+    if (inv_ag_reference_dispo($type)) {
+        $ref = inv_ag_stock_actuel($type, (int)$inv['site_id'], $cle)
+             + (inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], $type)[$cle] ?? 0);
+        $ecart  = $phy - $ref;
+        $params = [$phy, $ecart, $ref];
+        $sets  .= ', stock_reference=?, saisi_at=NOW()';
+    } else {
+        $ecart  = $phy - (int)$det['stock_systeme'];
+        $params = [$phy, $ecart];
+    }
+    if ($notes !== null) { $sets .= ', notes=?'; $params[] = $notes; }
+    $params[] = (int)$det['id'];
+    db_query("UPDATE {$c['det']} SET $sets WHERE id=?", $params);
+    if ($deja_saisie) inv_clore_demandes($c['corr'], (int)$det['id'], $phy, $user_id);
+    return $ecart;
+}
+
+/** Validation commune (fiche et liste). À appeler dans la transaction de l'appelant. */
+function inv_valider_agrege(string $type, array $inv, int $user_id): array {
+    $c = INV_AGREGE[$type];
+    $inv_id = (int)$inv['id'];
+    $site   = (int)$inv['site_id'];
+    inv_verrouiller_brouillon($c['inv'], $inv_id);
+    inv_verifier_pas_plus_recent($c['inv'], $inv);
+    inv_verifier_point18h($inv);
+    $lignes = db_fetch_all("SELECT * FROM {$c['det']} WHERE inventaire_id=?", [$inv_id]);
+    $manque = array_map(fn($l) => $l[$c['cle']], array_filter($lignes, fn($l) => !inv_ag_ligne_saisie($l)));
+    if ($manque) throw new Exception('ligne(s) non comptée(s) : ' . implode(', ', $manque) . '. Saisissez chaque ligne (0 si rien) avant de valider.');
+    $conso = inv_conso_apres($site, (string)$inv['date_inventaire'], $type);
+    $nb_ecarts = 0; $total_physique = 0;
+    foreach ($lignes as $l) {
+        $cle = (string)$l[$c['cle']];
+        $phy = (int)$l['stock_physique'];
+        $total_physique += $phy;
+        $actuel = inv_ag_stock_actuel($type, $site, $cle, true);
+        if (isset($l['stock_reference']) && $l['stock_reference'] !== null && !empty($l['saisi_at'])) {
+            $tardif = inv_conso_points($site, $type, 'p.date_point <= ? AND p.validated_at > ?',
+                [(string)$inv['date_inventaire'], (string)$l['saisi_at']])[$cle] ?? 0;
+            $sys     = (int)$l['stock_reference'] - $tardif;   // stock théorique au comptage
+            $ecart   = $phy - $sys;
+            $nouveau = max(0, $actuel + $ecart);
+        } else {
+            // Ligne saisie avant cette version : ancienne règle.
+            $sys     = (int)$l['stock_systeme'];
+            $ecart   = $phy - $sys;
+            $nouveau = max(0, $phy - ($conso[$cle] ?? 0));
+        }
+        $maj = db_query("UPDATE {$c['stock']} SET quantite=? WHERE site_id=? AND {$c['cle']}=?", [$nouveau, $site, $cle]);
+        if ($maj->rowCount() === 0 && !db_fetch_value("SELECT COUNT(*) FROM {$c['stock']} WHERE site_id=? AND {$c['cle']}=?", [$site, $cle]))
+            db_query("INSERT INTO {$c['stock']} (site_id,{$c['cle']},quantite) VALUES (?,?,?)", [$site, $cle, $nouveau]);
+        db_query("UPDATE {$c['ecarts']} SET statut='resolu', resolu_at=NOW(), resolu_par=? WHERE site_id=? AND {$c['cle']}=? AND statut='ouvert'",
+            [$user_id, $site, $cle]);
+        if ($ecart !== 0) {
+            $nb_ecarts++;
+            db_query(
+                "INSERT INTO {$c['ecarts']} (site_id,{$c['cle']},date_constat,stock_systeme,stock_physique,ecart,motif,source,inventaire_id,statut,resolu_at,resolu_par,created_by)
+                 VALUES (?,?,?,?,?,?,?,'inventaire',?,'resolu',NOW(),?,?)",
+                [$site, $cle, $inv['date_inventaire'], $sys, $phy, $ecart, $l['notes'] ?? '', $inv_id, $user_id, $user_id]);
+        }
+    }
+    db_query("UPDATE {$c['inv']} SET statut='valide',nb_ecarts=?,total_quantite_physique=?,valide_par=?,valide_at=NOW() WHERE id=?",
+        [$nb_ecarts, $total_physique, $user_id, $inv_id]);
+    return ['nb_ecarts' => $nb_ecarts, 'total_physique' => $total_physique];
+}
+
+// ── Validation des équipements (fiche et liste). Dans la transaction de l'appelant.
+function inv_valider_equipements(array $inv, int $user_id): array {
+    require_once __DIR__ . '/equipements_trouves.php';
+    $inv_id = (int)$inv['id'];
+    inv_verrouiller_brouillon('inventaires_equipements', $inv_id);
+    if (eqt_disponible() && ($n_att = eqt_nb_en_attente($inv_id)) > 0)
+        throw new Exception("$n_att équipement(s) trouvé(s) attendent la décision du gestionnaire de stock (créer, transférer ou refuser) avant la validation.");
+    $lignes = db_fetch_all("SELECT * FROM inventaire_details_equipements WHERE inventaire_id=?", [$inv_id]);
+    $manque = count(array_filter($lignes, fn($l) => $l['trouve'] === null));
+    if ($manque) throw new Exception("$manque équipement(s) non pointé(s) (trouvé ou manquant) : pointez chaque ligne avant de valider.");
+    $nb_ecarts = 0; $nb_trouves = 0;
+    foreach ($lignes as $l) {
+        if ((int)$l['trouve'] === 1) {
+            $nb_trouves++;
+            db_query("UPDATE ecarts_equipements SET statut='resolu',resolu_at=NOW(),resolu_par=? WHERE equipement_id=? AND statut='ouvert'",
+                [$user_id, $l['equipement_id']]);
+        } else {
+            $nb_ecarts++;
+            if (!db_fetch_value("SELECT COUNT(*) FROM ecarts_equipements WHERE equipement_id=? AND statut='ouvert'", [$l['equipement_id']]))
+                db_query("INSERT INTO ecarts_equipements (site_id,equipement_id,date_constat,motif,source,inventaire_id,statut,created_by) VALUES (?,?,?,?,?,?,'ouvert',?)",
+                    [$inv['site_id'], $l['equipement_id'], $inv['date_inventaire'], $l['notes'] ?? '', 'inventaire', $inv_id, $user_id]);
+        }
+    }
+    db_query("UPDATE inventaires_equipements SET statut='valide',nb_ecarts=?,nb_trouves=?,valide_par=?,valide_at=NOW() WHERE id=?",
+        [$nb_ecarts, $nb_trouves, $user_id, $inv_id]);
+    return ['nb_ecarts' => $nb_ecarts, 'nb_trouves' => $nb_trouves];
 }

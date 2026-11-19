@@ -28,7 +28,7 @@ require_permission('inventaire_bobines', 'can_read');
 $page_title   = 'Inventaire Bobines';
 $active_page  = 'inventaire_bobines';
 $sites_list   = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
-$can_validate = in_array($role_slug, ['admin','superadmin','superviseur_operation','gestionnaire_stock_bobines','gestionnaire_stock']);
+$can_validate = droit_fonction(FONCTION_INV_VALIDER['bobines']);
 $can_create   = can('inventaire_bobines','can_create');
 
 // ============================================================
@@ -42,6 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         require_permission('inventaire_bobines','can_create');
         $site_id = $site_force ?: ((int)($_POST['site_id'] ?? 0) ?: null);
         $date    = trim($_POST['date']  ?? date('Y-m-d'));
+        if ($err_date = inv_date_valide($date)) json_response(false, $err_date);
         $type    = in_array($_POST['type']??'', ['journalier','mensuel']) ? $_POST['type'] : 'journalier';
         $notes   = trim($_POST['notes'] ?? '');
 

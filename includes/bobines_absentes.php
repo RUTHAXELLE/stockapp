@@ -37,7 +37,7 @@ function bab_entrepot_id(): int {
 
 /** Une ligne d'inventaire bobines a-t-elle été saisie (comptée ou déclarée absente) ? */
 function bab_ligne_saisie(array $l): bool {
-    return (int)$l['stock_physique'] > 0 || (int)$l['ecart'] !== 0 || !empty($l['absente']);
+    return (int)$l['stock_physique'] > 0 || (int)$l['ecart'] !== 0 || !empty($l['absente']) || !empty($l['saisi_at']);
 }
 
 /** Campagne commune : même session d'inventaire, ou sans session, à 7 jours ou moins. */

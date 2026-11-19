@@ -25,7 +25,7 @@ $site_force = ($is_coord && $user['site_id']) ? (int)$user['site_id'] : 0;
 $page_title   = 'Inventaire PMMA';
 $active_page  = 'inventaire_pmma';
 $sites_list   = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
-$can_validate = in_array($role_slug, ['admin','superadmin','superviseur_operation','gestionnaire_stock_bobines','gestionnaire_stock']);
+$can_validate = droit_fonction(FONCTION_INV_VALIDER['pmma']);
 $can_create   = can('inventaire_pmma','can_create');
 
 // ============================================================
@@ -39,6 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         require_permission('inventaire_pmma','can_create');
         $site_id = $site_force ?: ((int)($_POST['site_id'] ?? 0) ?: null);
         $date    = trim($_POST['date']  ?? date('Y-m-d'));
+        if ($err_date = inv_date_valide($date)) json_response(false, $err_date);
         $type    = in_array($_POST['type']??'', ['journalier','mensuel']) ? $_POST['type'] : 'journalier';
         $notes   = trim($_POST['notes'] ?? '');
 
@@ -115,37 +116,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $inv_id = (int)($_POST['inv_id'] ?? 0);
         $inv = db_fetch_one("SELECT * FROM inventaires_pmma WHERE id=?",[$inv_id]);
         if (!$inv || $inv['statut'] !== 'brouillon') json_response(false,'Inventaire introuvable ou déjà validé.');
-
-        $lignes = db_fetch_all("SELECT * FROM inventaire_details_pmma WHERE inventaire_id=?",[$inv_id]);
-        $nb_ecarts = 0; $total_physique = 0;
-
         db_begin();
         try {
-            foreach ($lignes as $l) {
-                if ((int)$l['stock_physique'] <= 0 && (int)$l['ecart'] == 0) continue;
-                $phy = (int)$l['stock_physique'];
-                $total_physique += $phy;
-
-                db_query(
-                    "INSERT INTO stock_pmma_site (site_id,type_pmma,quantite) VALUES (?,?,?)
-                     ON DUPLICATE KEY UPDATE quantite=?",
-                    [$inv['site_id'], $l['type_pmma'], $phy, $phy]
-                );
-
-                db_query("UPDATE ecarts_pmma SET statut='resolu',resolu_at=NOW(),resolu_par=? WHERE site_id=? AND type_pmma=? AND statut='ouvert'",
-                    [$user['id'], $inv['site_id'], $l['type_pmma']]);
-
-                if ($l['ecart'] != 0) {
-                    $nb_ecarts++;
-                    db_query("INSERT INTO ecarts_pmma (site_id,type_pmma,date_constat,stock_systeme,stock_physique,ecart,motif,source,inventaire_id,statut,resolu_at,resolu_par,created_by) VALUES (?,?,?,?,?,?,?,?,?,'resolu',NOW(),?,?)",
-                        [$inv['site_id'],$l['type_pmma'],$inv['date_inventaire'],$l['stock_systeme'],$phy,$l['ecart'],$l['notes']??'','inventaire',$inv_id,$user['id'],$user['id']]);
-                }
-            }
-            db_query("UPDATE inventaires_pmma SET statut='valide',nb_ecarts=?,total_quantite_physique=?,valide_par=?,valide_at=NOW() WHERE id=?",
-                [$nb_ecarts,$total_physique,$user['id'],$inv_id]);
-            audit_log($user['id'],'UPDATE','inventaire_pmma',$inv_id,"Validation inventaire PMMA #{$inv_id} ({$inv['type_inventaire']}) — {$nb_ecarts} écart(s)");
+            // Même validation que la fiche détail (includes/inventaire.php) :
+            // la liste avait sa propre copie, sans verrou ni contrôles.
+            $r = inv_valider_agrege('pmma', $inv, (int)$user['id']);
+            audit_log($user['id'],'UPDATE','inventaire_pmma',$inv_id,"Validation inventaire PMMA #{$inv_id} ({$inv['type_inventaire']}) — {$r['nb_ecarts']} écart(s)");
             db_commit();
-            json_response(true,"Inventaire validé. {$nb_ecarts} écart(s) ajusté(s).",['nb_ecarts'=>$nb_ecarts]);
+            json_response(true,"Inventaire validé. {$r['nb_ecarts']} écart(s) ajusté(s).",['nb_ecarts'=>$r['nb_ecarts']]);
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 

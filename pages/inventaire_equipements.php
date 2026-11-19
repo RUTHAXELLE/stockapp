@@ -29,7 +29,7 @@ $page_title   = 'Inventaire Équipements';
 $active_page  = 'inventaire_equipements';
 $sites_list   = db_fetch_all("SELECT id,nom FROM sites WHERE actif=1 ORDER BY nom");
 // Validation : pas le GSB (gestionnaire_stock_bobines), cf. inventaire_detail_equipements.php.
-$can_validate = in_array($role_slug, ['admin','superadmin','superviseur_operation','gestionnaire_stock']);
+$can_validate = droit_fonction(FONCTION_INV_VALIDER['equipements']);
 $can_create   = can('inventaire_equipements','can_create');
 
 // ============================================================
@@ -43,6 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         require_permission('inventaire_equipements','can_create');
         $site_id = $site_force ?: ((int)($_POST['site_id'] ?? 0) ?: null);
         $date    = trim($_POST['date']  ?? date('Y-m-d'));
+        if ($err_date = inv_date_valide($date)) json_response(false, $err_date);
         $type    = in_array($_POST['type']??'', ['journalier','mensuel']) ? $_POST['type'] : 'journalier';
         $notes   = trim($_POST['notes'] ?? '');
 
@@ -118,41 +119,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $inv_id = (int)($_POST['inv_id'] ?? 0);
         $inv = db_fetch_one("SELECT * FROM inventaires_equipements WHERE id=?",[$inv_id]);
         if (!$inv || $inv['statut'] !== 'brouillon') json_response(false,'Inventaire introuvable ou déjà validé.');
-        // Même garde que la fiche détail : les équipements trouvés hors
-        // système doivent être traités avant (includes/equipements_trouves.php).
-        if (eqt_disponible() && ($n_att = eqt_nb_en_attente($inv_id)) > 0)
-            json_response(false, "$n_att équipement(s) trouvé(s) attendent la décision du gestionnaire de stock (créer, transférer ou refuser) avant la validation.");
-
-        $lignes = db_fetch_all("SELECT * FROM inventaire_details_equipements WHERE inventaire_id=?",[$inv_id]);
-        $nb_ecarts = 0; $nb_trouves = 0;
-
         db_begin();
         try {
-            foreach ($lignes as $l) {
-                if ($l['trouve'] === null) continue;
-
-                if ((int)$l['trouve'] === 1) {
-                    $nb_trouves++;
-                    // Retrouvé : referme l'écart ouvert le concernant, s'il y en a un.
-                    db_query("UPDATE ecarts_equipements SET statut='resolu',resolu_at=NOW(),resolu_par=? WHERE equipement_id=? AND statut='ouvert'",
-                        [$user['id'], $l['equipement_id']]);
-                } else {
-                    $nb_ecarts++;
-                    // Manquant : ouvre un écart si aucun n'est déjà en cours pour cet
-                    // équipement — pas de mutation de la fiche équipement (site_id/
-                    // statut_stock), un manquant reste une alerte à investiguer.
-                    $deja_ouvert = db_fetch_value("SELECT COUNT(*) FROM ecarts_equipements WHERE equipement_id=? AND statut='ouvert'", [$l['equipement_id']]);
-                    if (!$deja_ouvert) {
-                        db_query("INSERT INTO ecarts_equipements (site_id,equipement_id,date_constat,motif,source,inventaire_id,statut,created_by) VALUES (?,?,?,?,?,?,'ouvert',?)",
-                            [$inv['site_id'],$l['equipement_id'],$inv['date_inventaire'],$l['notes']??'','inventaire',$inv_id,$user['id']]);
-                    }
-                }
-            }
-            db_query("UPDATE inventaires_equipements SET statut='valide',nb_ecarts=?,nb_trouves=?,valide_par=?,valide_at=NOW() WHERE id=?",
-                [$nb_ecarts,$nb_trouves,$user['id'],$inv_id]);
-            audit_log($user['id'],'UPDATE','inventaire_equipements',$inv_id,"Validation inventaire équipements #{$inv_id} ({$inv['type_inventaire']}) — {$nb_ecarts} manquant(s)");
+            // Même validation que la fiche détail (includes/inventaire.php) :
+            // la liste avait sa propre copie, sans verrou ni contrôles.
+            $r = inv_valider_equipements($inv, (int)$user['id']);
+            audit_log($user['id'],'UPDATE','inventaire_equipements',$inv_id,"Validation inventaire équipements #{$inv_id} ({$inv['type_inventaire']}) — {$r['nb_ecarts']} écart(s)");
             db_commit();
-            json_response(true,"Inventaire validé. {$nb_ecarts} équipement(s) manquant(s).",['nb_ecarts'=>$nb_ecarts]);
+            json_response(true,"Inventaire validé. {$r['nb_ecarts']} équipement(s) manquant(s).",['nb_ecarts'=>$r['nb_ecarts']]);
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 

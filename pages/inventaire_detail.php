@@ -21,12 +21,7 @@ require_once __DIR__ . '/../includes/upload.php';
 require_once __DIR__ . '/../includes/inventaire.php';
 
 require_auth();
-$_tmp_user = current_user();
-$_tmp_role = $_tmp_user['role_slug'] ?? '';
-if (!in_array($_tmp_role, ['coordinateur_site','gestionnaire_stock_bobines','gestionnaire_stock','superviseur_operation','admin','superadmin'])) {
-    http_response_code(403); include __DIR__ . '/../templates/403.php'; exit;
-}
-unset($_tmp_user, $_tmp_role);
+require_permission('inventaire_bobines', 'can_read');
 
 $user   = current_user();
 $inv_id = (int)($_GET['id'] ?? 0);
@@ -50,7 +45,7 @@ if (($user['role_slug'] ?? '') === 'coordinateur_site' && (int)($user['site_id']
 $role_slug    = $user['role_slug'] ?? '';
 $can_edit     = $inv['statut'] === 'brouillon' && can('inventaire_bobines','can_update');
 $can_validate = $inv['statut'] === 'brouillon'
-    && in_array($role_slug, ['admin','superadmin','superviseur_operation','gestionnaire_stock_bobines','gestionnaire_stock']);
+    && droit_fonction(FONCTION_INV_VALIDER['bobines']);
 $is_coord           = ($role_slug === 'coordinateur_site');
 // Seuls l'admin/superadmin (ou une délégation du module) peuvent interpeller
 // directement le site sur une ligne verrouillée, ou autoriser/refuser une
@@ -62,6 +57,8 @@ $bab = bab_actif();
 // Une ligne déjà saisie est verrouillée : seule une demande ouverte par
 // l'admin, ou une demande du coordinateur déjà autorisée, la rouvre. Ce
 // contrôle vit côté serveur (le champ désactivé de l'écran ne protège rien).
+// Ligne marquée saisie (un comptage à 0 d'une bobine à 0 restait sinon « non saisi »).
+$saisi_sql = db_colonne_existe('inventaire_details_bobines', 'saisi_at') ? ', saisi_at=NOW()' : '';
 function _inv_ligne_deverrouillee(int $detail_id): bool {
     return (bool)db_fetch_value(
         "SELECT COUNT(*) FROM inventaire_corrections WHERE detail_id=?
@@ -106,6 +103,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         if (!$absente && !empty($det['absente'])) json_response(false,'Bobine déclarée absente : passez par une demande de modification.');
         if ($stock_physique === null) json_response(false,'Saisissez le stock physique.');
         if ($stock_physique < 0) json_response(false,'Le stock physique ne peut pas être négatif.');
+        $inv = inv_dater_comptage('bobines', $inv);
+        $deja_saisie = bab_ligne_saisie($det);
 
         // Stock au comptage : ERP actuel + films retirés depuis par les
         // points datés d'après l'inventaire (cf. inv_conso_apres()).
@@ -127,10 +126,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
             "UPDATE inventaire_details_bobines
              SET stock_physique=?, ecart=?, jours_restants_systeme=?,
                  jours_restants_physique=?, date_epuisement_estime=?, notes=?"
-             . ($bab ? ", absente=" . ($absente ? 1 : 0) : "") . "
+             . ($bab ? ", absente=" . ($absente ? 1 : 0) : "") . $saisi_sql . "
              WHERE id=?",
             [$stock_phy, $ecart_mesure, $jours_sys, $jours_phy, $date_epuis, $notes, $detail_id]
         );
+        if ($deja_saisie) inv_clore_demandes('inventaire_corrections', $detail_id, $stock_phy, (int)$user['id']);
         if ($absente) {
             audit_log($user['id'],'UPDATE','inventaire_bobines',$inv_id,"Bobine déclarée absente (ligne #$detail_id) — inventaire #$inv_id");
         }
@@ -214,7 +214,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $corr_id = (int)db_last_id();
 
         $nom = trim(($user['prenom'] ?? '').' '.($user['nom'] ?? ''));
-        $admins = db_fetch_all("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug IN ('admin','superadmin') AND u.actif=1");
+        $admins = array_map(fn($x) => ['id' => $x], inv_destinataires_autorisation());
         foreach ($admins as $a) {
             db_query(
                 "INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
@@ -313,7 +313,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         try {
             db_query(
                 "UPDATE inventaire_details_bobines SET stock_physique=?,ecart=?,jours_restants_physique=?,date_epuisement_estime=?"
-                . ($bab ? ",absente=0" : "") . " WHERE id=?",
+                . ($bab ? ",absente=0" : "") . "$saisi_sql WHERE id=?",
                 [$valeur_finale, $ecart_mesure, $jours_phy, $date_epuis, $corr['detail_id']]
             );
             db_query(
@@ -341,6 +341,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $lignes_data = json_decode($_POST['lignes'] ?? '[]', true);
         if (!is_array($lignes_data)) json_response(false,'Données invalides.');
         $saved = 0; $errors = 0;
+        $inv = inv_dater_comptage('bobines', $inv);
         $conso_inv = inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'films');
         db_begin();
         try {
@@ -371,9 +372,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
                 $date_epuis = $jours_phy ? date('Y-m-d', strtotime("+{$jours_phy} days")) : null;
 
                 db_query(
-                    "UPDATE inventaire_details_bobines SET stock_physique=?,ecart=?,jours_restants_physique=?,date_epuisement_estime=?,notes=? WHERE id=?",
+                    "UPDATE inventaire_details_bobines SET stock_physique=?,ecart=?,jours_restants_physique=?,date_epuisement_estime=?,notes=?$saisi_sql WHERE id=?",
                     [$phy_val,$ecart_mes,$jours_phy,$date_epuis,$notes,$detail_id]
                 );
+                if (bab_ligne_saisie($det)) inv_clore_demandes('inventaire_corrections', $detail_id, $phy_val, (int)$user['id']);
                 $saved++;
             }
             db_commit();

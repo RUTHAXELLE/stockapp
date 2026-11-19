@@ -229,9 +229,21 @@ function can(string $module, string $droit = 'can_read'): bool {
 //    (aucune ligne du module en base).
 const FONCTION_ACHETEUR = 'achats_acheteur';   // prise en charge des FEB, offres, validation
 const FONCTION_MAGASIN  = 'achats_magasin';    // expédition des commandes internes, réceptions
+// Validation des inventaires, par type (« Modifier » coché sur le module) :
+// auparavant une liste de rôles écrite dans chaque écran.
+const FONCTION_INV_VALIDER = [
+    'bobines'     => 'inventaire_bobines_valider',
+    'rivets'      => 'inventaire_rivets_valider',
+    'pmma'        => 'inventaire_pmma_valider',
+    'equipements' => 'inventaire_equipements_valider',
+];
 const FONCTIONS_ROLES_REPLI = [
     FONCTION_ACHETEUR => ['superviseur_achat'],
     FONCTION_MAGASIN  => ['gestionnaire_stock', 'superviseur_achat'],
+    'inventaire_bobines_valider'     => ['superviseur_operation', 'gestionnaire_stock_bobines', 'gestionnaire_stock'],
+    'inventaire_rivets_valider'      => ['superviseur_operation', 'gestionnaire_stock_bobines', 'gestionnaire_stock'],
+    'inventaire_pmma_valider'        => ['superviseur_operation', 'gestionnaire_stock_bobines', 'gestionnaire_stock'],
+    'inventaire_equipements_valider' => ['superviseur_operation', 'gestionnaire_stock'],
 ];
 
 function _fonction_en_base(string $module): bool {

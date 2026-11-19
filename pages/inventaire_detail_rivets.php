@@ -40,7 +40,7 @@ if (($user['role_slug'] ?? '') === 'coordinateur_site' && (int)($user['site_id']
 $role_slug    = $user['role_slug'] ?? '';
 $can_edit     = $inv['statut'] === 'brouillon' && can('inventaire_rivets','can_update');
 $can_validate = $inv['statut'] === 'brouillon'
-    && in_array($role_slug, ['admin','superadmin','superviseur_operation','gestionnaire_stock_bobines','gestionnaire_stock']);
+    && droit_fonction(FONCTION_INV_VALIDER['rivets']);
 $is_coord           = ($role_slug === 'coordinateur_site');
 $can_demander_site  = can('inventaire_sessions','can_read');
 $page_title  = 'Inventaire rivets du ' . fmt_date($inv['date_inventaire']);
@@ -56,19 +56,20 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
     if ($action==='sauver_ligne') {
         if (!$can_edit) json_response(false,'Inventaire non modifiable.');
-        $detail_id      = (int)($_POST['detail_id']     ?? 0);
-        $stock_physique = $_POST['stock_physique'] !== '' ? (int)$_POST['stock_physique'] : null;
+        $detail_id      = (int)($_POST['detail_id'] ?? 0);
+        $stock_physique = ($_POST['stock_physique'] ?? '') !== '' ? (int)$_POST['stock_physique'] : null;
         $notes          = trim($_POST['notes'] ?? '');
+        if ($stock_physique === null) json_response(false,'Saisissez le stock physique.');
 
         $det = db_fetch_one("SELECT * FROM inventaire_details_rivets WHERE id=? AND inventaire_id=?", [$detail_id, $inv_id]);
         if (!$det) json_response(false,'Ligne introuvable.');
-
-        $stock_sys    = (int)$det['stock_systeme'];
-        $stock_phy    = $stock_physique !== null ? $stock_physique : (int)$det['stock_physique'];
-        $ecart_mesure = $stock_phy - $stock_sys;
-
-        db_query("UPDATE inventaire_details_rivets SET stock_physique=?, ecart=?, notes=? WHERE id=?",
-            [$stock_phy, $ecart_mesure, $notes, $detail_id]);
+        // Verrou côté serveur : le champ grisé de l'écran ne protégeait rien.
+        if (inv_ag_ligne_saisie($det) && !inv_ligne_deverrouillee('inventaire_corrections_rivets', $detail_id))
+            json_response(false,'Ligne déjà saisie : passez par une demande de modification.');
+        try {
+            $inv = inv_dater_comptage('rivets', $inv);
+            $ecart_mesure = inv_ag_enregistrer('rivets', $inv, $det, $stock_physique, $notes, (int)$user['id']);
+        } catch (Exception $e) { json_response(false, $e->getMessage()); }
 
         json_response(true,'Sauvegardé.',['ecart_mesure'=>$ecart_mesure]);
     }
@@ -82,7 +83,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
         $det = db_fetch_one("SELECT * FROM inventaire_details_rivets WHERE id=? AND inventaire_id=?", [$detail_id, $inv_id]);
         if (!$det) json_response(false,'Ligne introuvable.');
-        if ((int)$det['stock_physique']===0 && (int)$det['ecart']===0) json_response(false,"Cette ligne n'a pas encore été saisie.");
+        if (!inv_ag_ligne_saisie($det)) json_response(false,"Cette ligne n'a pas encore été saisie.");
         if (db_fetch_value("SELECT COUNT(*) FROM inventaire_corrections_rivets WHERE detail_id=? AND statut IN ('en_attente','autorise')", [$detail_id])) {
             json_response(false,'Une demande est déjà en cours pour cette ligne.');
         }
@@ -122,7 +123,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
         $det = db_fetch_one("SELECT * FROM inventaire_details_rivets WHERE id=? AND inventaire_id=?", [$detail_id, $inv_id]);
         if (!$det) json_response(false,'Ligne introuvable.');
-        if ((int)$det['stock_physique']===0 && (int)$det['ecart']===0) json_response(false,"Cette ligne n'a pas encore été saisie.");
+        if (!inv_ag_ligne_saisie($det)) json_response(false,"Cette ligne n'a pas encore été saisie.");
         if (db_fetch_value("SELECT COUNT(*) FROM inventaire_corrections_rivets WHERE detail_id=? AND statut IN ('en_attente','autorise')", [$detail_id])) {
             json_response(false,'Une demande est déjà en cours pour cette ligne.');
         }
@@ -136,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
         $nom = trim(($user['prenom'] ?? '').' '.($user['nom'] ?? ''));
         $lbl = $types_rivets[$det['type_rivet']] ?? $det['type_rivet'];
-        $admins = db_fetch_all("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug IN ('admin','superadmin') AND u.actif=1");
+        $admins = array_map(fn($x) => ['id' => $x], inv_destinataires_autorisation());
         foreach ($admins as $a) {
             db_query(
                 "INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
@@ -211,13 +212,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         }
 
         $det = db_fetch_one("SELECT * FROM inventaire_details_rivets WHERE id=?", [$corr['detail_id']]);
-        $stock_sys    = (int)$det['stock_systeme'];
-        $ecart_mesure = $valeur_finale - $stock_sys;
+        if (!$det) json_response(false,'Ligne introuvable.');
 
         db_begin();
         try {
-            db_query("UPDATE inventaire_details_rivets SET stock_physique=?,ecart=? WHERE id=?",
-                [$valeur_finale, $ecart_mesure, $corr['detail_id']]);
+            $ecart_mesure = inv_ag_enregistrer('rivets', $inv, $det, $valeur_finale, null, (int)$user['id']);
             db_query(
                 "UPDATE inventaire_corrections_rivets SET statut='traite',valeur_finale=?,reponse=?,traite_par=?,traite_at=NOW() WHERE id=?",
                 [$valeur_finale, $reponse ?: null, $user['id'], $corr_id]
@@ -241,75 +240,40 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     if ($action==='sauver_tout') {
         if (!$can_edit) json_response(false,'Inventaire non modifiable.');
         $lignes_data = json_decode($_POST['lignes'] ?? '[]', true);
-        $saved = 0;
+        if (!is_array($lignes_data)) json_response(false,'Données invalides.');
+        $saved = 0; $ignorees = 0;
         db_begin();
         try {
+            $inv = inv_dater_comptage('rivets', $inv);
             foreach ($lignes_data as $ld) {
                 $detail_id = (int)($ld['id'] ?? 0);
-                $phy_val   = $ld['phy'] !== '' ? (int)$ld['phy'] : null;
-                $notes     = trim($ld['notes'] ?? '');
+                $phy_val   = (($ld['phy'] ?? '') !== '') ? (int)$ld['phy'] : null;
+                $notes     = trim((string)($ld['notes'] ?? ''));
                 if ($phy_val === null) continue;
+                if ($phy_val < 0) { $ignorees++; continue; }
 
                 $det = db_fetch_one("SELECT * FROM inventaire_details_rivets WHERE id=? AND inventaire_id=?", [$detail_id, $inv_id]);
                 if (!$det) continue;
+                // Ligne déjà saisie et non rouverte : verrouillée.
+                if (inv_ag_ligne_saisie($det) && !inv_ligne_deverrouillee('inventaire_corrections_rivets', $detail_id)) continue;
 
-                $stock_sys = (int)$det['stock_systeme'];
-                $ecart_mes = $phy_val - $stock_sys;
-
-                db_query("UPDATE inventaire_details_rivets SET stock_physique=?,ecart=?,notes=? WHERE id=?",
-                    [$phy_val,$ecart_mes,$notes,$detail_id]);
+                inv_ag_enregistrer('rivets', $inv, $det, $phy_val, $notes, (int)$user['id']);
                 $saved++;
             }
             db_commit();
-            json_response(true,"$saved ligne(s) sauvegardée(s).",['saved'=>$saved]);
+            json_response(true,"$saved ligne(s) sauvegardée(s)." . ($ignorees ? " $ignorees ignorée(s) (valeur négative)." : ''),['saved'=>$saved]);
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 
     if ($action==='valider') {
         if (!$can_validate) json_response(false,'Seul le GSB ou un administrateur peut valider l\'inventaire.');
-        $lignes = db_fetch_all("SELECT * FROM inventaire_details_rivets WHERE inventaire_id=?",[$inv_id]);
-        $nb_ecarts = 0; $total_physique = 0;
         db_begin();
         try {
-            inv_verrouiller_brouillon('inventaires_rivets', $inv_id);
-            inv_verifier_pas_plus_recent('inventaires_rivets', $inv);
-            // Comptage de fin de journée : le point 18h du jour d'abord ; ce
-            // que des points datés d'après ont déjà retiré est déduit du
-            // physique (cf. inv_conso_apres(), RÈGLE INVENTAIRE).
-            inv_verifier_point18h($inv);
-            $conso = inv_conso_apres((int)$inv['site_id'], (string)$inv['date_inventaire'], 'rivets');
-            foreach ($lignes as $l) {
-                if ((int)$l['stock_physique'] <= 0 && (int)$l['ecart'] == 0) continue;
-                $phy = (int)$l['stock_physique'];
-                $sys_inv = (int)$l['stock_systeme'];
-                $total_physique += $phy;
-
-                db_query(
-                    "INSERT INTO op_stock_rivets (site_id,type_rivet,quantite) VALUES (?,?,?)
-                     ON DUPLICATE KEY UPDATE quantite=?",
-                    [$inv['site_id'], $l['type_rivet'], max(0, $phy - ($conso[$l['type_rivet']] ?? 0)), max(0, $phy - ($conso[$l['type_rivet']] ?? 0))]
-                );
-
-                db_query("UPDATE ecarts_rivets SET statut='resolu', resolu_at=NOW(), resolu_par=?
-                          WHERE site_id=? AND type_rivet=? AND statut='ouvert'",
-                    [$user['id'], $inv['site_id'], $l['type_rivet']]);
-
-                $ecart_applique = $phy - $sys_inv;
-                if ($ecart_applique != 0) {
-                    $nb_ecarts++;
-                    db_query(
-                        "INSERT INTO ecarts_rivets (site_id,type_rivet,date_constat,stock_systeme,stock_physique,ecart,motif,source,inventaire_id,statut,resolu_at,resolu_par,created_by)
-                         VALUES (?,?,?,?,?,?,?,?,?,'resolu',NOW(),?,?)",
-                        [$inv['site_id'],$l['type_rivet'],$inv['date_inventaire'],$sys_inv,$phy,$ecart_applique,
-                         $l['notes']??'','inventaire',$inv_id,$user['id'],$user['id']]
-                    );
-                }
-            }
-            db_query("UPDATE inventaires_rivets SET statut='valide',nb_ecarts=?,total_quantite_physique=?,valide_par=?,valide_at=NOW() WHERE id=?",
-                [$nb_ecarts,$total_physique,$user['id'],$inv_id]);
-            audit_log($user['id'],'UPDATE','inventaire_rivets',$inv_id,"Validation inventaire rivets #$inv_id — $nb_ecarts écart(s)");
+            // Même validation que la liste des inventaires (includes/inventaire.php).
+            $r = inv_valider_agrege('rivets', $inv, (int)$user['id']);
+            audit_log($user['id'],'UPDATE','inventaire_rivets',$inv_id,"Validation inventaire rivets #$inv_id — {$r['nb_ecarts']} écart(s)");
             db_commit();
-            json_response(true,"Inventaire validé. $nb_ecarts écart(s) traité(s).");
+            json_response(true,"Inventaire validé. {$r['nb_ecarts']} écart(s) traité(s).");
         } catch(Exception $e){ db_rollback(); json_response(false,'Erreur: '.$e->getMessage()); }
     }
 
@@ -339,7 +303,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 //  DONNÉES
 // ============================================================
 $lignes = db_fetch_all(
-    "SELECT d.* FROM inventaire_details_rivets d WHERE d.inventaire_id=? ORDER BY d.type_rivet",
+    "SELECT d.*" . (inv_ag_reference_dispo('rivets') ? ", COALESCE(d.stock_reference, d.stock_systeme) AS stock_systeme" : "")
+    . " FROM inventaire_details_rivets d WHERE d.inventaire_id=? ORDER BY d.type_rivet",
     [$inv_id]
 );
 
@@ -375,7 +340,7 @@ foreach ($corrections_rows as $c) {
     }
 }
 
-$nb_saisis    = count(array_filter($lignes, fn($l)=>$l['stock_physique']>0||$l['ecart']!=0));
+$nb_saisis    = count(array_filter($lignes, 'inv_ag_ligne_saisie'));
 $nb_ecarts    = count(array_filter($lignes, fn($l)=>$l['ecart']!=0));
 $nb_non_saisi = count($lignes) - $nb_saisis;
 
@@ -549,7 +514,7 @@ input.saisie:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed;opacit
       <?php foreach($lignes as $l):
         $stock_phy  = (int)$l['stock_physique'];
         $ecart_mes  = (int)$l['ecart'];
-        $saisi      = $l['stock_physique'] > 0 || $ecart_mes != 0;
+        $saisi      = inv_ag_ligne_saisie($l);
         $ec_connu   = $ecarts_connus_map[$l['type_rivet']] ?? null;
         $demande_active = $corrections_map[$l['id']]['active'] ?? null;
         $demande_close  = $corrections_map[$l['id']]['close']  ?? null;
@@ -920,7 +885,7 @@ function ouvrirRecapValidation(){
   const nonSaisiEl = document.getElementById('recapNonSaisi');
   if(nonSaisis>0){
     nonSaisiEl.style.display='block';
-    nonSaisiEl.innerHTML = `<i class="ph ph-warning" aria-hidden="true"></i> ${nonSaisis} type(s) sans stock physique saisi ne seront pas pris en compte dans la validation.`;
+    nonSaisiEl.innerHTML = `<i class="ph ph-warning" aria-hidden="true"></i> ${nonSaisis} type(s) sans stock physique saisi : à saisir avant la validation (0 si rien).`;
   } else nonSaisiEl.style.display='none';
 
   const recapEl = document.getElementById('recapEcarts');

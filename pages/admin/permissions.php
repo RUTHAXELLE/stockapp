@@ -117,6 +117,11 @@ $modules = [
     'inventaire_rivets'  => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire rivets', 'INVENTAIRE'],
     'inventaire_pmma'    => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire PMMA', 'INVENTAIRE'],
     'inventaire_equipements' => ['<i class="ph ph-chart-bar" aria-hidden="true"></i>', 'Inventaire équipements', 'INVENTAIRE'],
+    // Fonctions, droit « Modifier » (cf. droit_fonction(), FONCTION_INV_VALIDER).
+    'inventaire_bobines_valider'     => ['<i class="ph ph-seal-check" aria-hidden="true"></i>', 'Valider les inventaires bobines (Modifier)', 'INVENTAIRE'],
+    'inventaire_rivets_valider'      => ['<i class="ph ph-seal-check" aria-hidden="true"></i>', 'Valider les inventaires rivets (Modifier)', 'INVENTAIRE'],
+    'inventaire_pmma_valider'        => ['<i class="ph ph-seal-check" aria-hidden="true"></i>', 'Valider les inventaires PMMA (Modifier)', 'INVENTAIRE'],
+    'inventaire_equipements_valider' => ['<i class="ph ph-seal-check" aria-hidden="true"></i>', 'Valider les inventaires équipements (Modifier)', 'INVENTAIRE'],
     'audit'              => ['<i class="ph ph-clipboard-text" aria-hidden="true"></i>', 'Journal d\'audit', 'ADMINISTRATION'],
     'pdg_overview'       => ['<i class="ph ph-chart-pie-slice" aria-hidden="true"></i>', 'Vue exécutive (PDG)', 'DASHBOARD'],
     'kpi_dashboard'      => ['<i class="ph ph-gauge" aria-hidden="true"></i>', 'Dashboard KPI', 'DASHBOARD'],
