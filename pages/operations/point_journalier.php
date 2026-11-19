@@ -1677,6 +1677,10 @@ include __DIR__ . '/../../templates/header.php';
              style="padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-size:13px;outline:none">
     </form>
   </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+  <?php if(can('operations', 'can_export')): ?>
+  <button class="btn btn-secondary" onclick="document.getElementById('mExportPj').classList.add('open')"><i class="ph ph-microsoft-excel-logo" aria-hidden="true"></i> Exporter</button>
+  <?php endif; ?>
   <?php if(in_array($role_slug_pj, ['coordinateur_site','admin','superadmin'])): ?>
   <?php if($stock_bloque): ?>
   <button class="btn btn-secondary" disabled style="opacity:.5;cursor:not-allowed"><i class="ph ph-lock" aria-hidden="true"></i> Activité bloquée</button>
@@ -1684,6 +1688,7 @@ include __DIR__ . '/../../templates/header.php';
   <button class="btn btn-primary" onclick="openPointForm()">+ Nouveau point journalier</button>
   <?php endif; ?>
   <?php endif; ?>
+  </div>
 </div>
 
 <?php if($stock_bloque && $stock_bloque_msg): ?>
@@ -2058,6 +2063,54 @@ foreach($points as $p):
      Une ligne indépendante par bobine endommagée. Le pop-up s'ouvre
      automatiquement à la saisie d'une quantité endommagée, et de nouveau
      à l'enregistrement si une bobine reste sans déclaration. -->
+<?php if(can('operations', 'can_export')): ?>
+<div class="modal-overlay" id="mExportPj">
+  <div class="modal" style="width:460px">
+    <div class="mhdr">
+      <h3><i class="ph ph-microsoft-excel-logo" aria-hidden="true"></i> Exporter les points journaliers</h3>
+      <button class="mclose" type="button" aria-label="Fermer" onclick="document.getElementById('mExportPj').classList.remove('open')"><i class="ph ph-x" aria-hidden="true"></i></button>
+    </div>
+    <form method="GET" action="<?= rtrim(APP_URL,'/') ?>/pages/operations/point_journalier_export.php" onsubmit="setTimeout(()=>document.getElementById('mExportPj').classList.remove('open'),300)">
+    <div class="mbody">
+      <p style="font-size:13px;color:var(--muted);margin:0 0 14px">
+        Un tableau par site (VP, camions, semi-remorques, motos, engins, plaques, duplicatas, observations)
+        avec la ligne total. Seuls les points 18h comptent. Sur plusieurs jours, une seconde feuille
+        reprend le détail jour par jour.
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+        <label style="font-size:12px;font-weight:600">Du
+          <input type="date" name="du" value="<?= date('Y-m-d') ?>" required class="form-control" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;margin-top:4px">
+        </label>
+        <label style="font-size:12px;font-weight:600">Au
+          <input type="date" name="au" value="<?= date('Y-m-d') ?>" required class="form-control" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;margin-top:4px">
+        </label>
+      </div>
+      <?php if($role_slug_pj !== 'coordinateur_site'): ?>
+      <label style="font-size:12px;font-weight:600;display:block;margin-bottom:12px">Site
+        <select name="site" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;margin-top:4px;background:white">
+          <option value="0">Tous les sites</option>
+          <?php foreach($sites_list as $s): ?>
+          <option value="<?= $s['id'] ?>" <?= $f_site===(int)$s['id']?'selected':'' ?>><?= h($s['nom']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </label>
+      <?php endif; ?>
+      <label style="font-size:13px;display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        <input type="checkbox" name="sans_point" value="1" checked> Lister aussi les sites sans point
+      </label>
+      <label style="font-size:13px;display:flex;gap:8px;align-items:center">
+        <input type="checkbox" name="soumis" value="1"> Inclure les points soumis, pas encore validés
+      </label>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-secondary" type="button" onclick="document.getElementById('mExportPj').classList.remove('open')">Annuler</button>
+      <button class="btn btn-primary" type="submit"><i class="ph ph-download-simple" aria-hidden="true"></i> Télécharger l'Excel</button>
+    </div>
+    </form>
+  </div>
+</div>
+<?php endif; ?>
+
 <div class="modal-overlay" id="mEndommagement">
   <div class="modal" style="width:720px">
     <div class="mhdr">
