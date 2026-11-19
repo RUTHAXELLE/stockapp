@@ -377,6 +377,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $heures     = max(0.0, min(24.0, (float)($_POST['nb_heures'] ?? 8)));
         $obs        = trim($_POST['observations'] ?? '');
         $films_data = json_decode($_POST['films_data'] ?? '[]', true);
+        if (!is_array($films_data)) $films_data = [];
+        $_pj_bob_vues = [];
+        foreach ($films_data as $_fd) {
+            $_bid = (int)($_fd['bobine_id'] ?? 0);
+            if (!$_bid) continue;
+            if (isset($_pj_bob_vues[$_bid])) {
+                $_num = (string)db_fetch_value("SELECT numero FROM op_bobines WHERE id=?", [$_bid]);
+                json_response(false, "La bobine " . ($_num ?: "#$_bid") . " est saisie deux fois dans ce point. Regroupez ses films sur une seule ligne.");
+            }
+            $_pj_bob_vues[$_bid] = true;
+        }
         $pmma_data  = json_decode($_POST['pmma_data']  ?? '[]', true);
         // n° 2.1 CR PDG — une ligne par bobine endommagée, saisie dans le
         // pop-up déclenché par la quantité endommagée.
@@ -2957,6 +2968,11 @@ async function loadBobines(){
 function renderBobinesRows(selectedIds){
   const fc=document.getElementById('films-container');
   const rows = selectedIds.map((bid,i)=>buildBobineRow(bid,i)).join('');
+  // Les lignes affichées vont de 0 à n-1 : la prochaine ajoutée prend n.
+  // Sans cela, après « Modifier » un point de plusieurs bobines, la ligne
+  // ajoutée reprenait le numéro d'une ligne existante (identifiants HTML
+  // en double) et l'enregistrement relisait l'ancienne bobine deux fois.
+  nbBobineRows = selectedIds.length;
   fc.innerHTML=`
     <div id="bobine-rows">${rows}</div>
     <button type="button" onclick="addBobineRow()"
