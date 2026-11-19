@@ -46,7 +46,12 @@ function ses_sites_session(int $session_id): array {
         $s['cloture'] = true;
         foreach ($cols as $col => $type) {
             if ($s[$col] === null && inv_rien_a_compter($type, (int)$s['id'])) $s[$col] = 'sans_objet';
-            if (!in_array($s[$col], ['valide', 'sans_objet'], true)) $s['cloture'] = false;
+            // Inventaire annulé (motif au journal) et pas remplacé : le site
+            // ne bloque plus la clôture de la session.
+            if ($s[$col] === null && (int)db_fetch_value(
+                    "SELECT COUNT(*) FROM " . INV_TABLES[$type]['inv'] . " WHERE session_id=? AND site_id=? AND statut='annule'",
+                    [$session_id, (int)$s['id']])) $s[$col] = 'annule';
+            if (!in_array($s[$col], ['valide', 'sans_objet', 'annule'], true)) $s['cloture'] = false;
         }
     }
     unset($s);
@@ -269,6 +274,7 @@ include __DIR__ . '/../templates/header.php';
 .site-statut.en_cours{background:#fef9e7;color:#9a6c00}
 .site-statut.cloture{background:#d5f5e3;color:#1e7e40}
 .site-statut.sans_objet{background:#f1f5f9;color:#475569;font-weight:600}
+.site-statut.annule{background:#f1f5f9;color:#64748b;font-weight:600}
 .site-picker{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:12px;background:#f8fafc}
 .site-chip{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 10px;border-radius:8px;background:white;border:1px solid var(--border);cursor:pointer}
 .site-chip:has(input:checked){border-color:var(--blue);background:#eaf2fb}
@@ -321,15 +327,16 @@ include __DIR__ . '/../templates/header.php';
         <?php
         $st_lbls = ['non_commence'=>'⏳ Non commencé','en_cours'=>'<i class="ph ph-note-pencil" aria-hidden="true"></i> En cours',
                     'cloture'=>'<i class="ph ph-check-circle" aria-hidden="true"></i> Clôturé',
-                    'sans_objet'=>'<i class="ph ph-minus-circle" aria-hidden="true"></i> Sans objet'];
+                    'sans_objet'=>'<i class="ph ph-minus-circle" aria-hidden="true"></i> Sans objet',
+                    'annule'=>'<i class="ph ph-prohibit" aria-hidden="true"></i> Annulé'];
         foreach ($sites_session as $s):
-          $st = ['valide' => 'cloture', 'brouillon' => 'en_cours', 'sans_objet' => 'sans_objet'][$s['inv_statut'] ?? ''] ?? 'non_commence';
+          $st = ['valide' => 'cloture', 'brouillon' => 'en_cours', 'sans_objet' => 'sans_objet', 'annule' => 'annule'][$s['inv_statut'] ?? ''] ?? 'non_commence';
           $st_lbl = $st_lbls[$st];
-          $riv_st = ['valide' => 'cloture', 'brouillon' => 'en_cours', 'sans_objet' => 'sans_objet'][$s['riv_statut'] ?? ''] ?? 'non_commence';
+          $riv_st = ['valide' => 'cloture', 'brouillon' => 'en_cours', 'sans_objet' => 'sans_objet', 'annule' => 'annule'][$s['riv_statut'] ?? ''] ?? 'non_commence';
           $riv_st_lbl = $st_lbls[$riv_st];
-          $pmma_st = ['valide' => 'cloture', 'brouillon' => 'en_cours', 'sans_objet' => 'sans_objet'][$s['pmma_statut'] ?? ''] ?? 'non_commence';
+          $pmma_st = ['valide' => 'cloture', 'brouillon' => 'en_cours', 'sans_objet' => 'sans_objet', 'annule' => 'annule'][$s['pmma_statut'] ?? ''] ?? 'non_commence';
           $pmma_st_lbl = $st_lbls[$pmma_st];
-          $equip_st = ['valide' => 'cloture', 'brouillon' => 'en_cours', 'sans_objet' => 'sans_objet'][$s['equip_statut'] ?? ''] ?? 'non_commence';
+          $equip_st = ['valide' => 'cloture', 'brouillon' => 'en_cours', 'sans_objet' => 'sans_objet', 'annule' => 'annule'][$s['equip_statut'] ?? ''] ?? 'non_commence';
           $equip_st_lbl = $st_lbls[$equip_st];
         ?>
           <tr>

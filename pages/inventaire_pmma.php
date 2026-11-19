@@ -54,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 "SELECT se.id FROM inventaire_sessions se
                  JOIN inventaire_session_sites iss ON iss.session_id = se.id
                  WHERE iss.site_id = ? AND se.statut = 'ouverte'
-                   AND CURRENT_DATE BETWEEN se.date_debut AND se.date_fin
+                   AND CURRENT_DATE >= se.date_debut
                  LIMIT 1",
                 [$site_id]
             );
@@ -169,7 +169,7 @@ if ($site_force) {
          JOIN inventaire_session_sites iss ON iss.session_id = se.id
          LEFT JOIN inventaires_pmma ip ON ip.session_id = se.id AND ip.site_id = iss.site_id AND ip.statut != 'annule'
          WHERE iss.site_id = ? AND se.statut = 'ouverte'
-           AND CURRENT_DATE BETWEEN se.date_debut AND se.date_fin
+           AND CURRENT_DATE >= se.date_debut
          LIMIT 1",
         [$site_force]
     );

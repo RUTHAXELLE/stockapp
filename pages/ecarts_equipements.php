@@ -15,6 +15,18 @@ require_permission('ecarts_equipements', 'can_read');
 
 $user      = current_user();
 $role_slug = $user['role_slug'] ?? '';
+require_once __DIR__ . '/../includes/inventaire.php';
+// Déclarer perdu un équipement manquant : profils qui valident l'inventaire
+// des équipements (option de la matrice).
+$peut_declarer_perdu = droit_fonction(FONCTION_INV_VALIDER['equipements']);
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
+    header('Content-Type: application/json');
+    if (($_POST['action'] ?? '') !== 'declarer_perdu') json_response(false, 'Action inconnue.');
+    if (!$peut_declarer_perdu) json_response(false, "Réservé aux profils qui valident l'inventaire des équipements.");
+    try { $num = inv_declarer_equipement_perdu((int)($_POST['ecart_id'] ?? 0), (string)($_POST['motif'] ?? ''), (int)$user['id']); }
+    catch (Exception $e) { json_response(false, $e->getMessage()); }
+    json_response(true, "Équipement $num déclaré perdu et retiré du parc.");
+}
 
 $page_title  = 'Écarts équipements';
 $active_page = 'ecarts_equipements';
@@ -171,6 +183,7 @@ include __DIR__ . '/../templates/header.php';
         <option value="">Tous</option>
         <option value="ouvert"  <?= $f_statut === 'ouvert'  ? 'selected' : '' ?>>Toujours manquants</option>
         <option value="resolu"  <?= $f_statut === 'resolu'  ? 'selected' : '' ?>>Retrouvés</option>
+        <option value="perdu"   <?= $f_statut === 'perdu'   ? 'selected' : '' ?>>Déclarés perdus</option>
       </select>
     </div>
     <div>
@@ -211,6 +224,7 @@ include __DIR__ . '/../templates/header.php';
             <th>Motif</th>
             <th>Traité par</th>
             <th>Le</th>
+            <?php if ($peut_declarer_perdu): ?><th>Action</th><?php endif; ?>
           </tr>
         </thead>
         <tbody>
@@ -224,6 +238,8 @@ include __DIR__ . '/../templates/header.php';
             <td>
               <?php if ($e['statut'] === 'ouvert'): ?>
                 <span class="badge badge-ouvert">Toujours manquant</span>
+              <?php elseif ($e['statut'] === 'perdu'): ?>
+                <span class="badge badge-ouvert" style="opacity:.75">Déclaré perdu</span>
               <?php else: ?>
                 <span class="badge badge-resolu">Retrouvé</span>
               <?php endif; ?>
@@ -235,6 +251,15 @@ include __DIR__ . '/../templates/header.php';
             <td style="font-size:12px;white-space:nowrap;color:var(--muted)">
               <?= $e['resolu_at'] ? fmt_date($e['resolu_at']) : '—' ?>
             </td>
+            <?php if ($peut_declarer_perdu): ?>
+            <td style="white-space:nowrap">
+              <?php if ($e['statut'] === 'ouvert'): ?>
+              <button type="button" class="btn btn-secondary btn-sm"
+                      onclick="declarerPerdu(<?= (int)$e['id'] ?>, <?= h(json_encode((string)$e['numero_serie_interne'])) ?>)">
+                <i class="ph ph-x-square" aria-hidden="true"></i> Déclarer perdu</button>
+              <?php endif; ?>
+            </td>
+            <?php endif; ?>
           </tr>
         <?php endforeach; ?>
         </tbody>
@@ -245,4 +270,17 @@ include __DIR__ . '/../templates/header.php';
 
 </div>
 
+<?php if ($peut_declarer_perdu): ?>
+<script>
+async function declarerPerdu(id, num){
+  const motif = prompt("Déclarer l'équipement " + num + " perdu ?\n\nIl sortira du parc (statut « perdu », retiré du site) et l'écart sera fermé.\nMotif (obligatoire) :");
+  if (motif === null) return;
+  if (!motif.trim()) { alert('Le motif est obligatoire.'); return; }
+  const d = await fetch(window.location.href, {method:'POST', headers:{'X-Requested-With':'XMLHttpRequest','Content-Type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({action:'declarer_perdu', ecart_id:id, motif:motif})}).then(r=>r.json()).catch(()=>({success:false,message:'Connexion au serveur impossible.'}));
+  alert(d.message);
+  if (d.success) location.reload();
+}
+</script>
+<?php endif; ?>
 <?php include __DIR__ . '/../templates/footer.php'; ?>

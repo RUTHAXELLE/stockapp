@@ -59,6 +59,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
     if ($action==='sauver_ligne') {
         if (!$can_edit) json_response(false,'Inventaire non modifiable.');
+        if (inv_moment_a_choisir('rivets', $inv)) json_response(false, INV_MSG_MOMENT);
         $detail_id      = (int)($_POST['detail_id'] ?? 0);
         $stock_physique = ($_POST['stock_physique'] ?? '') !== '' ? (int)$_POST['stock_physique'] : null;
         $notes          = trim($_POST['notes'] ?? '');
@@ -242,6 +243,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
 
     if ($action==='sauver_tout') {
         if (!$can_edit) json_response(false,'Inventaire non modifiable.');
+        if (inv_moment_a_choisir('rivets', $inv)) json_response(false, INV_MSG_MOMENT);
         $lignes_data = json_decode($_POST['lignes'] ?? '[]', true);
         if (!is_array($lignes_data)) json_response(false,'Données invalides.');
         $saved = 0; $ignorees = 0;

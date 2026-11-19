@@ -75,6 +75,8 @@ $STATUTS_STOCK = [
     'en_attente_affectation' => ['En attente',       'ph-hourglass',    '#fef3c7', '#92400e'],
     'affectation_en_cours'   => ['Affectation en cours', 'ph-hourglass', '#fef3c7', '#92400e'],
     'en_transit'             => ['En transit',       'ph-truck',        '#e0e7ff', '#3730a3'],
+    // Manquant à l'inventaire puis déclaré perdu (Écarts équipements) : hors parc.
+    'perdu'                  => ['Perdu',            'ph-question',     '#f3f4f6', '#6b7280'],
 ];
 
 // ── Amortissements OHADA (durées standard en mois)
@@ -579,7 +581,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 }
 
 // ── DONNÉES
-$where = ["e.categorie=?", $f_statut_stock === 'epuise' ? "e.actif=0" : "e.actif=1"]; $params = [$f_categorie];
+$where = ["e.categorie=?", in_array($f_statut_stock, ['epuise', 'perdu'], true) ? "e.actif=0" : "e.actif=1"]; $params = [$f_categorie];
 if ($f_site)   { $where[] = "e.site_id=?";          $params[] = $f_site; }
 if ($f_etat === 'ok') { $where[] = "e.etat IN ('neuf','bon')"; }
 elseif ($f_etat)      { $where[] = "e.etat=?";       $params[] = $f_etat; }

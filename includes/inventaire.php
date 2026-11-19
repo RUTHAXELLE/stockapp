@@ -229,7 +229,7 @@ function inv_valider_bobines(array $inv, int $user_id): array {
             db_query(
                 "INSERT INTO ecarts_bobines (bobine_id,date_constat,stock_systeme,stock_physique,ecart,motif,source,inventaire_id,statut,resolu_at,resolu_par,created_by)
                  VALUES (?,?,?,?,?,?,'inventaire',?,'resolu',NOW(),?,?)",
-                [$l['bobine_id'], $inv['date_inventaire'], $erp_avant, $phy, $ecart,
+                [$l['bobine_id'], substr((string)($l['saisi_at'] ?? '') ?: (string)$inv['date_inventaire'], 0, 10), $erp_avant, $phy, $ecart,
                  $l['notes'] ?? '', $inv_id, $user_id, $user_id]
             );
         }
@@ -248,7 +248,7 @@ function inv_valider_bobines(array $inv, int $user_id): array {
             bab_notifier_gsb('Bobines comptées sur deux sites', "Inventaire de $site_nom : lignes non appliquées, à arbitrer — " . implode(', ', $conflits) . '.', $lien);
     }
     if ($inv['type_inventaire'] === 'mensuel') {
-        $mois = date('Y-m', strtotime($inv['date_inventaire']));
+        $mois = date('Y-m', strtotime(inv_dernier_jour_comptage($inv, $lignes)));
         db_query(
             "INSERT INTO bilans_mensuels_bobines (site_id,mois,inventaire_id,stock_fin_mois,nb_ajustements,statut,valide_par,valide_at)
              VALUES (?,?,?,?,?,'valide',?,NOW())
@@ -631,16 +631,26 @@ function inv_dater_comptage(string $type, array $inv): array {
         db_query("UPDATE {$t['inv']} SET date_inventaire=? WHERE id=? AND statut='brouillon'", [$auj, (int)$inv['id']]);
         $inv['date_inventaire'] = $auj;
     }
-    // Moment pas encore choisi : matin si la saisie commence avant midi et
-    // qu'aucun point du jour n'existe pour le site (activité pas commencée).
-    if ((string)$inv['date_inventaire'] === $auj && inv_moment_dispo($t['inv'])
-        && ($inv['comptage_matin'] ?? null) === null) {
-        $matin = (int)date('G') < 12 && !(int)db_fetch_value(
-            "SELECT COUNT(*) FROM op_points_journaliers WHERE site_id=? AND date_point=?", [(int)$inv['site_id'], $auj]);
-        db_query("UPDATE {$t['inv']} SET comptage_matin=? WHERE id=?", [$matin ? 1 : 0, (int)$inv['id']]);
-        $inv['comptage_matin'] = $matin ? 1 : 0;
-    }
     return $inv;
+}
+
+// ── Le moment du comptage n'est plus deviné : il est demandé avant la
+//    première saisie (une saisie à 11h après deux heures de pose passait
+//    pour un comptage du matin). Inventaire déjà commencé sans choix
+//    (antérieur à cette règle) : traité comme le soir, rien à demander.
+function inv_moment_a_choisir(string $type, array $inv): bool {
+    $t = INV_TABLES[$type];
+    if (!inv_moment_dispo($t['inv']) || ($inv['comptage_matin'] ?? null) !== null || $inv['statut'] !== 'brouillon') return false;
+    return !(int)db_fetch_value("SELECT COUNT(*) FROM {$t['det']} d WHERE d.inventaire_id=? AND " . inv_sql_ligne_saisie($type), [(int)$inv['id']]);
+}
+
+const INV_MSG_MOMENT = "Indiquez d'abord, en haut de la fiche, quand le comptage est fait : le matin avant les activités, ou le soir après le point 18h.";
+
+// ── Proposition affichée avant le choix : matin avant midi si aucun point
+//    du jour n'existe encore pour le site.
+function inv_moment_suggere(array $inv): bool {
+    return (int)date('G') < 12 && !(int)db_fetch_value(
+        "SELECT COUNT(*) FROM op_points_journaliers WHERE site_id=? AND date_point=?", [(int)$inv['site_id'], date('Y-m-d')]);
 }
 
 // ── Choix manuel du moment du comptage (brouillon). Rivets et PMMA : la
@@ -652,9 +662,12 @@ function inv_changer_moment(string $type, array $inv, bool $matin): void {
     $t = INV_TABLES[$type];
     if (!inv_moment_dispo($t['inv'])) throw new Exception('Option indisponible : migration non passée.');
     if ($inv['statut'] !== 'brouillon') throw new Exception("L'inventaire n'est plus en cours.");
+    // Choix fait avant la première saisie : l'inventaire de session prend
+    // aussi la date du jour, comme à la première saisie.
+    $inv = inv_dater_comptage($type, $inv);
     $avant = $inv;
     $inv['comptage_matin'] = $matin ? 1 : 0;
-    if (!empty($avant['comptage_matin']) === $matin) return;
+    if (($avant['comptage_matin'] ?? null) !== null && !empty($avant['comptage_matin']) === $matin) return;
     db_begin();
     try {
         db_query("UPDATE {$t['inv']} SET comptage_matin=? WHERE id=? AND statut='brouillon'", [$matin ? 1 : 0, (int)$inv['id']]);
@@ -694,9 +707,23 @@ function inv_changer_moment(string $type, array $inv, bool $matin): void {
 function inv_moment_html(string $type, array $inv, bool $modifiable): string {
     if (!inv_moment_dispo(INV_TABLES[$type]['inv'])) return '';
     $j = date('d/m/Y', strtotime((string)$inv['date_inventaire']));
-    $matin = !empty($inv['comptage_matin']);
+    $a_choisir = inv_moment_a_choisir($type, $inv);
+    $matin = $a_choisir ? inv_moment_suggere($inv) : !empty($inv['comptage_matin']);
     $txt = $matin ? "avant les activités du $j (stock d'ouverture ; le point du soir reste à faire)"
                   : "en fin de journée du $j, après le point 18h";
+    if ($a_choisir && $modifiable) {
+        $j = date('d/m/Y');
+        return '<div class="inv-meta" style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;'
+             . 'background:#fff8e7;border:1px solid #f0d999;border-radius:8px;padding:8px 10px;color:#5a4a1f">'
+             . '<i class="ph ph-clock" aria-hidden="true"></i><label for="invMoment"><strong>Avant de saisir :</strong> le comptage est fait</label>'
+             . '<select id="invMoment" class="form-control" style="width:auto;padding:4px 8px;font-size:13px">'
+             . '<option value="1"' . ($matin ? ' selected' : '') . '>' . h("le $j au matin, avant les activités") . '</option>'
+             . '<option value="0"' . (!$matin ? ' selected' : '') . '>' . h("le $j en fin de journée, après le point 18h") . '</option>'
+             . '</select>'
+             . '<button type="button" class="btn btn-primary btn-sm" onclick="ap({action:\'moment_comptage\',matin:document.getElementById(\'invMoment\').value}).then(d=>{toast(d.message,d.success?\'success\':\'error\');if(d.success)setTimeout(()=>location.reload(),600);})">Confirmer</button>'
+             . '</div>';
+    }
+    if ($a_choisir) return '<div class="inv-meta" style="margin-top:4px">Comptage : <strong>moment à préciser par le site</strong></div>';
     if (!$modifiable || $inv['statut'] !== 'brouillon')
         return '<div class="inv-meta" style="margin-top:4px">Comptage : <strong>' . h($txt) . '</strong></div>';
     $opt = fn($v, $l, $sel) => '<option value="' . $v . '"' . ($sel ? ' selected' : '') . '>' . h($l) . '</option>';
@@ -874,7 +901,7 @@ function inv_valider_agrege(string $type, array $inv, int $user_id): array {
             db_query(
                 "INSERT INTO {$c['ecarts']} (site_id,{$c['cle']},date_constat,stock_systeme,stock_physique,ecart,motif,source,inventaire_id,statut,resolu_at,resolu_par,created_by)
                  VALUES (?,?,?,?,?,?,?,'inventaire',?,'resolu',NOW(),?,?)",
-                [$site, $cle, $inv['date_inventaire'], $sys, $phy, $ecart, $l['notes'] ?? '', $inv_id, $user_id, $user_id]);
+                [$site, $cle, substr((string)($l['saisi_at'] ?? '') ?: (string)$inv['date_inventaire'], 0, 10), $sys, $phy, $ecart, $l['notes'] ?? '', $inv_id, $user_id, $user_id]);
         }
     }
     db_query("UPDATE {$c['inv']} SET statut='valide',nb_ecarts=?,total_quantite_physique=?,valide_par=?,valide_at=NOW(),date_inventaire=? WHERE id=?",
@@ -908,4 +935,33 @@ function inv_valider_equipements(array $inv, int $user_id): array {
     db_query("UPDATE inventaires_equipements SET statut='valide',nb_ecarts=?,nb_trouves=?,valide_par=?,valide_at=NOW() WHERE id=?",
         [$nb_ecarts, $nb_trouves, $user_id, $inv_id]);
     return ['nb_ecarts' => $nb_ecarts, 'nb_trouves' => $nb_trouves];
+}
+
+// ── Équipement manquant déclaré perdu (écran Écarts équipements) : l'écart
+//    se ferme au statut « perdu », l'équipement sort du parc (statut
+//    « perdu », plus de site ni d'utilisateur) et le mouvement est tracé.
+//    Sans cela un manquant ne se fermait que s'il était retrouvé, et revenait
+//    à chaque inventaire du site.
+function inv_declarer_equipement_perdu(int $ecart_id, string $motif, int $user_id): string {
+    $motif = trim($motif);
+    if ($motif === '') throw new Exception('Le motif est obligatoire.');
+    db_begin();
+    try {
+        $ec = db_fetch_one("SELECT * FROM ecarts_equipements WHERE id=? AND statut='ouvert' FOR UPDATE", [$ecart_id]);
+        if (!$ec) throw new Exception('Écart introuvable ou déjà traité.');
+        $eq = db_fetch_one("SELECT * FROM equipements WHERE id=? FOR UPDATE", [(int)$ec['equipement_id']]);
+        if (!$eq) throw new Exception('Équipement introuvable.');
+        if (in_array($eq['statut_stock'] ?? '', ['en_transit', 'affectation_en_cours', 'en_attente_affectation'], true))
+            throw new Exception("L'équipement est en cours de transfert ou d'affectation : terminez ou annulez d'abord ce mouvement.");
+        $agent = db_colonne_existe('equipements', 'agent_id') ? ', agent_id=NULL' : '';
+        db_query("UPDATE equipements SET statut_stock='perdu', actif=0, site_id=NULL, utilisateur_id=NULL$agent WHERE id=?", [(int)$eq['id']]);
+        db_query("INSERT INTO mouvements_equipements (equipement_id, type, site_source_id, notes, created_by) VALUES (?,?,?,?,?)",
+            [(int)$eq['id'], 'sortie', $eq['site_id'] ?: null, 'Déclaré perdu (manquant à l\'inventaire) : ' . $motif, $user_id]);
+        db_query("UPDATE ecarts_equipements SET statut='perdu', resolu_at=NOW(), resolu_par=?,
+                         motif=? WHERE equipement_id=? AND statut='ouvert'",
+            [$user_id, trim(($ec['motif'] ?? '') . "\nDéclaré perdu : " . $motif), (int)$eq['id']]);
+        audit_log($user_id, 'UPDATE', 'equipements', (int)$eq['id'], "Équipement {$eq['numero_serie_interne']} déclaré perdu — motif : $motif");
+        db_commit();
+        return (string)$eq['numero_serie_interne'];
+    } catch (Exception $e) { db_rollback(); throw $e; }
 }

@@ -83,6 +83,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     //    réunion ERP : la saisie libre était une source d'erreur.)
     if ($action==='sauver_ligne') {
         if (!$can_edit) json_response(false,'Inventaire non modifiable.');
+        if (inv_moment_a_choisir('bobines', $inv)) json_response(false, INV_MSG_MOMENT);
         $detail_id      = (int)($_POST['detail_id']     ?? 0);
         $absente        = $bab && ($_POST['absente'] ?? '') === '1';
         $stock_physique = $absente ? 0 : (($_POST['stock_physique'] ?? '') !== '' ? (int)$_POST['stock_physique'] : null);
@@ -343,6 +344,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
     // ── TOUT SAUVER
     if ($action==='sauver_tout') {
         if (!$can_edit) json_response(false,'Inventaire non modifiable.');
+        if (inv_moment_a_choisir('bobines', $inv)) json_response(false, INV_MSG_MOMENT);
         $lignes_data = json_decode($_POST['lignes'] ?? '[]', true);
         if (!is_array($lignes_data)) json_response(false,'Données invalides.');
         $saved = 0; $errors = 0;

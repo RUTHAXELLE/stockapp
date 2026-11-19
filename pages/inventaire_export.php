@@ -134,7 +134,7 @@ function inv_export_details(string $type, array $ids): array {
 // écart stocké distingue « compté à zéro » de « pas compté » (même critère
 // que la validation, cf. inv_valider_bobines()).
 function inv_export_compte(array $l): bool {
-    return (int)$l['stock_physique'] > 0 || (int)$l['ecart'] !== 0 || !empty($l['absente']);
+    return (int)$l['stock_physique'] > 0 || (int)$l['ecart'] !== 0 || !empty($l['absente']) || !empty($l['saisi_at']);
 }
 
 // ── Données : par type, chaque inventaire avec ses lignes et sa synthèse
@@ -155,7 +155,10 @@ foreach ($types_sel as $t) {
             $inv['syn'] = [
                 'nb'        => count($lignes),
                 'comptes'   => count($comptees),
-                'reference' => array_sum(array_map(fn($l) => (int)$l['stock_systeme'], $comptees)),
+                // Référence = stock attendu au comptage, celui contre lequel
+                // l'écart est mesuré : compté - écart (le stock figé à
+                // l'ouverture ne donnait plus « référence - compté = écart »).
+                'reference' => array_sum(array_map(fn($l) => (int)$l['stock_physique'] - (int)$l['ecart'], $comptees)),
                 'compte'    => array_sum(array_map(fn($l) => (int)$l['stock_physique'], $comptees)),
                 'ecart'     => array_sum(array_map(fn($l) => (int)$l['ecart'], $comptees)),
                 'nb_ecarts' => count(array_filter($comptees, fn($l) => (int)$l['ecart'] !== 0)),
@@ -265,10 +268,11 @@ if ($export === 'xlsx') {
         $tot = [0, 0, 0];
         foreach ($invs as $inv) foreach ($inv['lignes'] as $l) {
             $c = inv_export_compte($l);
-            if ($c) { $tot[0] += (int)$l['stock_systeme']; $tot[1] += (int)$l['stock_physique']; $tot[2] += (int)$l['ecart']; }
+            $ref_l = $c ? (int)$l['stock_physique'] - (int)$l['ecart'] : (int)$l['stock_systeme'];
+            if ($c) { $tot[0] += $ref_l; $tot[1] += (int)$l['stock_physique']; $tot[2] += (int)$l['ecart']; }
             $base = [$inv['site_nom'] ?? '—', fmt_date($inv['date_inventaire']), $statut_lbl($inv['statut']), $l['article']];
             if ($t === 'bobines') $base[] = $l['sous_type'] ?? '';
-            $rows[] = array_merge($base, [(int)$l['stock_systeme'], $c ? (!empty($l['absente']) ? 'Absente' : (int)$l['stock_physique']) : 'Non compté', $c ? (int)$l['ecart'] : '', $l['notes'] ?? '']);
+            $rows[] = array_merge($base, [$ref_l, $c ? (!empty($l['absente']) ? 'Absente' : (int)$l['stock_physique']) : 'Non compté', $c ? (int)$l['ecart'] : '', $l['notes'] ?? '']);
         }
         $entetes = ['Site', 'Date', 'Statut', $t === 'bobines' ? 'Bobine' : 'Format'];
         if ($t === 'bobines') $entetes[] = 'Type';
