@@ -135,8 +135,9 @@ $vert   = 'C6EFCE';
 $blanc  = 'FFFFFF';
 
 $colonnes = ['Site' => null, 'VP' => 'nb_vp', 'Camions' => 'nb_camion', 'Semi-rem.' => 'nb_semi',
-             'Motos' => 'nb_moto', 'Plaques' => 'total_plaques',
+             'Motos' => 'nb_moto',
              'Duplicatas' => 'duplicatas', 'Post-Immat' => 'postimmat', 'Engins' => 'total_engins',
+             'Plaques' => 'total_plaques',
              'Films endom.' => 'films_end', 'PMMA endom.' => 'pmma_end', 'Rivets endom.' => 'rivets_end',
              'Observations' => 'obs'];
 
