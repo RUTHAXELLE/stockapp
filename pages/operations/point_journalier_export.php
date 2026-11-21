@@ -48,7 +48,6 @@ $avec_sans_point = !empty($_GET['sans_point']);
 $dup_ok  = db_colonne_existe('op_points_journaliers', 'total_engins_duplicata');
 $post_ok = db_colonne_existe('op_points_journaliers', 'total_engins_postimmat');
 $sp_ok   = db_colonne_existe('op_points_journaliers', 'sans_production');
-$ops_ok  = db_colonne_existe('sites', 'operation');
 
 $statuts = $avec_soumis ? ['valide', 'soumis'] : ['valide'];
 $in_st   = implode(',', array_fill(0, count($statuts), '?'));
@@ -59,6 +58,9 @@ $points = db_fetch_all(
             " . ($dup_ok  ? "p.total_engins_duplicata"  : "0") . " AS duplicatas,
             " . ($post_ok ? "p.total_engins_postimmat"  : "0") . " AS postimmat,
             " . ($sp_ok   ? "p.sans_production, p.motif_sans_production" : "0 AS sans_production, NULL AS motif_sans_production") . ",
+            (SELECT COALESCE(SUM(fu.films_endommages),0) FROM op_films_utilises fu WHERE fu.point_id = p.id) AS films_end,
+            (SELECT COALESCE(SUM(pu.endommages),0) FROM op_pmma_utilises pu WHERE pu.point_id = p.id) AS pmma_end,
+            COALESCE(p.rivets_endommages,0) AS rivets_end,
             p.observations, s.nom AS site_nom
      FROM op_points_journaliers p
      JOIN sites s ON s.id = p.site_id
@@ -81,9 +83,6 @@ if ($avec_sans_point) {
         [$site_id, $site_id]
     );
 }
-// Colonne Post-Immat seulement si un site en Re-Immatriculation existe.
-$avec_post = $post_ok && $ops_ok
-    && (int)db_fetch_value("SELECT COUNT(*) FROM sites WHERE operation = 'reimmat_post' AND actif = 1") > 0;
 
 // ── Observations d'un point
 function pje_observation(array $p): string {
@@ -98,7 +97,8 @@ function pje_observation(array $p): string {
 }
 
 // ── Agrégation par site (et par jour)
-$cles = ['nb_vp', 'nb_camion', 'nb_semi', 'nb_moto', 'total_engins', 'total_plaques', 'duplicatas', 'postimmat'];
+$cles = ['nb_vp', 'nb_camion', 'nb_semi', 'nb_moto', 'total_engins', 'total_plaques', 'duplicatas', 'postimmat',
+         'films_end', 'pmma_end', 'rivets_end'];
 $vide = array_fill_keys($cles, 0);
 
 function pje_cumuler(array &$ligne, array $p, array $cles): void {
@@ -136,9 +136,9 @@ $blanc  = 'FFFFFF';
 
 $colonnes = ['Site' => null, 'VP' => 'nb_vp', 'Camions' => 'nb_camion', 'Semi-rem.' => 'nb_semi',
              'Motos' => 'nb_moto', 'Engins' => 'total_engins', 'Plaques' => 'total_plaques',
-             'Duplicatas' => 'duplicatas'];
-if ($avec_post) $colonnes['Post-Immat'] = 'postimmat';
-$colonnes['Observations'] = 'obs';
+             'Duplicatas' => 'duplicatas', 'Post-Immat' => 'postimmat',
+             'Films endom.' => 'films_end', 'PMMA endom.' => 'pmma_end', 'Rivets endom.' => 'rivets_end',
+             'Observations' => 'obs'];
 
 $nb_col   = count($colonnes);
 $col_fin  = chr(ord('A') + $nb_col - 1);
@@ -218,6 +218,7 @@ function pje_tableau(Worksheet $ws, int $r, string $titre, array $lignes, array 
 
 function pje_mise_en_page(Worksheet $ws, string $col_fin): void {
     $ws->getColumnDimension('A')->setWidth(34);
+    $ws->freezePane('B1');
     for ($c = 'B'; $c !== $col_fin; $c++) $ws->getColumnDimension($c)->setWidth(13);
     $ws->getColumnDimension($col_fin)->setWidth(40);
     $ws->getPageSetup()->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE)
