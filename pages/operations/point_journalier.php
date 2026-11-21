@@ -2073,7 +2073,7 @@ foreach($points as $p):
     <form method="GET" action="<?= rtrim(APP_URL,'/') ?>/pages/operations/point_journalier_export.php" onsubmit="setTimeout(()=>document.getElementById('mExportPj').classList.remove('open'),300)">
     <div class="mbody">
       <p style="font-size:13px;color:var(--muted);margin:0 0 14px">
-        Un tableau par site (VP, camions, semi-remorques, motos, engins, plaques, duplicatas, post-immat, films, PMMA et rivets endommagés, observations)
+        Un tableau par site (VP, camions, semi-remorques, motos, plaques, duplicatas, post-immat, engins, films, PMMA et rivets endommagés, observations)
         avec la ligne total. Seuls les points 18h comptent. Sur plusieurs jours, une seconde feuille
         reprend le détail jour par jour.
       </p>

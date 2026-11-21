@@ -135,8 +135,8 @@ $vert   = 'C6EFCE';
 $blanc  = 'FFFFFF';
 
 $colonnes = ['Site' => null, 'VP' => 'nb_vp', 'Camions' => 'nb_camion', 'Semi-rem.' => 'nb_semi',
-             'Motos' => 'nb_moto', 'Engins' => 'total_engins', 'Plaques' => 'total_plaques',
-             'Duplicatas' => 'duplicatas', 'Post-Immat' => 'postimmat',
+             'Motos' => 'nb_moto', 'Plaques' => 'total_plaques',
+             'Duplicatas' => 'duplicatas', 'Post-Immat' => 'postimmat', 'Engins' => 'total_engins',
              'Films endom.' => 'films_end', 'PMMA endom.' => 'pmma_end', 'Rivets endom.' => 'rivets_end',
              'Observations' => 'obs'];
 
@@ -206,8 +206,7 @@ function pje_tableau(Worksheet $ws, int $r, string $titre, array $lignes, array 
     if ($marquer_vides) {
         // Site sans point : ligne grisée plutôt que verte.
         for ($i = $r_debut; $i <= $r_fin; $i++) {
-            if ((int)$ws->getCell("F$i")->getValue() === 0 && (int)$ws->getCell("G$i")->getValue() === 0
-                && str_starts_with((string)$ws->getCell("{$col_fin}$i")->getValue(), 'Aucun point')) {
+            if (str_starts_with((string)$ws->getCell("{$col_fin}$i")->getValue(), 'Aucun point')) {
                 $ws->getStyle("A$i:$col_fin$i")->getFill()->getStartColor()->setRGB('EDEDED');
                 $ws->getStyle("$col_fin$i")->getFont()->setBold(false)->setItalic(true)->getColor()->setRGB('7F7F7F');
             }
