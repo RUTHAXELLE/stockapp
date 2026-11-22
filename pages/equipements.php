@@ -973,7 +973,7 @@ include __DIR__ . '/../templates/header.php';
       <?php endif; ?>
     </h3>
   </div>
-<style>.eq-scroll{max-height:calc(52px + 3 * 66px);overflow-y:auto}.eq-scroll thead th{position:sticky;top:0;z-index:2;background:var(--input,#f8fafc);box-shadow:0 1px 0 var(--border,#e2e8f0)}.eq-scroll .eq-act{position:sticky;right:0;z-index:1;background:var(--card,#fff);box-shadow:-6px 0 8px -6px rgba(15,23,42,.18)}.eq-scroll thead th.eq-act{z-index:3;background:var(--input,#f8fafc)}.eq-scroll tr.eq-hs td.eq-act{background:#fff5f5}.eq-scroll td.eq-nw{white-space:nowrap}[data-theme="dark"] .eq-scroll .eq-act{background:#1E293B}[data-theme="dark"] .eq-scroll tr.eq-hs td.eq-act{background:#3b2230}</style>
+<style>.eq-scroll{max-height:calc(52px + 4 * 66px);overflow-y:auto}.eq-scroll thead th{position:sticky;top:0;z-index:2;background:var(--input,#f8fafc);box-shadow:0 1px 0 var(--border,#e2e8f0)}.eq-scroll .eq-act{position:sticky;right:0;z-index:1;background:var(--card,#fff);box-shadow:-6px 0 8px -6px rgba(15,23,42,.18)}.eq-scroll thead th.eq-act{z-index:3;background:var(--input,#f8fafc)}.eq-scroll tr.eq-hs td.eq-act{background:#fff5f5}.eq-scroll td.eq-nw{white-space:nowrap}[data-theme="dark"] .eq-scroll .eq-act{background:#1E293B}[data-theme="dark"] .eq-scroll tr.eq-hs td.eq-act{background:#3b2230}</style>
   <div class="table-wrap eq-scroll">
     <table data-paginer="25">
       <thead><tr>
