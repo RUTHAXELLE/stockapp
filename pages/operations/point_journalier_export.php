@@ -90,8 +90,24 @@ function pje_observation(array $p): string {
     if (!empty($p['sans_production'])) {
         $parts[] = 'Sans production' . (!empty($p['motif_sans_production']) ? ' : ' . $p['motif_sans_production'] : '');
     }
+    // Observations saisies : liste JSON [{type, texte}] (comme point_pdf.php),
+    // ou texte libre des anciens points.
     $o = trim((string)($p['observations'] ?? ''));
-    if ($o !== '') $parts[] = $o;
+    if ($o !== '') {
+        $liste = json_decode($o, true);
+        if (is_array($liste)) {
+            $types = ['alerte' => 'Alerte', 'relance' => 'Relance', 'incident' => 'Incident',
+                      'urgence' => 'Urgence', 'autre' => 'Autre'];
+            foreach ($liste as $obs) {
+                $t = trim((string)($obs['texte'] ?? ''));
+                if ($t === '') continue;
+                $lib = $types[$obs['type'] ?? ''] ?? null;
+                $parts[] = $lib ? mb_strtoupper($lib) . ' : ' . $t : $t;
+            }
+        } else {
+            $parts[] = $o;
+        }
+    }
     if ($p['statut'] !== 'valide') $parts[] = 'Point non encore validé';
     return implode(' — ', $parts);
 }
