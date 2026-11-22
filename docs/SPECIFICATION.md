@@ -1370,10 +1370,13 @@ avec `motif_inter_site` (obligatoire) et `chauffeur` (à l'enlèvement).
   par ligne (`cis_disponible()`).
 - **Choix des bobines** : coordinateur du site source ou GSB
   (`cmd_peut_choisir_bob()`), parmi `cis_bobines_cessibles()` — `en_stock`
-  ou `en_cours`, stock > 0, libres (`cmdbob_sql_libre()`) et absentes de
-  tout point non validé. Contrôle souple (`cmdbob_controle(..., true)`) :
-  jamais plus que demandé, moins admis ; en BOBINE, le livré est le nombre
-  de rouleaux cédés.
+  ou `en_cours`, films restants > 0, libres (`cmdbob_sql_libre()`) et
+  absentes de tout point non validé. Les films comptés sont les films
+  restants ERP (`films_restants`), pas la quantité OptoTrace. Contrôle
+  souple (`cmdbob_controle(..., true)`) : moins que demandé, ou tout ce qu'il
+  faut pour couvrir la demande, sans rouleau inutile (sans le plus petit, la
+  demande ne doit pas être déjà couverte) ; en BOBINE, le livré est le
+  nombre de rouleaux cédés.
 - **Réservation** : `cmdbob_reservee()` exclut la bobine du point journalier
   (`get_bobines_site`, refus à l'enregistrement sauf si elle était déjà dans
   le point), de l'affectation manuelle et de la demande d'utilisation.

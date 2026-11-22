@@ -543,8 +543,9 @@ trois différences : qui prépare, qui transporte, et d'où sort le stock.
 2. **Le superviseur valide** ligne par ligne, comme pour toute commande.
 3. **Le coordinateur du site fournisseur** (ou le GSB) choisit les bobines à
    céder, en stock ou entamées. Une bobine saisie dans un point pas encore
-   validé ne peut pas être choisie. Il peut céder moins que demandé, jamais
-   plus. Les bobines choisies sont réservées : elles disparaissent du point
+   validé ne peut pas être choisie. Il peut céder moins que demandé, ou
+   tout ce qu'il faut pour couvrir la demande, mais pas un rouleau inutile.
+   Les quantités affichées sont les films restants. Les bobines choisies sont réservées : elles disparaissent du point
    journalier du site fournisseur et ne peuvent plus être mises en
    utilisation.
 4. **Le gestionnaire de stock envoie un chauffeur** : bouton « Enlever

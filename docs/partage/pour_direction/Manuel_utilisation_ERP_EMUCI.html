@@ -4,12 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Manuel d&#x27;utilisation — ERP EMUCI</title>
-<meta name="description" content="Manuel d&#x27;utilisation de l'ERP EMUCI, arrêté au commit d11c6c1">
+<meta name="description" content="Manuel d&#x27;utilisation de l'ERP EMUCI, arrêté au commit 8669a96">
 <meta name="author" content="GAYE Emmanuel">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
 <style>
+
 
 
 
@@ -244,6 +245,14 @@ h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
   color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
   border-bottom:2px solid var(--accent)}
 figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+.contact{margin:.6rem 0 0;font-size:.85rem;color:var(--muted,#4d5876)}
+.contact b{color:inherit;font-weight:700}
+.contact a{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor}
 
 h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
   color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
@@ -951,8 +960,9 @@ trois différences : qui prépare, qui transporte, et d'où sort le stock.</p>
 <li><strong>Le superviseur valide</strong> ligne par ligne, comme pour toute commande.</li>
 <li><strong>Le coordinateur du site fournisseur</strong> (ou le GSB) choisit les bobines à
    céder, en stock ou entamées. Une bobine saisie dans un point pas encore
-   validé ne peut pas être choisie. Il peut céder moins que demandé, jamais
-   plus. Les bobines choisies sont réservées : elles disparaissent du point
+   validé ne peut pas être choisie. Il peut céder moins que demandé, ou
+   tout ce qu'il faut pour couvrir la demande, mais pas un rouleau inutile.
+   Les quantités affichées sont les films restants. Les bobines choisies sont réservées : elles disparaissent du point
    journalier du site fournisseur et ne peuvent plus être mises en
    utilisation.</li>
 <li><strong>Le gestionnaire de stock envoie un chauffeur</strong> : bouton « Enlever
@@ -2426,7 +2436,7 @@ ne dit pas sur quelle version il porte ne vaut rien.</p>
 <div class="impr-pied" style="margin-top:10mm;padding-top:4mm;border-top:1px solid #c3ccdf;
      font-size:9pt;color:#4d5876">
   Manuel d&#x27;utilisation — ERP EMUCI — document interne. État du logiciel au commit
-  <code>d11c6c1</code>. Toute évolution fonctionnelle rend une section caduque :
+  <code>8669a96</code>. Toute évolution fonctionnelle rend une section caduque :
   vérifiez la version avant de vous y fier.<br>
   Auteur : GAYE Emmanuel — gayerodrigue@gmail.com — <span style="white-space:nowrap">+225 01 03 55 96 52</span>
 </div>
