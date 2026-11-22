@@ -94,6 +94,22 @@ function cis_controle_ligne(array $l): ?string {
     return null;
 }
 
+/**
+ * Inter-site, une ligne de rouleaux se compte en films (ou vignettes) : le
+ * site fournisseur cède souvent des rouleaux entamés, et « 2 bobines » livrées
+ * ne diraient pas qu'il n'en est parti que 650 films. Une ligne commandée en
+ * BOBINE est donc convertie : N × contenance du type, unité UNITE.
+ * $l : type ou type_article, article_id, quantite, unite. Renvoie la ligne convertie.
+ */
+function cis_ligne_en_films(array $l): array {
+    $t = $l['type'] ?? $l['type_article'] ?? '';
+    if (cmdbob_est_rouleau($t) && cmdbob_en_bobines($l)) {
+        $l['quantite'] = cmdbob_films_demandes($l);
+        $l['unite']    = 'UNITE';
+    }
+    return $l;
+}
+
 /** Le site est-il un dépôt (entrepôt, magasin) ? Seul un dépôt suit le stock central des articles. */
 function cis_est_depot(int $site_id): bool {
     return in_array(db_fetch_value("SELECT type FROM sites WHERE id=?", [$site_id]), ['entrepot', 'magasin'], true);

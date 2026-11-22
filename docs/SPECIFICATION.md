@@ -1375,8 +1375,10 @@ avec `motif_inter_site` (obligatoire) et `chauffeur` (à l'enlèvement).
   restants ERP (`films_restants`), pas la quantité OptoTrace. Contrôle
   souple (`cmdbob_controle(..., true)`) : moins que demandé, ou tout ce qu'il
   faut pour couvrir la demande, sans rouleau inutile (sans le plus petit, la
-  demande ne doit pas être déjà couverte) ; en BOBINE, le livré est le
-  nombre de rouleaux cédés.
+  demande ne doit pas être déjà couverte). Une ligne de rouleaux commandée
+  en BOBINE est convertie en films à la création (`cis_ligne_en_films()` :
+  N × contenance du type, unité UNITE) : le livré est la somme des films
+  restants cédés, et tout manque exige un motif à l'enlèvement.
 - **Réservation** : `cmdbob_reservee()` exclut la bobine du point journalier
   (`get_bobines_site`, refus à l'enregistrement sauf si elle était déjà dans
   le point), de l'affectation manuelle et de la demande d'utilisation.

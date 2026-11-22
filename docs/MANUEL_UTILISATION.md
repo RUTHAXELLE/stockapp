@@ -545,7 +545,10 @@ trois différences : qui prépare, qui transporte, et d'où sort le stock.
    céder, en stock ou entamées. Une bobine saisie dans un point pas encore
    validé ne peut pas être choisie. Il peut céder moins que demandé, ou
    tout ce qu'il faut pour couvrir la demande, mais pas un rouleau inutile.
-   Les quantités affichées sont les films restants. Les bobines choisies sont réservées : elles disparaissent du point
+   Les quantités affichées sont les films restants. Une commande en bobines
+   est convertie en films (2 bobines = 1000 films) : si le fournisseur cède
+   500 + 150, il part 650 films et le gestionnaire justifie l'écart de 350 à
+   l'enlèvement. Les bobines choisies sont réservées : elles disparaissent du point
    journalier du site fournisseur et ne peuvent plus être mises en
    utilisation.
 4. **Le gestionnaire de stock envoie un chauffeur** : bouton « Enlever

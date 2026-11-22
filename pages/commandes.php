@@ -105,6 +105,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 json_response(false, 'Site fournisseur invalide : choisissez un autre site de production.');
             if ($motif_is === '') json_response(false, 'Le motif de la commande inter-site est obligatoire.');
             foreach ($lignes as $l) if (($err = cis_controle_ligne($l)) !== null) json_response(false, $err);
+            // Rouleaux comptés en films : le livré dira ce qui est vraiment parti.
+            $lignes = array_map('cis_ligne_en_films', $lignes);
         }
         foreach ($lignes as $l) {
             $lib = trim((string)($l['libelle'] ?? '')) ?: 'une ligne';
@@ -349,6 +351,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 if ($nouvelle_un === '') $nouvelle_un = $ligne['unite'];
                 elseif (!in_array($nouvelle_un, $unites_ok, true))
                     json_response(false,"Unité invalide pour \"{$ligne['libelle']}\" : " . implode(', ', $unites_ok) . ".");
+                // Inter-site : une ligne de rouleaux reste comptée en films.
+                if (!empty($cmd['site_source_id'])) {
+                    $_conv = cis_ligne_en_films(['type_article' => $ligne['type_article'], 'article_id' => $ligne['article_id'],
+                                                 'quantite' => $nouvelle_qte, 'unite' => $nouvelle_un]);
+                    $nouvelle_qte = (int)$_conv['quantite'];
+                    $nouvelle_un  = $_conv['unite'];
+                }
                 db_query(
                     "UPDATE commande_lignes SET quantite=?, unite=?, statut_ligne='en_attente' WHERE id=?",
                     [$nouvelle_qte, $nouvelle_un, $ligne_id]
@@ -2226,7 +2235,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
             <input type="text" class="form-control" id="cmdMotifInter" maxlength="255" placeholder="Rupture, urgence, rééquilibrage…" style="margin-top:4px">
           </div>
         </div>
-        <div style="font-size:12px;color:#6D28D9;margin-top:8px">Bobines, vignettes, rivets, PMMA et articles du catalogue seulement. La colonne « Chez le fournisseur » indique si le site peut servir chaque ligne. Le chauffeur du gestionnaire de stock enlève la commande chez lui.</div>
+        <div style="font-size:12px;color:#6D28D9;margin-top:8px">Bobines, vignettes, rivets, PMMA et articles du catalogue seulement. Une commande en bobines est convertie en films (ou vignettes) : 2 bobines = 1000 films. La colonne « Chez le fournisseur » indique si le site peut servir chaque ligne. Le chauffeur du gestionnaire de stock enlève la commande chez lui.</div>
       </div>
     </div>
     <?php endif; ?>
