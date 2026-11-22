@@ -23,6 +23,8 @@ require_once __DIR__ . '/../includes/articles_equipements.php';
 // Bon de livraison joint par le coordinateur à la réception, archivé en base.
 require_once __DIR__ . '/../includes/upload.php';
 require_once __DIR__ . '/../includes/commande_bl.php';
+// Commandes inter-sites : un site commande à un autre site de production.
+require_once __DIR__ . '/../includes/commande_inter_site.php';
 
 require_auth();
 
@@ -40,6 +42,8 @@ $is_gsb        = in_array($role_slug, ['gestionnaire_stock_bobines','admin','sup
 // Le choix des bobines (affectation à la commande) est ouvert au GSB et au
 // gestionnaire de stock (option Magasin) : l'un ou l'autre peut le faire.
 $peut_choisir_bob = $is_gsb || $is_gestionnaire;
+// Commandes inter-sites disponibles (sql/migration_commandes_inter_site.sql).
+$cis_ok = cis_actif();
 $voir_prix     = !$is_coord; // coordinateur ne voit pas les prix
 
 $site_force    = ($is_coord && $user['site_id']) ? (int)$user['site_id'] : 0;
@@ -61,9 +65,20 @@ const CMD_TYPES_LIGNE = ['article', 'autre', 'bobine', 'vignette', 'pmma', 'rive
 // Décisions du superviseur sur une ligne.
 const CMD_DECISIONS_LIGNE = ['valide', 'rejete', 'modification_demandee'];
 
-// Commande lisible par l'utilisateur : le coordinateur, son site seulement.
+// Commande lisible par l'utilisateur : le coordinateur, son site seulement —
+// celui qui reçoit, ou celui qui fournit une commande inter-site.
 function cmd_visible(?array $cmd, int $site_force): bool {
-    return $cmd && (!$site_force || (int)$cmd['site_id'] === $site_force);
+    return $cmd && (!$site_force || (int)$cmd['site_id'] === $site_force
+                    || (int)($cmd['site_source_id'] ?? 0) === $site_force);
+}
+
+// Qui choisit les bobines d'une commande : pour une commande inter-site, le
+// coordinateur du site fournisseur ou le GSB ; sinon le GSB ou le magasin.
+function cmd_peut_choisir_bob(array $cmd): bool {
+    global $is_gsb, $is_coord, $site_force, $peut_choisir_bob;
+    if (!empty($cmd['site_source_id']))
+        return $is_gsb || ($is_coord && $site_force === (int)$cmd['site_source_id']);
+    return $peut_choisir_bob;
 }
 
 // ============================================================
@@ -82,6 +97,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         $lignes     = json_decode($lignes_raw, true);
         if (!$site_id)     json_response(false,'Site obligatoire.');
         if (empty($lignes) || !is_array($lignes)) json_response(false,'Ajoutez au moins un article.');
+        // Commande inter-site : un autre site de production fournit.
+        $site_source = $cis_ok ? (int)($_POST['site_source_id'] ?? 0) : 0;
+        $motif_is    = trim((string)($_POST['motif_inter_site'] ?? ''));
+        if ($site_source) {
+            if (!cis_est_source_valide($site_source, $site_id))
+                json_response(false, 'Site fournisseur invalide : choisissez un autre site de production.');
+            if ($motif_is === '') json_response(false, 'Le motif de la commande inter-site est obligatoire.');
+            foreach ($lignes as $l) if (($err = cis_controle_ligne($l)) !== null) json_response(false, $err);
+        }
         foreach ($lignes as $l) {
             $lib = trim((string)($l['libelle'] ?? '')) ?: 'une ligne';
             if (!in_array($l['type'] ?? 'article', CMD_TYPES_LIGNE, true))
@@ -109,7 +133,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             if (!in_array($user['role_slug'] ?? '', ['admin','superadmin'], true)) {
                 $en_cours = db_fetch_one(
                     "SELECT numero_commande FROM commandes
-                      WHERE site_id=? AND statut='en_attente' AND feb_id IS NULL ORDER BY id DESC LIMIT 1",
+                      WHERE site_id=? AND statut='en_attente' AND feb_id IS NULL"
+                    // Une commande inter-site et une commande au dépôt peuvent
+                    // attendre en même temps : ce ne sont pas les mêmes besoins.
+                    . ($cis_ok ? ($site_source ? " AND site_source_id IS NOT NULL" : " AND site_source_id IS NULL") : "")
+                    . " ORDER BY id DESC LIMIT 1",
                     [$site_id]
                 );
                 if ($en_cours) {
@@ -119,10 +147,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 }
             }
             $num = ach_numero_commande();
-            db_query(
-                "INSERT INTO commandes (numero_commande,site_id,statut,notes,created_by) VALUES (?,?,'en_attente',?,?)",
-                [$num,$site_id,$notes,$user['id']]
-            );
+            if ($site_source)
+                db_query(
+                    "INSERT INTO commandes (numero_commande,site_id,statut,notes,created_by,site_source_id,motif_inter_site)
+                     VALUES (?,?,'en_attente',?,?,?,?)",
+                    [$num,$site_id,$notes,$user['id'],$site_source,$motif_is]
+                );
+            else
+                db_query(
+                    "INSERT INTO commandes (numero_commande,site_id,statut,notes,created_by) VALUES (?,?,'en_attente',?,?)",
+                    [$num,$site_id,$notes,$user['id']]
+                );
             $cmd_id = (int)db_last_id();
             foreach ($lignes as $l) {
                 $raw_id = $l['article_id'] ?? null;
@@ -142,13 +177,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                  WHERE r.slug IN ('superviseur_operation','admin','superadmin') AND u.actif=1"
             );
             $site_nom = db_fetch_value("SELECT nom FROM sites WHERE id=?",[$site_id]);
+            $src_nom  = $site_source ? db_fetch_value("SELECT nom FROM sites WHERE id=?", [$site_source]) : null;
             foreach ($targets as $t) {
                 db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
-                    [$t['id'],'info',"📦 Commande $num à valider",
-                     "{$user['prenom']} {$user['nom']} (Site: $site_nom) — ".count($lignes)." article(s) — En attente de votre validation.",
+                    [$t['id'],'info',"📦 Commande $num à valider" . ($src_nom ? " (inter-site)" : ''),
+                     "{$user['prenom']} {$user['nom']} (Site: $site_nom) — ".count($lignes)." article(s)"
+                     . ($src_nom ? " à prendre chez $src_nom — motif : $motif_is" : '') . " — En attente de votre validation.",
                      '/pages/commandes.php']);
             }
-            audit_log($user['id'],'CREATE','commandes',$cmd_id,"Commande $num créée — ".count($lignes)." ligne(s)");
+            audit_log($user['id'],'CREATE','commandes',$cmd_id,"Commande $num créée — ".count($lignes)." ligne(s)"
+                . ($src_nom ? " — inter-site, fournie par $src_nom" : ''));
             db_commit();
             json_response(true,'Commande envoyée. En attente de validation superviseur.',['id'=>$cmd_id,'numero'=>$num]);
         } catch(Exception $e){ db_rollback(); json_response(false,$e->getMessage()); }
@@ -242,12 +280,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                      '/pages/commandes.php']);
             }
             $gests = array_map(fn($id) => ['id' => $id], users_fonction(FONCTION_MAGASIN));
+            $_src  = (int)($cmd['site_source_id'] ?? 0);
+            $_src_nom = $_src ? (db_fetch_value("SELECT nom FROM sites WHERE id=?", [$_src]) ?? '') : '';
+            $_bob_a_choisir = cmdbob_actif() && cmdbob_lignes_a_choisir($cmd_id) > 0;
             foreach ($gests as $g) {
                 db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
-                    [$g['id'],'info',"📦 Commande {$cmd['numero_commande']} à préparer",
-                     "Commande validée — prête pour préparation et expédition."
-                     . (cmdbob_actif() && cmdbob_lignes_a_choisir($cmd_id) > 0 ? " Bobines à choisir (par vous ou le GSB)." : ""),
+                    [$g['id'],'info',"📦 Commande {$cmd['numero_commande']} " . ($_src ? "à enlever chez $_src_nom" : "à préparer"),
+                     $_src
+                       ? "Commande inter-site validée : envoyez un chauffeur chez $_src_nom"
+                         . ($_bob_a_choisir ? " une fois les bobines choisies par le site." : ".")
+                       : "Commande validée — prête pour préparation et expédition."
+                         . ($_bob_a_choisir ? " Bobines à choisir (par vous ou le GSB)." : ""),
                      '/pages/commandes.php']);
+            }
+            // Inter-site : le site fournisseur prépare (et choisit les bobines).
+            if ($_src) {
+                $_dest_nom = db_fetch_value("SELECT nom FROM sites WHERE id=?", [$cmd['site_id']]) ?? '';
+                foreach (cis_coordinateurs($_src) as $_uid)
+                    notif_create('info', "📦 Commande {$cmd['numero_commande']} : à préparer pour $_dest_nom",
+                        "Votre site fournit cette commande inter-site." . ($_bob_a_choisir ? " Choisissez les bobines à céder." : "")
+                        . " Le chauffeur du gestionnaire de stock viendra l'enlever.", $_uid, '/pages/commandes.php');
             }
             if (cmdbob_lignes_a_choisir($cmd_id) > 0) {
                 foreach (db_fetch_all(
@@ -359,13 +411,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     //      (includes/commande_bobines.php). Elles restent à l'entrepôt,
     //      réservées, jusqu'à la réception par le site.
     if ($action === 'get_bobines_ligne') {
-        if (!$peut_choisir_bob) json_response(false, 'Accès refusé.');
+        if (!$peut_choisir_bob && !$is_coord) json_response(false, 'Accès refusé.');
         if (!cmdbob_actif()) json_response(false, "Migration commande_ligne_bobines non jouée sur cette base.");
         $ligne_id = (int)($_POST['ligne_id'] ?? 0);
         $l = db_fetch_one("SELECT * FROM commande_lignes WHERE id=? AND type_article IN " . CMDBOB_TYPES_SQL, [$ligne_id]);
         if (!$l) json_response(false, 'Ligne bobine introuvable.');
+        $_cmd_l = db_fetch_one("SELECT * FROM commandes WHERE id=?", [(int)$l['commande_id']]);
+        // Lecture : qui choisit, et le magasin qui expédie.
+        if (!$_cmd_l || !(cmd_peut_choisir_bob($_cmd_l) || $is_gestionnaire)) json_response(false, 'Accès refusé.');
+        $_src = (int)($_cmd_l['site_source_id'] ?? 0);
         $code = cmdbob_type_code((int)$l['article_id']);
-        $dispo = db_fetch_all(
+        $dispo = $_src ? cis_bobines_cessibles($l, $_src) : db_fetch_all(
             "SELECT b.id, b.numero, b.stock_systeme, b.qte_initiale FROM op_bobines b
              WHERE b.type_code=? AND b.statut='en_stock' AND (b.site_id IS NULL OR b.site_id=?)
                AND " . cmdbob_sql_libre('b') . "
@@ -389,21 +445,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                                              'films' => cmdbob_films_demandes($l),
                                              'films_bobine' => cmdbob_films_bobine($l),
                                              'mot' => cmdbob_mot($l),
+                                             'inter_site' => $_src > 0,
+                                             'source_nom' => $_src ? db_fetch_value("SELECT nom FROM sites WHERE id=?", [$_src]) : null,
                                              'manque_max' => CMDBOB_MANQUE_INITIAL_MAX],
                                  'dispo' => $dispo, 'choisies' => $choisies]);
     }
 
     if ($action === 'assigner_bobines') {
-        if (!$peut_choisir_bob) json_response(false, 'Accès refusé — GSB ou gestionnaire de stock requis.');
+        if (!$peut_choisir_bob && !$is_coord) json_response(false, 'Accès refusé — GSB ou gestionnaire de stock requis.');
         if (!cmdbob_actif()) json_response(false, "Migration commande_ligne_bobines non jouée sur cette base.");
         $ligne_id = (int)($_POST['ligne_id'] ?? 0);
         $ids = array_values(array_unique(array_filter(array_map('intval', json_decode($_POST['bobine_ids'] ?? '[]', true) ?: []))));
         $l = db_fetch_one(
-            "SELECT cl.*, c.statut AS cmd_statut, c.numero_commande FROM commande_lignes cl
+            "SELECT cl.*, c.statut AS cmd_statut, c.numero_commande, "
+            . ($cis_ok ? "c.site_source_id" : "NULL AS site_source_id") . " FROM commande_lignes cl
              JOIN commandes c ON c.id = cl.commande_id
              WHERE cl.id=? AND cl.type_article IN " . CMDBOB_TYPES_SQL . " AND cl.statut_ligne='valide'", [$ligne_id]);
         if (!$l || $l['cmd_statut'] !== 'en_attente_livraison')
             json_response(false, 'Ligne introuvable, non validée, ou commande qui n\'est plus à préparer.');
+        if (!cmd_peut_choisir_bob(['site_source_id' => $l['site_source_id']]))
+            json_response(false, !empty($l['site_source_id'])
+                ? 'Accès refusé : les bobines sont choisies par le site fournisseur ou le GSB.'
+                : 'Accès refusé — GSB ou gestionnaire de stock requis.');
+        $_src = (int)($l['site_source_id'] ?? 0);
         if (!$ids) json_response(false, 'Choisissez au moins une bobine.');
         $cmd_id = (int)$l['commande_id'];
         // Sélection validée = figée : plus de nouveau choix une fois toutes les
@@ -418,24 +482,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             $numeros = [];
             $choix = [];
             foreach ($ids as $bid) {
-                $b = db_fetch_one(
+                $b = $_src
+                    ? db_fetch_one(
+                        "SELECT b.* FROM op_bobines b
+                         WHERE b.id=? AND b.type_code=? AND b.site_id=? AND " . cis_sql_bobine_cessible('b'), [$bid, $code, $_src])
+                    : db_fetch_one(
                     "SELECT b.* FROM op_bobines b
                      WHERE b.id=? AND b.type_code=? AND b.statut='en_stock' AND (b.site_id IS NULL OR b.site_id=?)
                        AND " . cmdbob_sql_libre('b'), [$bid, $code, cmdbob_entrepot_id()]);
-                if (!$b) throw new Exception("Bobine #$bid indisponible : déjà réservée, pas en stock à l'entrepôt, ou d'un autre type que $code.");
+                if (!$b) throw new Exception($_src
+                    ? "Bobine #$bid indisponible : réservée, d'un autre type que $code, plus sur le site, ou saisie dans un point pas encore validé."
+                    : "Bobine #$bid indisponible : déjà réservée, pas en stock à l'entrepôt, ou d'un autre type que $code.");
                 $choix[] = $b;
                 db_query("INSERT INTO commande_ligne_bobines (commande_id,commande_ligne_id,bobine_id,numero_bobine,statut,assigne_par)
                           VALUES (?,?,?,?,'assigne',?)", [$cmd_id, $ligne_id, $bid, $b['numero'], $user['id']]);
                 $numeros[] = $b['numero'];
             }
             // Somme des quantités système = quantité demandée.
-            if (($err = cmdbob_controle($l, $choix)) !== null) throw new Exception($err);
+            if (($err = cmdbob_controle($l, $choix, $_src > 0)) !== null) throw new Exception($err);
             $reste = cmdbob_lignes_a_choisir($cmd_id);
             if ($reste === 0) {
                 foreach (array_map(fn($id) => ['id' => $id], users_fonction(FONCTION_MAGASIN, false)) as $g) {
                     db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
                         [$g['id'], 'info', "🎞️ Commande {$l['numero_commande']} : bobines choisies",
-                         "Bobines choisies par " . trim(($user['prenom'] ?? '') . ' ' . ($user['nom'] ?? '')) . " — la commande peut être expédiée.", '/pages/commandes.php']);
+                         "Bobines choisies par " . trim(($user['prenom'] ?? '') . ' ' . ($user['nom'] ?? '')) . " — la commande peut être "
+                         . ($_src ? "enlevée chez " . (db_fetch_value("SELECT nom FROM sites WHERE id=?", [$_src]) ?? 'le site fournisseur') . "." : "expédiée."),
+                         '/pages/commandes.php']);
                 }
             }
             audit_log($user['id'], 'UPDATE', 'commandes', $cmd_id,
@@ -444,7 +516,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         } catch (Exception $e) { db_rollback(); json_response(false, $e->getMessage()); }
         $somme = array_sum(array_map(fn($b) => (int)$b['stock_systeme'], $choix));
         json_response(true, count($ids) . " bobine(s) réservée(s) pour cette ligne ($somme films)."
-            . ($reste > 0 ? " Reste $reste ligne(s) bobine à traiter." : " La commande peut maintenant être expédiée."));
+            . ($reste > 0 ? " Reste $reste ligne(s) bobine à traiter." : ($_src ? " La commande peut maintenant être enlevée par le chauffeur." : " La commande peut maintenant être expédiée.")));
     }
 
     // ── Gestionnaire : renvoyer au GSB des bobines mal choisies, avec motif.
@@ -476,6 +548,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     [$g['id'], 'info', "🎞️ Commande {$cmd['numero_commande']} : bobines à refaire",
                      implode(', ', $libelles) . " — motif : $motif", '/pages/commandes.php']);
             }
+            if (!empty($cmd['site_source_id']))
+                foreach (cis_coordinateurs((int)$cmd['site_source_id']) as $_uid)
+                    notif_create('info', "🎞️ Commande {$cmd['numero_commande']} : bobines à refaire",
+                        implode(', ', $libelles) . " — motif : $motif", $_uid, '/pages/commandes.php');
             db_commit();
         } catch (Exception $e) { db_rollback(); json_response(false, $e->getMessage()); }
         json_response(true, count($lids) . ' ligne(s) renvoyée(s) au GSB pour un nouveau choix de bobines.');
@@ -492,19 +568,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
 
         $cmd = db_fetch_one("SELECT * FROM commandes WHERE id=? AND statut='en_attente_livraison'",[$cmd_id]);
         if (!$cmd) json_response(false,'Commande introuvable ou statut incorrect.');
+        // Inter-site : tout part du site fournisseur, enlevé par un chauffeur.
+        $src       = (int)($cmd['site_source_id'] ?? 0);
+        $chauffeur = trim((string)($_POST['chauffeur'] ?? ''));
+        if ($src && $chauffeur === '') json_response(false, 'Indiquez le chauffeur envoyé chez le site fournisseur.');
+        $src_nom   = $src ? (db_fetch_value("SELECT nom FROM sites WHERE id=?", [$src]) ?? '') : '';
 
         // Lignes « bobine » : le GSB doit d'abord avoir choisi les bobines ; la
         // quantité livrée vient des bobines choisies (cmdbob_qte_livree), quoi
         // qu'envoie l'écran.
         $bob_par_ligne = cmdbob_par_ligne($cmd_id);
         if (($n_a_choisir = cmdbob_lignes_a_choisir($cmd_id)) > 0)
-            json_response(false, "Le GSB doit d'abord choisir les bobines de $n_a_choisir ligne(s) bobine avant l'expédition.");
+            json_response(false, $src
+                ? "Le site $src_nom (ou le GSB) doit d'abord choisir les bobines de $n_a_choisir ligne(s) bobine avant l'enlèvement."
+                : "Le GSB doit d'abord choisir les bobines de $n_a_choisir ligne(s) bobine avant l'expédition.");
         if (cmdbob_actif()) {
             $lignes_bobine = array_column(db_fetch_all(
                 "SELECT id, article_id, type_article, quantite, unite FROM commande_lignes WHERE commande_id=? AND type_article IN " . CMDBOB_TYPES_SQL, [$cmd_id]), null, 'id');
             foreach ($lignes_liv as &$_l) {
                 $_lb = $lignes_bobine[(int)($_l['ligne_id'] ?? 0)] ?? null;
-                if ($_lb) $_l['quantite_livree'] = cmdbob_qte_livree($_lb, $bob_par_ligne[(int)$_l['ligne_id']] ?? []);
+                if ($_lb) $_l['quantite_livree'] = cmdbob_qte_livree($_lb, $bob_par_ligne[(int)$_l['ligne_id']] ?? [], $src > 0);
             }
             unset($_l);
         }
@@ -573,6 +656,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             $ta  = $type_article_map[$lid] ?? '';
             if (!in_array($ta, CMD_TYPES_DEPOT, true) || (int)($l['quantite_livree'] ?? 0) <= 0) continue;
             if ($ta === 'article' && empty($l['article_id'])) continue;   // saisie libre : rien à débiter
+            if ($src) { $depot_map[$lid] = $src; continue; }   // inter-site : le site fournisseur, quoi qu'envoie l'écran
             $dep = (int)($l['depot_id'] ?? 0) ?: $depot_source_id;
             if (!$dep) json_response(false, "Choisissez d'où sort « " . ($l['libelle'] ?? 'la ligne') . " » (entrepôt ou magasin).");
             if (!in_array($dep, $depots_ok, true)) json_response(false, 'Dépôt source invalide pour « ' . ($l['libelle'] ?? '') . ' ».');
@@ -650,8 +734,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                         if ($dispo !== null) {
                             $besoin = rcp_unites($ldb, $q_liv);
                             if ($dispo < $besoin)
-                                throw new Exception("Stock insuffisant pour « {$ldb['libelle']} » au dépôt choisi : $dispo disponible(s), $besoin requis.");
-                            rcp_mouvement($ldb, $depot_ligne, -$q_liv, true);
+                                throw new Exception("Stock insuffisant pour « {$ldb['libelle']} » "
+                                    . ($src ? "chez $src_nom" : "au dépôt choisi") . " : $dispo disponible(s), $besoin requis.");
+                            // Stock central (articles) : seulement pour un dépôt, pas pour un site.
+                            rcp_mouvement($ldb, $depot_ligne, -$q_liv, !$src);
                         }
                     }
                 }
@@ -661,11 +747,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             // tracé) mais ne passent au site qu'à la réception.
             foreach ($bob_par_ligne as $_bobs) {
                 foreach ($_bobs as $_b) {
+                    // Inter-site : la bobine doit être encore chez le fournisseur,
+                    // hors de tout point pas encore validé (garde-fou du choix,
+                    // revérifié au moment où elle part).
+                    if ($src && !db_fetch_value(
+                            "SELECT 1 FROM op_bobines b WHERE b.id=? AND b.site_id=? AND b.statut IN ('en_stock','en_cours')
+                               AND NOT EXISTS (SELECT 1 FROM op_films_utilises fu JOIN op_points_journaliers p ON p.id = fu.point_id
+                                               WHERE fu.bobine_id = b.id AND p.statut <> 'valide')", [$_b['id'], $src]))
+                        throw new Exception("Bobine {$_b['numero']} : plus disponible chez $src_nom (déplacée, ou saisie dans un point pas encore validé). Faites refaire le choix.");
                     $_st = (int)db_fetch_value("SELECT stock_systeme FROM op_bobines WHERE id=?", [$_b['id']]);
                     db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by)
                               VALUES (?,?,?,?,?,?,?)",
                         [$_b['id'], 'transfert', 0, $_st, $_st,
-                         "Expédiée via commande {$cmd['numero_commande']} (en attente de réception)", $user['id']]);
+                         $src ? "Enlevée chez $src_nom par $chauffeur — commande inter-site {$cmd['numero_commande']} (en attente de réception)"
+                              : "Expédiée via commande {$cmd['numero_commande']} (en attente de réception)", $user['id']]);
                     // Films du rouleau à l'expédition : base du livré, relue à
                     // la réception pour chiffrer un rouleau manquant.
                     if (db_colonne_existe('commande_ligne_bobines', 'films_expedies'))
@@ -677,8 +772,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 "UPDATE commandes SET statut='en_cours_livraison',livraison_par=?,livraison_at=NOW(),notes_livraison=?,depot_source_id=? WHERE id=?",
                 // Un seul dépôt pour toute la commande : on le garde aussi ici ;
                 // plusieurs : le détail est sur chaque ligne.
-                [$user['id'],$notes_liv,count(array_unique($depot_map)) === 1 ? reset($depot_map) : null,$cmd_id]
+                [$user['id'],$notes_liv,$src ?: (count(array_unique($depot_map)) === 1 ? reset($depot_map) : null),$cmd_id]
             );
+            if ($src) {
+                db_query("UPDATE commandes SET chauffeur=? WHERE id=?", [$chauffeur, $cmd_id]);
+                foreach (cis_coordinateurs($src) as $_uid)
+                    notif_create('info', "🚚 Commande {$cmd['numero_commande']} : enlèvement",
+                        "Le chauffeur $chauffeur vient enlever la commande inter-site. Remettez-lui la marchandise et signez le bon de livraison.",
+                        $_uid, '/pages/commandes.php');
+            }
 
             // Notifier coordinateur
             $coords = db_fetch_all(
@@ -691,7 +793,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                      "Votre commande est en route. Confirmez la réception à l'arrivée.",
                      '/pages/commandes.php']);
             }
-            audit_log($user['id'],'UPDATE','commandes',$cmd_id,"Livraison émise — bon $num_dist");
+            audit_log($user['id'],'UPDATE','commandes',$cmd_id,"Livraison émise — bon $num_dist" . ($src ? " — enlèvement chez $src_nom, chauffeur $chauffeur" : ''));
             db_commit();
             json_response(true, 'Livraison émise. Coordinateur notifié.');
         } catch(Exception $e){ db_rollback(); json_response(false,$e->getMessage()); }
@@ -874,7 +976,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         if (!$cmd) json_response(false,'Seules les commandes en attente peuvent être annulées.');
         // Qui annule : le coordinateur du site, l'auteur de la commande, un
         // superviseur ou un administrateur — plus tout profil qui lit la page.
-        $peut_annuler = $is_coord ? (int)$cmd['site_id'] === $site_force
+        $peut_annuler = $is_coord ? (int)$cmd['site_id'] === $site_force   // le site demandeur, pas le fournisseur
                                   : ($is_superviseur || (int)$cmd['created_by'] === (int)$user['id']);
         if (!$peut_annuler) json_response(false,'Accès refusé.');
         // Sous condition du statut : une validation faite entre-temps l'emporte.
@@ -891,12 +993,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             "SELECT c.*, s.nom AS site_nom,
                     CONCAT(u.prenom,' ',u.nom) AS agent,
                     CASE WHEN uv.id IS NOT NULL THEN CONCAT(uv.prenom,' ',uv.nom) ELSE '' END AS validateur_nom,
-                    f.numero AS feb_numero
+                    f.numero AS feb_numero, " . ($cis_ok ? "src.nom" : "NULL") . " AS site_source_nom
              FROM commandes c
              LEFT JOIN sites s  ON s.id  = c.site_id
              LEFT JOIN users u  ON u.id  = c.created_by
              LEFT JOIN users uv ON uv.id = c.valide_par
              LEFT JOIN feb f    ON f.id  = c.feb_id
+             " . ($cis_ok ? "LEFT JOIN sites src ON src.id = c.site_source_id" : "") . "
              WHERE c.id=?", [$cmd_id]
         );
         if (!cmd_visible($det, $site_force)) json_response(false,'Commande introuvable.');
@@ -932,14 +1035,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     // ── Charger lignes commande (pour modals)
     if ($action === 'get_lignes') {
         $cmd_id = (int)($_POST['cmd_id'] ?? 0);
-        if (!cmd_visible(db_fetch_one("SELECT site_id FROM commandes WHERE id=?", [$cmd_id]), $site_force))
-            json_response(false, 'Commande introuvable.');
+        $_cmd_v = db_fetch_one("SELECT * FROM commandes WHERE id=?", [$cmd_id]);
+        if (!cmd_visible($_cmd_v, $site_force)) json_response(false, 'Commande introuvable.');
         $lignes = db_fetch_all("SELECT cl.*, a.stock_global AS stock_central FROM commande_lignes cl
             LEFT JOIN articles a ON a.id=cl.article_id WHERE cl.commande_id=? ORDER BY cl.id", [$cmd_id]);
         $bob = cmdbob_par_ligne($cmd_id);
         foreach ($lignes as &$_l) {
             $_l['bobines'] = cmdbob_est_rouleau($_l['type_article']) ? ($bob[(int)$_l['id']] ?? []) : [];
-            if ($_l['bobines']) $_l['qte_bobines'] = cmdbob_qte_livree($_l, $_l['bobines']);
+            if ($_l['bobines']) $_l['qte_bobines'] = cmdbob_qte_livree($_l, $_l['bobines'], !empty($_cmd_v['site_source_id']));
             // Le coordinateur ne voit ni les prix ni le stock central.
             if (!$voir_prix) unset($_l['prix_unitaire'], $_l['stock_central']);
         }
@@ -954,6 +1057,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     if ($action === 'get_stock_depot') {
         $cmd_id = (int)($_POST['cmd_id'] ?? 0);
         $out = [];
+        // Inter-site : seul le site fournisseur compte.
+        $_src = $cis_ok ? (int)(db_fetch_value("SELECT site_source_id FROM commandes WHERE id=?", [$cmd_id]) ?? 0) : 0;
+        $_deps = $_src ? [['id' => $_src]] : $depots_list;
         $lignes = db_fetch_all(
             "SELECT id, article_id, type_article, libelle, unite FROM commande_lignes
              WHERE commande_id=? AND type_article IN ('article','pmma','rivet')",
@@ -966,12 +1072,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             // Ligne en cartons : le dépôt s'affiche en cartons pleins pour se
             // comparer à la quantité saisie.
             $par_carton = rcp_unites($l, 1);
-            foreach ($depots_list as $d) {
+            foreach ($_deps as $d) {
                 $dep   = (int)$d['id'];
                 $stock = rcp_stock($l, $dep) ?? 0;
                 $stocks[$dep] = $par_carton > 1 ? intdiv($stock, $par_carton) : $stock;
             }
             $out[] = ['ligne_id' => (int)$l['id'], 'stocks' => $stocks];
+        }
+        json_response(true, '', $out);
+    }
+
+    // ── Commande inter-site : le fournisseur peut-il servir chaque ligne ?
+    //    Le demandeur ne reçoit que « disponible / insuffisant », jamais les quantités.
+    if ($action === 'cis_dispo') {
+        if (!$can_create) json_response(false, 'Accès refusé.');
+        if (!$cis_ok) json_response(false, 'Migration commandes_inter_site non jouée sur cette base.');
+        $src  = (int)($_POST['site_source_id'] ?? 0);
+        $dest = $site_force ?: (int)($_POST['site_id'] ?? 0);
+        if (!$dest || !cis_est_source_valide($src, $dest)) json_response(false, 'Site fournisseur invalide.');
+        $out = [];
+        foreach ((array)json_decode($_POST['lignes'] ?? '[]', true) as $l) {
+            $l = (array)$l;
+            $out[] = cis_controle_ligne($l) !== null ? null : cis_disponible([
+                'type_article' => $l['type'] ?? 'article', 'article_id' => $l['article_id'] ?? null,
+                'libelle' => (string)($l['libelle'] ?? ''), 'quantite' => (int)($l['quantite'] ?? 0),
+                'unite' => (string)($l['unite'] ?? '')], $src);
         }
         json_response(true, '', $out);
     }
@@ -1068,7 +1193,7 @@ function bdc_conso_hebdo(int $sid, string $type, string $lib, int $aid, string $
 if (isset($_GET['bl'], $_GET['id'])) {
     if ($is_coord) { http_response_code(403); include __DIR__ . '/../templates/403.php'; exit; }
     $cmd = db_fetch_one(
-        "SELECT c.*, s.nom AS site_nom, d.nom AS depot_nom,
+        "SELECT c.*, s.nom AS site_nom, d.nom AS depot_nom, d.type AS depot_type,
                 CONCAT(u.prenom,' ',u.nom) AS agent,
                 CONCAT(ul.prenom,' ',ul.nom) AS expediteur_nom, ul.signature AS expediteur_signature,
                 CONCAT(ur.prenom,' ',ur.nom) AS recepteur_nom
@@ -1219,7 +1344,8 @@ if (isset($_GET['export'], $_GET['id'])) {
 $f_site   = $site_force ?: (int)($_GET['site']   ?? 0);
 $f_statut = trim($_GET['statut'] ?? '');
 $where = ['1=1']; $params = [];
-if ($site_force)  { $where[] = 'c.site_id=?'; $params[] = $site_force; }
+if ($site_force && $cis_ok) { $where[] = '(c.site_id=? OR c.site_source_id=?)'; $params[] = $site_force; $params[] = $site_force; }
+elseif ($site_force) { $where[] = 'c.site_id=?'; $params[] = $site_force; }
 elseif ($f_site)  { $where[] = 'c.site_id=?'; $params[] = $f_site; }
 if ($f_statut)    { $where[] = 'c.statut=?';  $params[] = $f_statut; }
 
@@ -1243,6 +1369,7 @@ $ordre_sql .= ' ELSE 99 END';
 
 $commandes = db_fetch_all(
     "SELECT c.*, s.nom AS site_nom, CONCAT(u.prenom,' ',u.nom) AS agent,
+            " . ($cis_ok ? "src.nom" : "NULL") . " AS site_source_nom,
             COUNT(l.id) AS nb_lignes,
             COALESCE(SUM(l.quantite*l.prix_unitaire),0) AS total_ht,
             SUM(CASE WHEN l.statut_ligne='rejete' THEN 1 ELSE 0 END) AS nb_rejets,
@@ -1250,10 +1377,11 @@ $commandes = db_fetch_all(
             SUM(CASE WHEN l.quantite_livree IS NOT NULL AND l.quantite_livree != l.quantite THEN 1 ELSE 0 END) AS nb_ecarts
      FROM commandes c
      LEFT JOIN sites s ON s.id=c.site_id
+     " . ($cis_ok ? "LEFT JOIN sites src ON src.id=c.site_source_id" : "") . "
      LEFT JOIN users u ON u.id=c.created_by
      LEFT JOIN commande_lignes l ON l.commande_id=c.id
      WHERE ".implode(' AND ',$where)."
-     GROUP BY c.id, s.nom, u.prenom, u.nom ORDER BY $ordre_sql, c.created_at DESC, c.id DESC LIMIT 100",
+     GROUP BY c.id, s.nom, u.prenom, u.nom" . ($cis_ok ? ", src.nom" : "") . " ORDER BY $ordre_sql, c.created_at DESC, c.id DESC LIMIT 100",
     $params
 );
 // Écarts de réception encore ouverts, par commande (badge + action du gestionnaire).
@@ -1740,6 +1868,14 @@ function _bl_pdf(array $cmd): void {
         <div style='font-size:12px;font-weight:bold;color:#06033A;margin-top:3px'>$v</div></td>";
     $num_bl = 'BL-' . $cmd['numero_commande'];
     $notes = trim((string)($cmd['notes_livraison'] ?? ''));
+    // Commande inter-site : le chauffeur enlève chez le site fournisseur.
+    $inter     = !empty($cmd['site_source_id']);
+    $chauffeur = trim((string)($cmd['chauffeur'] ?? ''));
+    $case_transport = $inter && $chauffeur !== ''
+        ? "<div style='font-size:9px;color:#888'>Chauffeur :</div><div style='font-size:12px;font-weight:700;color:#06033A;margin-bottom:8px'>" . $e($chauffeur) . "</div>
+           <div style='font-size:9px;color:#888'>Date et heure :</div><div style='border-bottom:1px solid #ccc;height:18px;margin-bottom:8px'></div>
+           <div style='font-size:9px;color:#888'>Signature :</div><div style='height:44px'></div>"
+        : $vide;
 
     $html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>" . $e($num_bl) . "</title>
     <style>@page { margin: 1.5cm 1.5cm 2cm 1.5cm; } * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1748,13 +1884,13 @@ function _bl_pdf(array $cmd): void {
       <td style='padding:14px 18px;vertical-align:middle;width:110px'><div style='background:white;border-radius:6px;padding:5px 8px;display:inline-block'>" . pdf_logo_img('38px') . "</div></td>
       <td style='padding:14px 18px;vertical-align:middle'>
         <div style='color:white;font-size:17px;font-weight:bold'>BON DE LIVRAISON</div>
-        <div style='color:rgba(255,255,255,0.65);font-size:10px;margin-top:3px'>Express Multiservices CI &mdash; EMUCI &nbsp;|&nbsp; Commande interne " . $e($cmd['numero_commande']) . "</div></td>
+        <div style='color:rgba(255,255,255,0.65);font-size:10px;margin-top:3px'>Express Multiservices CI &mdash; EMUCI &nbsp;|&nbsp; " . ($inter ? "Transfert inter-site &nbsp;|&nbsp; " : '') . "Commande interne " . $e($cmd['numero_commande']) . "</div></td>
       <td align='right' style='padding:14px 18px;vertical-align:middle'><div style='color:#00AEEF;font-size:18px;font-weight:bold;letter-spacing:1px'>" . $e($num_bl) . "</div></td>
     </tr></table>
     <div style='height:5px;background-color:#1B75BC;margin-bottom:16px'></div>
     <table width='100%' style='border-collapse:collapse;margin-bottom:14px'>
-      <tr>" . $info('Expéditeur (dépôt)', $e($depot)) . $info('Destinataire (site)', $e($cmd['site_nom'])) . $info("Date d'expédition", $date_exp) . "</tr>
-      <tr>" . $info('Expédié par', $e($cmd['expediteur_nom'] ?: '-')) . $info('Demandeur', $e($cmd['agent'] ?: '-'))
+      <tr>" . $info($inter ? 'Site fournisseur' : 'Expéditeur (dépôt)', $e($depot)) . $info('Destinataire (site)', $e($cmd['site_nom'])) . $info($inter ? "Date d'enlèvement" : "Date d'expédition", $date_exp) . "</tr>
+      <tr>" . $info($inter ? 'Enlèvement organisé par' : 'Expédié par', $e($cmd['expediteur_nom'] ?: '-')) . $info('Demandeur', $e($cmd['agent'] ?: '-'))
             . $info('Quantité livrée / commandée', "$tot_liv / $tot_cmd") . "</tr>
     </table>"
     . ($notes !== '' ? "<div style='background:#f0f7ff;border:1px solid #bfdbfe;padding:9px 13px;margin-bottom:14px'>
@@ -1772,9 +1908,11 @@ function _bl_pdf(array $cmd): void {
     <div style='font-size:9px;color:#666;margin-bottom:6px'>À l'arrivée, le site contrôle chaque ligne, note la quantité reçue dans la dernière colonne,
       signe ce bon et le joint (PDF) à la réception de la commande dans l'ERP.</div>
     <table width='100%' style='border-collapse:separate;border-spacing:10px 0;margin-top:22px'><tr>"
-      . $case('Magasin (expéditeur)', "<div style='text-align:center'>$sig_exp<div style='font-size:11px;font-weight:700;color:#06033A'>"
-                . $e($cmd['expediteur_nom'] ?: '-') . "</div><div style='font-size:10px;color:#888;margin-top:3px'>$date_exp</div></div>")
-      . $case('Transporteur', $vide)
+      . ($inter
+          ? $case('Site fournisseur (remise au chauffeur)', $vide)
+          : $case('Magasin (expéditeur)', "<div style='text-align:center'>$sig_exp<div style='font-size:11px;font-weight:700;color:#06033A'>"
+                . $e($cmd['expediteur_nom'] ?: '-') . "</div><div style='font-size:10px;color:#888;margin-top:3px'>$date_exp</div></div>"))
+      . $case($inter ? 'Chauffeur' : 'Transporteur', $case_transport)
       . $case('Site (réceptionnaire)', $vide) . "
     </tr></table>
     </body></html>";
@@ -1951,7 +2089,11 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
       <?php else: foreach($commandes as $cmd): ?>
         <tr data-cle="<?= (int)$cmd['id'] ?>">
           <td style="font-family:monospace;font-weight:700;color:var(--primary-d);white-space:nowrap"><?= h($cmd['numero_commande']) ?></td>
-          <td style="font-size:13px"><?= h($cmd['site_nom']??'—') ?></td>
+          <td style="font-size:13px"><?= h($cmd['site_nom']??'—') ?>
+            <?php if(!empty($cmd['site_source_id'])): ?>
+            <div style="margin-top:3px"><span style="background:#EDE9FE;color:#5B21B6;padding:1px 7px;border-radius:8px;font-size:11px;font-weight:700;white-space:nowrap" title="Commande inter-site : fournie par <?= h($cmd['site_source_nom'] ?? '') ?>"><i class="ph ph-arrows-left-right" aria-hidden="true"></i> depuis <?= h($cmd['site_source_nom'] ?? '?') ?></span></div>
+            <?php endif; ?>
+          </td>
           <td style="font-size:12px;white-space:nowrap"><?= fmt_date($cmd['created_at'],'d/m/Y') ?></td>
           <td style="text-align:center;font-weight:700">
             <?= $cmd['nb_lignes'] ?>
@@ -1963,14 +2105,19 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
           <td style="text-align:right;font-size:13px;font-weight:700"><?= $cmd['total_ht']>0?fmt_number($cmd['total_ht']).' FCFA':'—' ?></td>
           <?php endif; ?>
           <td>
-            <?php $bob_a_choisir = ($cmd['statut']==='en_attente_livraison' && (int)$cmd['nb_lignes_bobine'] > 0) ? cmdbob_lignes_a_choisir((int)$cmd['id']) : 0; ?>
+            <?php $bob_a_choisir = ($cmd['statut']==='en_attente_livraison' && (int)$cmd['nb_lignes_bobine'] > 0) ? cmdbob_lignes_a_choisir((int)$cmd['id']) : 0;
+                  // Inter-site : qui choisit les bobines (site fournisseur ou GSB),
+                  // et le coordinateur fournisseur n'agit qu'en tant que tel.
+                  $_inter    = !empty($cmd['site_source_id']);
+                  $_cmd_bob  = cmd_peut_choisir_bob($cmd);
+                  $_fourn    = $_inter && $is_coord && (int)$cmd['site_source_id'] === $site_force; ?>
             <span class="st-badge st-<?= $cmd['statut'] ?>">
               <?= ['en_attente'=>'⏳ '.$lbl_attente,'modification_demandee'=>'✏️ À corriger','en_attente_livraison'=>'<i class="ph ph-clipboard-text" aria-hidden="true"></i> '.$lbl_prepa,'en_cours_livraison'=>'<i class="ph ph-truck" aria-hidden="true"></i> En livraison','recu'=>'<i class="ph ph-check-circle" aria-hidden="true"></i> Reçu','rejete'=>'<i class="ph ph-x-circle" aria-hidden="true"></i> Rejeté','annule'=>'Annulé'][$cmd['statut']] ?? $cmd['statut'] ?>
             </span>
             <?php if($cmd['statut']==='en_attente_livraison' && (int)$cmd['nb_lignes_bobine'] > 0 && cmdbob_actif()): ?>
             <!-- Le statut reste « À préparer » jusqu'à l'expédition : on montre où en sont les bobines. -->
             <div style="font-size:11.5px;margin-top:4px;color:<?= $bob_a_choisir ? '#b45309' : '#15803d' ?>">
-              <?= $bob_a_choisir ? "Bobines à choisir : $bob_a_choisir ligne" . ($bob_a_choisir > 1 ? 's' : '') : 'Bobines choisies, prête à expédier' ?>
+              <?= $bob_a_choisir ? "Bobines à choisir" . ($_inter ? " par le site fournisseur" : "") . " : $bob_a_choisir ligne" . ($bob_a_choisir > 1 ? 's' : '') : ($_inter ? 'Bobines choisies, prête à enlever' : 'Bobines choisies, prête à expédier') ?>
             </div>
             <?php endif; ?>
             <?php if($n_ec = (int)($ecarts_ouverts[$cmd['id']] ?? 0)): ?>
@@ -1992,30 +2139,32 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
             <?php if (!$is_coord && in_array($cmd['statut'], ['en_cours_livraison', 'recu', 'livre'], true)): ?>
             <a href="?id=<?= $cmd['id'] ?>&bl=1" target="_blank" class="btn btn-secondary btn-sm" style="white-space:nowrap" title="Imprimer le bon de livraison" aria-label="Imprimer le bon de livraison en PDF"><i class="ph ph-truck" aria-hidden="true"></i> BL</a>
             <?php endif; ?>
-            <?php if($peut_choisir_bob && $cmd['statut']==='en_attente_livraison' && (int)$cmd['nb_lignes_bobine'] > 0 && cmdbob_actif()): ?>
-              <button class="btn btn-sm" style="background:#E0F2FE;color:#075985;border:1.5px solid #7DD3FC;white-space:nowrap" onclick="ouvrirBobines(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>',<?= $bob_a_choisir ? 'false' : 'true' ?>)"><i class="ph ph-film-strip" aria-hidden="true"></i> <?= $bob_a_choisir ? 'Choisir les bobines' : 'Bobines choisies' ?></button>
+            <?php if(($_cmd_bob || ($_inter && $is_gestionnaire && !$bob_a_choisir)) && $cmd['statut']==='en_attente_livraison' && (int)$cmd['nb_lignes_bobine'] > 0 && cmdbob_actif()): ?>
+              <button class="btn btn-sm" style="background:#E0F2FE;color:#075985;border:1.5px solid #7DD3FC;white-space:nowrap" onclick="ouvrirBobines(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>',<?= ($bob_a_choisir && $_cmd_bob) ? 'false' : 'true' ?>)"><i class="ph ph-film-strip" aria-hidden="true"></i> <?= $bob_a_choisir ? 'Choisir les bobines' : 'Bobines choisies' ?></button>
             <?php endif; ?>
             <?php if($is_gestionnaire && $cmd['statut']==='en_attente_livraison'): ?>
-              <?php if($bob_a_choisir && $peut_choisir_bob): /* il choisit lui-même : bouton ci-dessus */ ?>
+              <?php if($bob_a_choisir && $_cmd_bob): /* il choisit lui-même : bouton ci-dessus */ ?>
               <?php elseif($bob_a_choisir): ?>
-              <span class="btn btn-sm" style="background:#F1F5F9;color:#475569;border:1.5px dashed #CBD5E1;cursor:default;white-space:nowrap" title="Le GSB doit d'abord choisir les bobines de cette commande"><i class="ph ph-hourglass" aria-hidden="true"></i> En attente du GSB</span>
+              <span class="btn btn-sm" style="background:#F1F5F9;color:#475569;border:1.5px dashed #CBD5E1;cursor:default;white-space:nowrap" title="Les bobines de cette commande doivent d'abord être choisies"><i class="ph ph-hourglass" aria-hidden="true"></i> <?= $_inter ? 'En attente du site fournisseur' : 'En attente du GSB' ?></span>
+              <?php elseif($_inter): ?>
+              <button class="btn btn-primary btn-sm" style="white-space:nowrap" onclick="ouvrirLivraison(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>',<?= (int)$cmd['site_source_id'] ?>,'<?= h($cmd['site_source_nom'] ?? '') ?>')"><i class="ph ph-truck" aria-hidden="true"></i> Enlever chez <?= h($cmd['site_source_nom'] ?? 'le site') ?></button>
               <?php else: ?>
               <button class="btn btn-primary btn-sm" style="white-space:nowrap" onclick="ouvrirLivraison(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')"><i class="ph ph-truck" aria-hidden="true"></i> Expédier</button>
               <?php endif; ?>
             <?php endif; ?>
-            <?php if($cmd['statut']==='en_cours_livraison' && $is_coord): ?>
+            <?php if($cmd['statut']==='en_cours_livraison' && $is_coord && !$_fourn): ?>
               <button class="btn btn-success btn-sm" onclick="receptionner(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')"><i class="ph ph-check-circle" aria-hidden="true"></i> Réceptionner</button>
             <?php endif; ?>
             <?php if(($ecarts_ouverts[$cmd['id']] ?? 0) && ($is_gestionnaire || $is_gsb)): ?>
               <button class="btn btn-sm" style="background:#FFF7ED;color:#9A3412;border:1.5px solid #FDBA74;white-space:nowrap" onclick="voirDetail(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>',true)"><i class="ph ph-warning" aria-hidden="true"></i> Traiter l'écart</button>
             <?php endif; ?>
-            <?php if($cmd['statut']==='modification_demandee' && $is_coord): ?>
+            <?php if($cmd['statut']==='modification_demandee' && $is_coord && !$_fourn): ?>
               <button class="btn btn-sm" style="background:#ede9fe;color:#5b21b6;border:1.5px solid #ddd6fe" onclick="ouvrirCorrection(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')"><i class="ph ph-pencil-simple" aria-hidden="true"></i> Corriger</button>
             <?php endif; ?>
             <?php if($is_gsb && $bob_a_choisir): ?>
               <button class="btn btn-sm" style="background:#FEE2E2;color:#991B1B;border:1.5px solid #FCA5A5" title="Annuler la commande (bobines non choisies)" aria-label="Annuler la commande" onclick="annulerPrepa(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>')"><i class="ph ph-x" aria-hidden="true"></i></button>
             <?php endif; ?>
-            <?php if($cmd['statut']==='en_attente' && ($is_coord || $is_superviseur || $is_gestionnaire)): ?>
+            <?php if($cmd['statut']==='en_attente' && (($is_coord && !$_fourn) || $is_superviseur || $is_gestionnaire)): ?>
               <button class="btn btn-sm" style="background:#FEE2E2;color:#991B1B;border:1.5px solid #FCA5A5" title="Annuler la commande" aria-label="Annuler la commande" onclick="annuler(<?= $cmd['id'] ?>)"><i class="ph ph-x" aria-hidden="true"></i></button>
             <?php endif; ?>
             </div>
@@ -2041,6 +2190,30 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
       <button onclick="fermer('Nouvelle')" style="background:none;border:none;font-size:22px;cursor:pointer"><i class="ph ph-x" aria-hidden="true"></i></button>
     </div>
     <div id="alertNouvelle"></div>
+
+    <?php if($cis_ok): ?>
+    <div style="background:#F5F3FF;border:1px solid #DDD6FE;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+      <label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:700;color:#5B21B6;cursor:pointer">
+        <input type="checkbox" id="cmdInter" onchange="basculerInter()"> Commander à un autre site (inter-site)
+      </label>
+      <div id="grpInter" style="display:none;margin-top:10px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label for="cmdSource" style="font-size:12px;font-weight:600;color:var(--navy)">Site fournisseur *</label>
+            <select class="form-control" id="cmdSource" onchange="majDispoInter()" style="margin-top:4px">
+              <option value="">— Sélectionner —</option>
+              <?php foreach(cis_sites_sources(0) as $s): ?><option value="<?= $s['id'] ?>"><?= h($s['nom']) ?></option><?php endforeach; ?>
+            </select>
+          </div>
+          <div>
+            <label for="cmdMotifInter" style="font-size:12px;font-weight:600;color:var(--navy)">Motif *</label>
+            <input type="text" class="form-control" id="cmdMotifInter" maxlength="255" placeholder="Rupture, urgence, rééquilibrage…" style="margin-top:4px">
+          </div>
+        </div>
+        <div style="font-size:12px;color:#6D28D9;margin-top:8px">Bobines, vignettes, rivets, PMMA et articles du catalogue seulement. La colonne « Chez le fournisseur » indique si le site peut servir chaque ligne. Le chauffeur du gestionnaire de stock enlève la commande chez lui.</div>
+      </div>
+    </div>
+    <?php endif; ?>
 
     <!-- Sélecteur type article -->
     <div style="background:var(--tertiary);border-radius:12px;padding:16px;margin-bottom:16px">
@@ -2114,6 +2287,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
           <th style="padding:10px 13px;font-size:12px;text-align:center">Stock site</th>
           <th style="padding:10px 13px;font-size:12px;text-align:center">Conso / semaine</th>
           <th style="padding:10px 13px;font-size:12px;text-align:center">Qté demandée</th>
+          <th class="col-inter" style="padding:10px 13px;font-size:12px;text-align:center;display:none">Chez le fournisseur</th>
           <?= $voir_prix ? '<th style="padding:10px 13px;font-size:12px;text-align:right">P.U.</th><th style="padding:10px 13px;font-size:12px;text-align:right">Total</th>' : '' ?>
           <th style="padding:10px 13px;width:32px"></th>
         </tr></thead>
@@ -2127,7 +2301,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
     <?php if(!$site_force): ?>
     <div class="form-group" style="margin-bottom:14px">
       <label>Site *</label>
-      <select class="form-control" id="cmdSite">
+      <select class="form-control" id="cmdSite" onchange="majDispoInter()">
         <option value="">— Sélectionner —</option>
         <?php foreach($sites_list as $s): ?><option value="<?= $s['id'] ?>"><?= h($s['nom']) ?></option><?php endforeach; ?>
       </select>
@@ -2229,7 +2403,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
 <?php endif; ?>
 
 <!-- ═══ MODAL BOBINES (GSB) — choix des bobines d'une ligne « bobine » ═══ -->
-<?php if($peut_choisir_bob): ?>
+<?php if($peut_choisir_bob || ($is_coord && $cis_ok)): ?>
 <div id="modalBobines" style="display:none;position:fixed;inset:0;background:rgba(6,3,58,.55);z-index:1000;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto">
   <div style="background:white;border-radius:18px;padding:26px;width:680px;max-width:96vw;box-shadow:0 20px 60px rgba(0,0,0,.25);margin:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -2268,6 +2442,11 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
     <div style="background:#FEF3C7;border-left:4px solid #F59E0B;padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#92400E">
       Si la quantité livrée diffère de la quantité commandée, une <strong>justification est obligatoire</strong>.
     </div>
+    <div id="interLivraison" style="display:none;background:#F5F3FF;border:1px solid #DDD6FE;border-radius:10px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:13px;color:#5B21B6;margin-bottom:8px">Transfert inter-site : tout est enlevé chez <strong id="interSourceNom"></strong>, dont le stock est débité. Le BL part avec le chauffeur et se signe à l'enlèvement.</div>
+      <label for="chauffeurLivraison" style="font-size:12px;font-weight:700;color:var(--navy)">Chauffeur envoyé *</label>
+      <input type="text" class="form-control" id="chauffeurLivraison" maxlength="150" placeholder="Nom du chauffeur" style="margin-top:4px">
+    </div>
     <div id="lignesLivraison"></div>
     <div class="form-group" style="margin:14px 0">
       <label>Notes de livraison</label>
@@ -2275,7 +2454,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">
       <button class="btn btn-secondary" onclick="fermer('Livraison')">Annuler</button>
-      <button class="btn btn-primary" onclick="confirmerLivraison()"><i class="ph ph-truck" aria-hidden="true"></i> Expédier</button>
+      <button class="btn btn-primary" onclick="confirmerLivraison()"><i class="ph ph-truck" aria-hidden="true"></i> <span id="btnLivraisonTxt">Expédier</span></button>
     </div>
   </div>
 </div>
@@ -2414,6 +2593,9 @@ const siteForce      = <?= $site_force ?>;
 const isSuperviseur  = <?= $is_superviseur?'true':'false' ?>;
 const isCoord        = <?= $is_coord?'true':'false' ?>;
 const isGestionnaire = <?= $is_gestionnaire?'true':'false' ?>;
+// Commande inter-site : catégories cessibles d'un site à l'autre.
+const CIS_TYPES = ['bobine','vignette','rivet','pmma','article'];
+let dispoInter = [];
 
 let lignes = [];
 let currentCmdId = null, lignesCmd = [];
@@ -2470,7 +2652,8 @@ async function voirDetail(id, numero, versEcarts) {
   }
 
   // Infos
-  document.getElementById('detail-site').textContent  = cmd.site_nom || '—';
+  document.getElementById('detail-site').textContent  = (cmd.site_nom || '—')
+    + (cmd.site_source_nom ? ` ← fourni par ${cmd.site_source_nom} (inter-site${cmd.motif_inter_site ? ' : ' + cmd.motif_inter_site : ''}${cmd.chauffeur ? ' · chauffeur ' + cmd.chauffeur : ''})` : '');
   document.getElementById('detail-date').textContent  = cmd.created_at ? cmd.created_at.substring(0,10).split('-').reverse().join('/') : '—';
   document.getElementById('detail-agent').textContent = cmd.agent || '—';
 
@@ -2800,10 +2983,14 @@ function ajouterLigne(){
   }
   lignes.push({type,article_id:articleId,libelle,quantite:qte,unite,prix_unitaire:prix,derniere,conso,stockSite});
   renderLignes();
+  majDispoInter();
 }
+function interActif(){ const c=document.getElementById('cmdInter'); return !!(c&&c.checked); }
 function renderLignes(){
   const tbody=document.getElementById('lignesBody');
-  const cols=voirPrix?8:6;
+  const inter=interActif();
+  document.querySelectorAll('.col-inter').forEach(th=>th.style.display=inter?'':'none');
+  const cols=(voirPrix?8:6)+(inter?1:0);
   if(!lignes.length){
     tbody.innerHTML=`<tr><td colspan="${cols}" style="text-align:center;padding:20px;color:var(--muted);font-size:13px">Aucun article ajouté</td></tr>`;
     if(voirPrix) document.getElementById('totalHT').textContent='TOTAL HT : 0 FCFA';
@@ -2818,6 +3005,7 @@ function renderLignes(){
       <td style="padding:9px 13px;text-align:center"><span class="hist-chip">${l.stockSite ?? 0}</span></td>
       <td style="padding:9px 13px;text-align:center"><span class="hist-chip">${l.conso ?? 0}/sem</span></td>
       <td style="padding:9px 13px;text-align:center;font-weight:800;font-size:15px;color:var(--primary-d)">${l.quantite} <span style="font-size:12px;color:var(--muted)">${l.unite}</span></td>
+      ${inter?`<td style="padding:9px 13px;text-align:center">${badgeDispo(i,l)}</td>`:''}
       ${voirPrix?`<td style="padding:9px 13px;text-align:right;font-size:12px">${(l.prix_unitaire||0).toLocaleString()} FCFA</td>
         <td style="padding:9px 13px;text-align:right;font-weight:700;font-size:12px">${lt.toLocaleString()} FCFA</td>`:''}
       <td style="padding:4px;text-align:center"><button onclick="suppLigne(${i})" style="background:#FEE2E2;color:#991B1B;border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:12px">✕</button></td>
@@ -2825,9 +3013,41 @@ function renderLignes(){
   }).join('');
   if(voirPrix) document.getElementById('totalHT').textContent=`TOTAL HT : ${total.toLocaleString()} FCFA`;
 }
-function suppLigne(i){lignes.splice(i,1);renderLignes();}
+function suppLigne(i){lignes.splice(i,1);renderLignes();majDispoInter();}
+// ── Commande inter-site
+function badgeDispo(i,l){
+  if(!CIS_TYPES.includes(l.type)||(l.type==='article'&&!l.article_id)) return '<span style="color:var(--danger-d);font-size:12px;font-weight:700">Non cessible</span>';
+  const v=dispoInter[i];
+  if(v===undefined) return '<span style="color:var(--muted);font-size:12px">—</span>';
+  if(v===null) return '<span style="color:var(--danger-d);font-size:12px;font-weight:700">Non cessible</span>';
+  return v ? '<span style="background:#DCFCE7;color:#166534;padding:2px 8px;border-radius:8px;font-size:11.5px;font-weight:700">Disponible</span>'
+           : '<span style="background:#FEE2E2;color:#991B1B;padding:2px 8px;border-radius:8px;font-size:11.5px;font-weight:700">Insuffisant</span>';
+}
+function basculerInter(){
+  const inter=interActif();
+  document.getElementById('grpInter').style.display=inter?'':'none';
+  // Catégories proposées : celles qu'un site peut céder.
+  [...document.getElementById('aType').options].forEach(o=>{ o.hidden = inter && !CIS_TYPES.includes(o.value); });
+  if(inter && !CIS_TYPES.includes(document.getElementById('aType').value)){ document.getElementById('aType').value='bobine'; onTypeChange(); }
+  // Le site destinataire ne peut pas se fournir lui-même.
+  const dest=document.getElementById('cmdSite')?.value||String(siteForce);
+  [...document.getElementById('cmdSource').options].forEach(o=>{ o.hidden = !!o.value && o.value===dest; });
+  dispoInter=[]; renderLignes(); majDispoInter();
+}
+async function majDispoInter(){
+  if(!interActif()) return;
+  const src=document.getElementById('cmdSource').value;
+  const dest=document.getElementById('cmdSite')?.value||String(siteForce);
+  if(!src||!dest||dest==='0'||!lignes.length){ dispoInter=[]; renderLignes(); return; }
+  const d=await ap({action:'cis_dispo',site_source_id:src,site_id:dest,lignes:JSON.stringify(lignes)});
+  dispoInter=d.success?(d.data||[]):[];
+  renderLignes();
+}
 function ouvrirNouvelle(){
-  lignes=[];renderLignes();
+  lignes=[];dispoInter=[];
+  const ci=document.getElementById('cmdInter');
+  if(ci){ ci.checked=false; document.getElementById('cmdSource').value=''; document.getElementById('cmdMotifInter').value=''; basculerInter(); }
+  renderLignes();
   document.getElementById('cmdNotes').value='';
   document.getElementById('alertNouvelle').innerHTML='';
   document.getElementById('infoContexte').style.display='none';
@@ -2837,7 +3057,14 @@ async function envoyerCommande(){
   if(!lignes.length){document.getElementById('alertNouvelle').innerHTML='<div class="alert alert-danger">Ajoutez au moins un article.</div>';return;}
   const siteId=document.getElementById('cmdSite')?.value||String(siteForce);
   if(!siteId||siteId==='0'){document.getElementById('alertNouvelle').innerHTML='<div class="alert alert-danger">Sélectionnez un site.</div>';return;}
-  const d=await ap({action:'creer_commande',lignes:JSON.stringify(lignes),notes:document.getElementById('cmdNotes').value,site_id:siteId});
+  const req={action:'creer_commande',lignes:JSON.stringify(lignes),notes:document.getElementById('cmdNotes').value,site_id:siteId};
+  if(interActif()){
+    const src=document.getElementById('cmdSource').value, motif=document.getElementById('cmdMotifInter').value.trim();
+    if(!src){document.getElementById('alertNouvelle').innerHTML='<div class="alert alert-danger">Choisissez le site fournisseur.</div>';return;}
+    if(!motif){document.getElementById('alertNouvelle').innerHTML='<div class="alert alert-danger">Le motif de la commande inter-site est obligatoire.</div>';return;}
+    req.site_source_id=src; req.motif_inter_site=motif;
+  }
+  const d=await ap(req);
   if(d.success){toast(d.message,'success');fermer('Nouvelle');setTimeout(()=>location.reload(),800);}
   else document.getElementById('alertNouvelle').innerHTML=`<div class="alert alert-danger">${d.message}</div>`;
 }
@@ -2960,7 +3187,8 @@ async function ouvrirBobines(cmdId, numCmd, lecture){
       </div>`;
       continue;
     }
-    html += `<div style="background:#f8f9fa;border-radius:10px;padding:13px;margin-bottom:10px" data-ligne="${l.id}" data-cible="${lg.films}" data-fb="${lg.films_bobine}" data-mm="${lg.manque_max}" data-mot="${mot}">
+    html += `<div style="background:#f8f9fa;border-radius:10px;padding:13px;margin-bottom:10px" data-ligne="${l.id}" data-cible="${lg.films}" data-fb="${lg.films_bobine}" data-mm="${lg.manque_max}" data-mot="${mot}" data-inter="${lg.inter_site?1:0}">
+      ${lg.inter_site ? `<div style="font-size:12px;color:#5B21B6;margin-bottom:6px">Bobines de <strong>${escB(lg.source_nom||'')}</strong> (en stock ou entamées, hors points pas encore validés). Vous pouvez céder moins que demandé, jamais plus.</div>` : ''}
       <div style="font-size:13.5px;font-weight:700;color:var(--navy)">${escB(l.libelle)}</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Demandé : <strong>${demande}</strong> · type ${escB(lg.type||'?')}</div>
       ${lg.motif_refaire ? `<div style="background:#FFF7ED;border:1px solid #FED7AA;border-radius:8px;padding:8px 10px;margin-bottom:8px">
@@ -2977,12 +3205,14 @@ async function ouvrirBobines(cmdId, numCmd, lecture){
           ${b.qte_initiale < lg.films_bobine ? `<span style="color:var(--muted);font-size:12px">(initiale ${b.qte_initiale})</span>` : ''}
         </label>`).join('')}</div>
         <div class="bob-vide" style="display:none;font-size:12.5px;color:var(--muted);padding:6px 2px">Aucune bobine ne correspond.</div>`
-        : '<div style="font-size:13px;color:var(--danger-d)">Aucune bobine de ce type en stock à l\'entrepôt.</div>'}
+        : `<div style="font-size:13px;color:var(--danger-d)">${lg.inter_site ? 'Aucune bobine de ce type disponible sur ce site.' : 'Aucune bobine de ce type en stock à l\'entrepôt.'}</div>`}
       <div class="somme-bob" style="font-size:12.5px;margin-top:8px"></div>
       <div class="msg-bob" style="font-size:12.5px;margin-top:6px"></div>
     </div>`;
   }
   box.innerHTML = html || '<div style="color:var(--muted);font-size:13px">Aucune ligne bobine validée dans cette commande.</div>';
+  // Inter-site : l'encadré sur l'entrepôt ne s'applique pas (règle rappelée sous chaque ligne).
+  if (box.querySelector('[data-inter="1"]')) document.getElementById('introBobines').style.display = 'none';
   if (lecture) return;
   box.querySelectorAll('[data-ligne]').forEach(bloc => compterBobines(bloc.querySelector('input[type=checkbox]') || bloc));
 }
@@ -3008,7 +3238,8 @@ function compterBobines(el){
     n++; somme += parseInt(c.dataset.qs)||0;
     tolere += Math.min(mm, Math.max(0, fb - (parseInt(c.dataset.qi)||fb)));
   });
-  const ok = n > 0 && somme <= cible && somme >= cible - tolere;
+  const inter = bloc.dataset.inter === '1';
+  const ok = n > 0 && somme <= cible && (inter || somme >= cible - tolere);
   const ecart = somme > cible ? ` · ${somme-cible} de trop` : (!ok && n ? ` · il manque ${cible-somme}` : '');
   const box = bloc.querySelector('.somme-bob');
   box.style.color = ok ? 'var(--success-d)' : (n ? 'var(--danger-d)' : 'var(--muted)');
@@ -3043,7 +3274,7 @@ async function validerBobines(btn){
     const msg = bloc.querySelector('.msg-bob');
     const ok = bloc.querySelector('input[type=checkbox]') && compterBobines(bloc.querySelector('input[type=checkbox]'));
     msg.style.color = 'var(--danger-d)';
-    msg.textContent = ok ? '' : '❌ La somme des bobines cochées doit égaler la quantité demandée.';
+    msg.textContent = ok ? '' : (bloc.dataset.inter === '1' ? '❌ Cochez au moins une bobine, sans dépasser la quantité demandée.' : '❌ La somme des bobines cochées doit égaler la quantité demandée.');
     if (!ok) erreurs++;
   });
   if (erreurs) {
@@ -3070,11 +3301,17 @@ async function validerBobines(btn){
   fermer('Bobines');
   setTimeout(() => location.reload(), 800);
 }
-async function ouvrirLivraison(cmdId,numCmd){
+let sourceInter = null;   // {id, nom} : commande inter-site en cours d'enlèvement
+async function ouvrirLivraison(cmdId,numCmd,srcId,srcNom){
   currentCmdId=cmdId;
-  document.getElementById('titleLivraison').textContent=`🚚 Expédier — ${numCmd}`;
+  sourceInter = srcId ? {id:parseInt(srcId), nom:srcNom||''} : null;
+  document.getElementById('titleLivraison').textContent=sourceInter ? `🚚 Enlever chez ${sourceInter.nom} — ${numCmd}` : `🚚 Expédier — ${numCmd}`;
   document.getElementById('alertLivraison').innerHTML='';
   document.getElementById('notesLivraison').value='';
+  document.getElementById('interLivraison').style.display=sourceInter?'':'none';
+  document.getElementById('interSourceNom').textContent=sourceInter?sourceInter.nom:'';
+  document.getElementById('chauffeurLivraison').value='';
+  document.getElementById('btnLivraisonTxt').textContent=sourceInter?"Valider l'enlèvement":'Expédier';
   const d=await ap({action:'get_lignes',cmd_id:cmdId});
   lignesCmd=d.data||[];
   depotStockCache={};
@@ -3086,10 +3323,12 @@ async function ouvrirLivraison(cmdId,numCmd){
           <div style="font-size:12px;color:var(--muted)">Commandé : <strong>${l.quantite}</strong> ${l.unite||''} · ${l.type_article||'article'}</div>
           ${ligneAvecDepot(l)?`<div style="display:flex;align-items:center;gap:8px;margin-top:6px">
             <label style="font-size:12px;font-weight:700;color:var(--navy);white-space:nowrap">Sortie depuis *</label>
-            <select class="form-control depot-liv" data-idx="${i}" onchange="this.style.borderColor='';rafraichirStockDepotAffichage()" style="border-radius:8px;font-size:12.5px;padding:4px 8px;height:auto">
+            ${sourceInter
+              ? `<select class="form-control depot-liv" data-idx="${i}" disabled style="border-radius:8px;font-size:12.5px;padding:4px 8px;height:auto"><option value="${sourceInter.id}" selected>${escB(sourceInter.nom)} (site fournisseur)</option></select>`
+              : `<select class="form-control depot-liv" data-idx="${i}" onchange="this.style.borderColor='';rafraichirStockDepotAffichage()" style="border-radius:8px;font-size:12.5px;padding:4px 8px;height:auto">
               <option value="">— Choisir —</option>
               ${depotsData.map(d=>`<option value="${d.id}" ${d.id===depotParDefaut(l)?'selected':''}>${escB(d.nom)} (${d.type==='magasin'?'magasin':'entrepôt'})</option>`).join('')}
-            </select></div>
+            </select>`}</div>
             <div id="stockDepot${i}" style="font-size:12px;font-weight:700;margin-top:3px"></div>`:''}
           ${(estRouleau(l.type_article)&&(l.bobines||[]).length)?`<div style="font-size:12px;margin-top:3px;color:#075985">Bobines choisies : <strong style="font-family:monospace">${l.bobines.map(b=>escB(b.numero)).join(', ')}</strong></div>`:''}
           ${l.statut_ligne==='rejete'?'<span style="background:#FEE2E2;color:#991B1B;padding:2px 7px;border-radius:8px;font-size:10.5px;font-weight:700">❌ Ligne rejetée — '+escB(l.motif_rejet)+'</span>':''}
@@ -3186,11 +3425,13 @@ async function confirmerLivraison(){
     });
   });
   if(!valid){document.getElementById('alertLivraison').innerHTML='<div class="alert alert-danger">Justification obligatoire pour les écarts.</div>';return;}
+  const chauffeur=document.getElementById('chauffeurLivraison').value.trim();
+  if(sourceInter&&!chauffeur){document.getElementById('alertLivraison').innerHTML='<div class="alert alert-danger">Indiquez le chauffeur envoyé chez le site fournisseur.</div>';return;}
   if(sansDepot){
     document.getElementById('alertLivraison').innerHTML=`<div class="alert alert-danger">Choisissez d'où sort chaque ligne (entrepôt ou magasin) : ${sansDepot} ligne(s) sans dépôt.</div>`;
     return;
   }
-  const d=await ap({action:'emettre_livraison',cmd_id:currentCmdId,notes_livraison:document.getElementById('notesLivraison').value,lignes:JSON.stringify(lignesData)});
+  const d=await ap({action:'emettre_livraison',cmd_id:currentCmdId,notes_livraison:document.getElementById('notesLivraison').value,chauffeur:sourceInter?chauffeur:'',lignes:JSON.stringify(lignesData)});
   if(d.success){toast(d.message,'success');fermer('Livraison');setTimeout(()=>location.reload(),800);}
   else document.getElementById('alertLivraison').innerHTML=`<div class="alert alert-danger">${d.message}</div>`;
 }

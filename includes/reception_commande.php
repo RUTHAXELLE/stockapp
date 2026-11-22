@@ -388,7 +388,10 @@ function rcp_remettre_en_stock(array $e, int $user_id, string $cmd_numero): void
     $dep = (int)($e['depot_source_id'] ?? 0);
     if (!$dep || (int)$e['quantite'] <= 0) return;
     $l = db_fetch_one("SELECT * FROM commande_lignes WHERE id=?", [$e['commande_ligne_id']]);
-    if ($l) rcp_mouvement($l, $dep, (int)$e['quantite'], true);
+    // Le stock central des articles ne suit que les dépôts : une commande
+    // inter-site rend la marchandise au site fournisseur, sans y toucher.
+    $depot = in_array(db_fetch_value("SELECT type FROM sites WHERE id=?", [$dep]), ['entrepot', 'magasin'], true);
+    if ($l) rcp_mouvement($l, $dep, (int)$e['quantite'], $depot);
 }
 
 /**
@@ -455,6 +458,10 @@ function rcp_traiter(int $cmd_id, array $decisions, string $notes, array $user, 
                 [$renvoi_num, $cmd['site_id'], "Renvoi des manquants de la commande {$cmd['numero_commande']}",
                  $cmd['created_by'], $user['id']]);
             $renvoi_id = (int)db_last_id();
+            // Renvoi d'une commande inter-site : même site fournisseur.
+            if (!empty($cmd['site_source_id']))
+                db_query("UPDATE commandes SET site_source_id=?, motif_inter_site=? WHERE id=?",
+                    [(int)$cmd['site_source_id'], "Renvoi des manquants de {$cmd['numero_commande']}", $renvoi_id]);
             foreach ($renvois as $lid => $q) {
                 $l = db_fetch_one("SELECT * FROM commande_lignes WHERE id=?", [$lid]);
                 db_query("INSERT INTO commande_lignes (commande_id,type_article,article_id,libelle,quantite,unite,prix_unitaire,statut_ligne)
@@ -480,6 +487,12 @@ function rcp_traiter(int $cmd_id, array $decisions, string $notes, array $user, 
         if ($renvoi_id && cmdbob_lignes_a_choisir($renvoi_id) > 0)
             rcp_notifier_role('gestionnaire_stock_bobines', "🎞️ Commande $renvoi_num : bobines à choisir",
                 "Renvoi des rouleaux non reçus de {$cmd['numero_commande']}.", '/pages/commandes.php');
+        // Renvoi inter-site : le site fournisseur prépare à nouveau.
+        if ($renvoi_id && !empty($cmd['site_source_id']))
+            foreach (db_fetch_all("SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id
+                                   WHERE r.slug='coordinateur_site' AND u.site_id=? AND u.actif=1", [(int)$cmd['site_source_id']]) as $_c)
+                notif_create('info', "📦 Commande $renvoi_num : à préparer", "Renvoi des manquants de {$cmd['numero_commande']}.",
+                    (int)$_c['id'], '/pages/commandes.php');
         db_commit();
     } catch (Exception $ex) { db_rollback(); throw $ex; }
     return ['nb' => count($a_faire), 'renvoi' => $renvoi_num, 'resume' => $resume];

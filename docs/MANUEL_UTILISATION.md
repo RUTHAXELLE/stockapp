@@ -528,6 +528,37 @@ Livré partiellement, Livré, Non reçu, Reçu partiel.
 > central, et sans le BL (le site signe celui qui arrive avec la
 > marchandise). La liste montre d'abord ce que chacun doit traiter.
 
+#### Commander à un autre site (inter-site)
+
+Quand un site manque d'une matière qu'un autre site a en stock, il peut la
+lui commander au lieu de l'entrepôt. La commande suit le même circuit, avec
+trois différences : qui prépare, qui transporte, et d'où sort le stock.
+
+1. **Le coordinateur du site demandeur** coche « Commander à un autre
+   site », choisit le **site fournisseur** et donne un **motif**. Seuls les
+   bobines, vignettes, rivets, PMMA et articles du catalogue se commandent
+   ainsi (un équipement passe par une affectation). Pour chaque ligne, la
+   colonne « Chez le fournisseur » indique **Disponible** ou
+   **Insuffisant**, sans montrer les quantités de l'autre site.
+2. **Le superviseur valide** ligne par ligne, comme pour toute commande.
+3. **Le coordinateur du site fournisseur** (ou le GSB) choisit les bobines à
+   céder, en stock ou entamées. Une bobine saisie dans un point pas encore
+   validé ne peut pas être choisie. Il peut céder moins que demandé, jamais
+   plus. Les bobines choisies sont réservées : elles disparaissent du point
+   journalier du site fournisseur et ne peuvent plus être mises en
+   utilisation.
+4. **Le gestionnaire de stock envoie un chauffeur** : bouton « Enlever
+   chez … », nom du chauffeur obligatoire. L'enlèvement débite le stock du
+   site fournisseur. Le BL « Transfert inter-site » part avec le chauffeur ;
+   le site fournisseur le signe à la remise, le site demandeur à l'arrivée.
+5. **Le site demandeur réceptionne**, ligne par ligne, comme d'habitude.
+   Un manque remis en stock retourne au **site fournisseur**.
+
+Une commande inter-site porte la mention « depuis … » dans la liste. Le
+coordinateur du site fournisseur la voit aussi, mais il ne la réceptionne
+pas et ne l'annule pas. Un site peut avoir en même temps une commande à
+l'entrepôt et une commande inter-site en attente de validation.
+
 > **Commande bobines.** L'ancien écran Bobines → Commande bobines ne prend
 > plus de nouvelle demande : il renvoie vers Commandes. Les commandes déjà
 > en cours y vont jusqu'à leur réception.

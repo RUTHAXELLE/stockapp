@@ -66,6 +66,20 @@ function cmdbob_sql_libre(string $a = 'b'): string {
     return $sql;
 }
 
+/**
+ * Commande qui réserve la bobine (n° de commande), ou null : choisie pour une
+ * commande et pas encore reçue. Une bobine réservée ne s'utilise plus (point
+ * journalier, demande d'utilisation) et ne change plus de site à la main.
+ */
+function cmdbob_reservee(int $bobine_id): ?string {
+    if (!cmdbob_actif()) return null;
+    $n = db_fetch_value(
+        "SELECT c.numero_commande FROM commande_ligne_bobines clb
+         JOIN commandes c ON c.id = clb.commande_id
+         WHERE clb.bobine_id=? AND clb.statut IN ('assigne','non_recu') LIMIT 1", [$bobine_id]);
+    return $n !== null && $n !== false ? (string)$n : null;
+}
+
 /** Bobines réservées par ligne d'une commande : [ligne_id => [['id'=>, 'numero'=>, 'stock_systeme'=>, 'qte_initiale'=>], ...]]. */
 function cmdbob_par_ligne(int $cmd_id, string $statut = 'assigne'): array {
     if (!cmdbob_actif()) return [];
@@ -106,9 +120,12 @@ function cmdbob_films_demandes(array $l): int {
  * choisies doit égaler les films demandés. Une bobine qui démarre à 497, 498
  * ou 499 compte pour une bobine de 500 : son manque d'origine est toléré.
  * $bobines : lignes avec stock_systeme et qte_initiale.
+ * $inter_site : commande servie par un autre site (includes/commande_inter_site.php) —
+ * il cède ce qu'il a, entamé compris : jamais plus que demandé, mais moins
+ * est admis (l'écart se justifie à l'enlèvement).
  * Renvoie null si le choix est bon, sinon le message à afficher.
  */
-function cmdbob_controle(array $l, array $bobines): ?string {
+function cmdbob_controle(array $l, array $bobines, bool $inter_site = false): ?string {
     $cible  = cmdbob_films_demandes($l);
     $fb     = cmdbob_films_bobine($l);
     $mot    = cmdbob_mot($l);
@@ -121,15 +138,20 @@ function cmdbob_controle(array $l, array $bobines): ?string {
     if ($somme > $cible)
         return "Les rouleaux choisis totalisent $somme $mot : c'est " . ($somme - $cible)
              . " de plus que les $cible $mot demandés.";
+    if ($inter_site) return $somme > 0 ? null : "Choisissez au moins un rouleau.";
     if ($somme < $cible - $tolere)
         return "Les rouleaux choisis totalisent $somme $mot : il manque " . ($cible - $somme)
              . " $mot pour atteindre les $cible demandés.";
     return null;
 }
 
-/** Quantité livrée d'une ligne bobine, dans son unité : la commande en bobines, ou les films des bobines choisies. */
-function cmdbob_qte_livree(array $l, array $bobines): int {
-    if (cmdbob_en_bobines($l)) return (int)$l['quantite'];
+/**
+ * Quantité livrée d'une ligne bobine, dans son unité : la commande en bobines,
+ * ou les films des bobines choisies. Inter-site, en bobines : le nombre de
+ * rouleaux cédés (il peut être inférieur à la commande).
+ */
+function cmdbob_qte_livree(array $l, array $bobines, bool $inter_site = false): int {
+    if (cmdbob_en_bobines($l)) return $inter_site ? min((int)$l['quantite'], count($bobines)) : (int)$l['quantite'];
     return array_sum(array_map(fn($b) => (int)$b['stock_systeme'], $bobines));
 }
 

@@ -11,6 +11,8 @@ require_once __DIR__ . '/../../includes/helpers.php';
 require_once __DIR__ . '/../../includes/notifications.php';
 require_once __DIR__ . '/../../includes/upload.php';
 require_once __DIR__ . '/../../includes/referentiels.php';
+// Bobine réservée par une commande (inter-site) : elle suit la commande.
+require_once __DIR__ . '/../../includes/commande_bobines.php';
 
 require_auth();
  // Force rechargement depuis DB (évite cache de rôle périmé)
@@ -136,6 +138,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         if (!in_array($bob['statut'],['en_stock','en_cours'],true)) json_response(false,"Une bobine « {$bob['statut']} » ne peut pas être affectée.");
         if ($bob['statut']==='en_cours' && (int)$bob['site_id'] !== $site_id)
             json_response(false,'Cette bobine est en utilisation : elle ne peut pas changer de site.');
+        if (($_res = cmdbob_reservee($id)) !== null)
+            json_response(false,"Cette bobine est réservée par la commande $_res : elle suit la commande.");
         // Arrive EN STOCK sur le site : elle passe en utilisation par une demande d'utilisation.
         db_query("UPDATE op_bobines SET site_id=?,statut='en_stock' WHERE id=?",[$site_id,$id]);
         db_query("INSERT INTO mouvements_bobines (bobine_id,type,quantite,stock_avant,stock_apres,motif,created_by) VALUES (?,?,?,?,?,?,?)",
@@ -285,6 +289,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
         $bob = db_fetch_one("SELECT b.*, s.nom AS site_nom FROM op_bobines b LEFT JOIN sites s ON s.id=b.site_id WHERE b.id=?",[$id]);
         if (!$bob) json_response(false,'Bobine introuvable.');
         if ($bob['statut'] !== 'en_stock') json_response(false,'Cette bobine n\'est pas en stock.');
+        if (($_res = cmdbob_reservee($id)) !== null) json_response(false,"Cette bobine est réservée par la commande $_res : elle ne peut pas être mise en utilisation.");
         // Vérifier pas déjà une demande en attente
         $exist = db_fetch_one("SELECT id FROM demandes_bobines WHERE bobine_id=? AND statut='en_attente'",[$id]);
         if ($exist) json_response(false,'Une demande est déjà en attente pour cette bobine.');
@@ -321,6 +326,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && is_ajax()) {
             db_query("UPDATE demandes_bobines SET statut=?,traite_par=?,traite_at=NOW(),motif_reponse=? WHERE id=?",
                 [$decision,$user['id'],$motif_rep,$dem_id]);
             if ($decision==='approuvee') {
+                if (($_res = cmdbob_reservee((int)$dem['bobine_id'])) !== null)
+                    throw new Exception("La bobine {$dem['bobine_num']} est réservée par la commande $_res : refusez la demande.");
                 db_query("UPDATE op_bobines SET statut='en_cours' WHERE id=?",[$dem['bobine_id']]);
             }
             // Notifier le coordinateur

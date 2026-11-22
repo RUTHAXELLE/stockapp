@@ -1357,6 +1357,37 @@ reposent sur la quantité **reçue**.
 prix ni stock central. La liste est triée selon ce que chaque rôle doit
 traiter.
 
+**Commandes inter-sites** (`includes/commande_inter_site.php`,
+`sql/migration_commandes_inter_site.sql`). `commandes.site_source_id` désigne
+un site de production fournisseur (NULL : commande servie par un dépôt),
+avec `motif_inter_site` (obligatoire) et `chauffeur` (à l'enlèvement).
+
+- **Création** : types cédables `bobine`, `vignette`, `rivet`, `pmma`,
+  `article` hors catégories d'équipement (`cis_controle_ligne()`) ; source
+  ≠ destination, site actif hors entrepôt, magasin et siège. La règle « une
+  commande en attente par site » vaut séparément pour les commandes au dépôt
+  et inter-sites. L'action `cis_dispo` ne renvoie au demandeur qu'un booléen
+  par ligne (`cis_disponible()`).
+- **Choix des bobines** : coordinateur du site source ou GSB
+  (`cmd_peut_choisir_bob()`), parmi `cis_bobines_cessibles()` — `en_stock`
+  ou `en_cours`, stock > 0, libres (`cmdbob_sql_libre()`) et absentes de
+  tout point non validé. Contrôle souple (`cmdbob_controle(..., true)`) :
+  jamais plus que demandé, moins admis ; en BOBINE, le livré est le nombre
+  de rouleaux cédés.
+- **Réservation** : `cmdbob_reservee()` exclut la bobine du point journalier
+  (`get_bobines_site`, refus à l'enregistrement sauf si elle était déjà dans
+  le point), de l'affectation manuelle et de la demande d'utilisation.
+- **Enlèvement** (fonction Magasin) : chaque ligne est débitée du site source
+  (`depot_source_id` = source, sans `articles.stock_global`) ; chaque bobine
+  est revérifiée encore sur le site et hors point non validé ; mouvement
+  `transfert` « Enlevée chez … par … ». BL titré « Transfert inter-site »
+  (site fournisseur, chauffeur, réceptionnaire).
+- **Réception et écarts** : inchangées ; une remise en stock rend la quantité
+  au site source (`rcp_remettre_en_stock()`, stock central seulement pour un
+  dépôt) ; un renvoi garde le site source.
+- **Visibilité** : `cmd_visible()` ouvre la commande au coordinateur du site
+  source, qui ne la réceptionne, ne la corrige ni ne l'annule.
+
 ### 9.8 Équipements et articles
 
 **Équipements** (`equipements`). Champs ajoutés : `emplacement`, `agent_id`

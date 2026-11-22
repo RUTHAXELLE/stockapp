@@ -11,6 +11,8 @@ require_once __DIR__ . '/../../includes/point_emuci_corrections.php';
 require_once __DIR__ . '/../../includes/inventaire.php';
 require_once __DIR__ . '/../../includes/validation_stock.php';
 require_once __DIR__ . '/../../includes/optoplate_comparaison.php';
+// Bobines réservées par une commande (inter-site) : plus utilisables ici.
+require_once __DIR__ . '/../../includes/commande_bobines.php';
 
 // Comparaison OptoPlate disponible seulement une fois les deux migrations
 // jouées (colonnes de désactivation + justification/écart sur le point).
@@ -475,6 +477,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
         // même date : seul un brouillon ou un point rejeté (à corriger) le peut.
         if ($existing_pre && !in_array($existing_pre['statut'], ['brouillon', 'rejete'], true))
             json_response(false, "Un point existe déjà pour ce site, cette date et ce type (statut : {$existing_pre['statut']}). Il ne peut plus être modifié.");
+        // Bobines déjà dans ce point avant la modification : seules les
+        // nouvelles sont refusées si une commande les réserve.
+        $_pj_bob_avant = $existing_pre
+            ? array_map('intval', array_column(db_fetch_all("SELECT bobine_id FROM op_films_utilises WHERE point_id=?", [(int)$existing_pre['id']]), 'bobine_id'))
+            : [];
         // Point rejeté : le rejet a déjà remis son stock en place. Il ne
         // faut pas le remettre une 2e fois en le corrigeant.
         // Règle 18h : le stock n'est remis que si ce point l'avait retiré
@@ -650,6 +657,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                     throw new Exception("Bobine {$bobine['numero']} : elle n'appartient pas à ce site.");
                 if (in_array($bobine['statut'], ['perdue', 'retiree', 'absente'], true))
                     throw new Exception("Bobine {$bobine['numero']} : statut « {$bobine['statut']} », elle ne peut pas être utilisée.");
+                if (!in_array($bobine_id, $_pj_bob_avant, true) && ($_cmd_res = cmdbob_reservee($bobine_id)) !== null)
+                    throw new Exception("Bobine {$bobine['numero']} : réservée par la commande $_cmd_res, elle ne peut plus être utilisée ici.");
 
                 $total_sortis = $f_util + $f_endomm;
                 if ($inv_recompte === null && $bobine['films_restants'] < $total_sortis)
@@ -875,6 +884,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
              FROM op_bobines b
              LEFT JOIN op_types_vehicule tv ON tv.id=b.type_vehicule_id
              WHERE b.site_id=? AND b.statut='en_cours'
+               AND " . cmdbob_sql_libre('b') . "
              ORDER BY b.serie, b.numero ASC",
             [$site_id]
         );
