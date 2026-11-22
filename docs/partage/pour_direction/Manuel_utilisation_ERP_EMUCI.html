@@ -4,12 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Manuel d&#x27;utilisation — ERP EMUCI</title>
-<meta name="description" content="Manuel d&#x27;utilisation de l'ERP EMUCI, arrêté au commit 31cff1d">
+<meta name="description" content="Manuel d&#x27;utilisation de l'ERP EMUCI, arrêté au commit d11c6c1">
 <meta name="author" content="GAYE Emmanuel">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
 <style>
+
 
 
 
@@ -243,6 +244,14 @@ h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
   color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
   border-bottom:2px solid var(--accent)}
 figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+.contact{margin:.6rem 0 0;font-size:.85rem;color:var(--muted,#4d5876)}
+.contact b{color:inherit;font-weight:700}
+.contact a{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor}
 
 h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
   color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
@@ -927,7 +936,37 @@ Livré partiellement, Livré, Non reçu, Reçu partiel.</p>
 <div class="note note-info"><span class="note-t">Ce que voit le coordinateur</span><p> Ses seules commandes, sans prix ni stock
 central, et sans le BL (le site signe celui qui arrive avec la
 marchandise). La liste montre d'abord ce que chacun doit traiter.</p>
-<p><strong>Commande bobines.</strong> L'ancien écran Bobines → Commande bobines ne prend
+</div>
+<h4>Commander à un autre site (inter-site)</h4>
+<p>Quand un site manque d'une matière qu'un autre site a en stock, il peut la
+lui commander au lieu de l'entrepôt. La commande suit le même circuit, avec
+trois différences : qui prépare, qui transporte, et d'où sort le stock.</p>
+<ol>
+<li><strong>Le coordinateur du site demandeur</strong> coche « Commander à un autre
+   site », choisit le <strong>site fournisseur</strong> et donne un <strong>motif</strong>. Seuls les
+   bobines, vignettes, rivets, PMMA et articles du catalogue se commandent
+   ainsi (un équipement passe par une affectation). Pour chaque ligne, la
+   colonne « Chez le fournisseur » indique <strong>Disponible</strong> ou
+   <strong>Insuffisant</strong>, sans montrer les quantités de l'autre site.</li>
+<li><strong>Le superviseur valide</strong> ligne par ligne, comme pour toute commande.</li>
+<li><strong>Le coordinateur du site fournisseur</strong> (ou le GSB) choisit les bobines à
+   céder, en stock ou entamées. Une bobine saisie dans un point pas encore
+   validé ne peut pas être choisie. Il peut céder moins que demandé, jamais
+   plus. Les bobines choisies sont réservées : elles disparaissent du point
+   journalier du site fournisseur et ne peuvent plus être mises en
+   utilisation.</li>
+<li><strong>Le gestionnaire de stock envoie un chauffeur</strong> : bouton « Enlever
+   chez … », nom du chauffeur obligatoire. L'enlèvement débite le stock du
+   site fournisseur. Le BL « Transfert inter-site » part avec le chauffeur ;
+   le site fournisseur le signe à la remise, le site demandeur à l'arrivée.</li>
+<li><strong>Le site demandeur réceptionne</strong>, ligne par ligne, comme d'habitude.
+   Un manque remis en stock retourne au <strong>site fournisseur</strong>.</li>
+</ol>
+<p>Une commande inter-site porte la mention « depuis … » dans la liste. Le
+coordinateur du site fournisseur la voit aussi, mais il ne la réceptionne
+pas et ne l'annule pas. Un site peut avoir en même temps une commande à
+l'entrepôt et une commande inter-site en attente de validation.</p>
+<div class="note note-info"><span class="note-t">Commande bobines</span><p> L'ancien écran Bobines → Commande bobines ne prend
 plus de nouvelle demande : il renvoie vers Commandes. Les commandes déjà
 en cours y vont jusqu'à leur réception.</p>
 </div>
@@ -2387,7 +2426,7 @@ ne dit pas sur quelle version il porte ne vaut rien.</p>
 <div class="impr-pied" style="margin-top:10mm;padding-top:4mm;border-top:1px solid #c3ccdf;
      font-size:9pt;color:#4d5876">
   Manuel d&#x27;utilisation — ERP EMUCI — document interne. État du logiciel au commit
-  <code>31cff1d</code>. Toute évolution fonctionnelle rend une section caduque :
+  <code>d11c6c1</code>. Toute évolution fonctionnelle rend une section caduque :
   vérifiez la version avant de vous y fier.<br>
   Auteur : GAYE Emmanuel — gayerodrigue@gmail.com — <span style="white-space:nowrap">+225 01 03 55 96 52</span>
 </div>
