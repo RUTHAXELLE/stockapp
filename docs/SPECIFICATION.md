@@ -1310,7 +1310,7 @@ demande.
 |---|---|---|
 | `en_attente` | À valider | Créée par le coordinateur (une seule en attente par site, vérifiée sous verrou) |
 | `modification_demandee` | À corriger | Lignes renvoyées ; seul le coordinateur du site corrige |
-| `en_attente_livraison` | À préparer | Validée ; choix des bobines par le GSB, puis expédition |
+| `en_attente_livraison` | À préparer | Validée ; choix des bobines par le GSB ou le gestionnaire de stock, puis expédition |
 | `en_cours_livraison` | En livraison | Expédiée ; dépôts débités |
 | `recu` | Reçu | Réceptionnée par le site |
 | `rejete`, `annule` | Rejeté, Annulé | Annulation avec motif, selon le statut et l'acteur |
@@ -1320,7 +1320,8 @@ informatique, équipement opérationnel ; unités UNITÉ, CARTON, BOBINE, BOÎTE
 Le superviseur décide **ligne par ligne** (`valide`, `rejete`,
 `modification_demandee`) ; une décision est exigée pour chaque ligne.
 
-**Bobines et vignettes** (`commande_ligne_bobines`). Le GSB choisit les
+**Bobines et vignettes** (`commande_ligne_bobines`). Le GSB ou le
+gestionnaire de stock (option Magasin) choisit les
 rouleaux en stock à l'entrepôt : la somme de leurs quantités système doit
 égaler la quantité demandée (BOBINE = N × contenance du type, UNITÉ = films ;
 une bobine à 497-499 compte pour 500). Les rouleaux restent à l'entrepôt,

@@ -497,7 +497,7 @@ opérationnels. Les unités possibles sont UNITÉ, CARTON, BOBINE et BOÎTE.
 2. **Le superviseur traite les lignes** : valider, rejeter ou demander une
    modification, ligne par ligne. Une commande « À corriger » n'est
    corrigée que par le coordinateur du site, sur les seules lignes signalées.
-3. **Lignes bobines et vignettes** : le GSB choisit les rouleaux précis à
+3. **Lignes bobines et vignettes** : le GSB ou le gestionnaire de stock choisit les rouleaux précis à
    l'entrepôt (la somme de leurs films doit égaler la quantité demandée),
    puis « Valider la sélection ». Ils restent à l'entrepôt, réservés.
 4. **Le gestionnaire expédie** : pour chaque ligne, il choisit le dépôt de

@@ -734,7 +734,8 @@ demander une modification. Seul le coordinateur du site corrige les lignes
 renvoyées.
 
 **EF-CMD-3** — Pour les lignes de bobines et de vignettes, le gestionnaire
-stock bobines choisit les rouleaux précis à l'entrepôt ; la somme de leurs
+stock bobines ou le gestionnaire de stock choisit les rouleaux précis à
+l'entrepôt ; la somme de leurs
 films égale la quantité demandée. Les rouleaux restent réservés à l'entrepôt
 jusqu'à la réception.
 

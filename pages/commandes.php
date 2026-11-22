@@ -37,6 +37,9 @@ $is_superviseur = in_array($role_slug, ['superviseur_operation','admin','superad
 $is_gestionnaire = droit_fonction(FONCTION_MAGASIN, $user);
 // GSB : choisit les bobines des lignes « bobine » avant l'expédition.
 $is_gsb        = in_array($role_slug, ['gestionnaire_stock_bobines','admin','superadmin']);
+// Le choix des bobines (affectation à la commande) est ouvert au GSB et au
+// gestionnaire de stock (option Magasin) : l'un ou l'autre peut le faire.
+$peut_choisir_bob = $is_gsb || $is_gestionnaire;
 $voir_prix     = !$is_coord; // coordinateur ne voit pas les prix
 
 $site_force    = ($is_coord && $user['site_id']) ? (int)$user['site_id'] : 0;
@@ -242,7 +245,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
             foreach ($gests as $g) {
                 db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
                     [$g['id'],'info',"📦 Commande {$cmd['numero_commande']} à préparer",
-                     "Commande validée — prête pour préparation et expédition.",
+                     "Commande validée — prête pour préparation et expédition."
+                     . (cmdbob_actif() && cmdbob_lignes_a_choisir($cmd_id) > 0 ? " Bobines à choisir (par vous ou le GSB)." : ""),
                      '/pages/commandes.php']);
             }
             if (cmdbob_lignes_a_choisir($cmd_id) > 0) {
@@ -355,7 +359,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     //      (includes/commande_bobines.php). Elles restent à l'entrepôt,
     //      réservées, jusqu'à la réception par le site.
     if ($action === 'get_bobines_ligne') {
-        if (!$is_gsb && !$is_gestionnaire) json_response(false, 'Accès refusé.');
+        if (!$peut_choisir_bob) json_response(false, 'Accès refusé.');
         if (!cmdbob_actif()) json_response(false, "Migration commande_ligne_bobines non jouée sur cette base.");
         $ligne_id = (int)($_POST['ligne_id'] ?? 0);
         $l = db_fetch_one("SELECT * FROM commande_lignes WHERE id=? AND type_article IN " . CMDBOB_TYPES_SQL, [$ligne_id]);
@@ -390,7 +394,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     }
 
     if ($action === 'assigner_bobines') {
-        if (!$is_gsb) json_response(false, 'Accès refusé — GSB requis.');
+        if (!$peut_choisir_bob) json_response(false, 'Accès refusé — GSB ou gestionnaire de stock requis.');
         if (!cmdbob_actif()) json_response(false, "Migration commande_ligne_bobines non jouée sur cette base.");
         $ligne_id = (int)($_POST['ligne_id'] ?? 0);
         $ids = array_values(array_unique(array_filter(array_map('intval', json_decode($_POST['bobine_ids'] ?? '[]', true) ?: []))));
@@ -431,7 +435,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
                 foreach (array_map(fn($id) => ['id' => $id], users_fonction(FONCTION_MAGASIN, false)) as $g) {
                     db_query("INSERT INTO notifications (user_id,type,titre,message,lien) VALUES (?,?,?,?,?)",
                         [$g['id'], 'info', "🎞️ Commande {$l['numero_commande']} : bobines choisies",
-                         "Le GSB a choisi les bobines — la commande peut être expédiée.", '/pages/commandes.php']);
+                         "Bobines choisies par " . trim(($user['prenom'] ?? '') . ' ' . ($user['nom'] ?? '')) . " — la commande peut être expédiée.", '/pages/commandes.php']);
                 }
             }
             audit_log($user['id'], 'UPDATE', 'commandes', $cmd_id,
@@ -1988,11 +1992,11 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
             <?php if (!$is_coord && in_array($cmd['statut'], ['en_cours_livraison', 'recu', 'livre'], true)): ?>
             <a href="?id=<?= $cmd['id'] ?>&bl=1" target="_blank" class="btn btn-secondary btn-sm" style="white-space:nowrap" title="Imprimer le bon de livraison" aria-label="Imprimer le bon de livraison en PDF"><i class="ph ph-truck" aria-hidden="true"></i> BL</a>
             <?php endif; ?>
-            <?php if(($is_gsb || ($is_gestionnaire && !$bob_a_choisir)) && $cmd['statut']==='en_attente_livraison' && (int)$cmd['nb_lignes_bobine'] > 0 && cmdbob_actif()): ?>
+            <?php if($peut_choisir_bob && $cmd['statut']==='en_attente_livraison' && (int)$cmd['nb_lignes_bobine'] > 0 && cmdbob_actif()): ?>
               <button class="btn btn-sm" style="background:#E0F2FE;color:#075985;border:1.5px solid #7DD3FC;white-space:nowrap" onclick="ouvrirBobines(<?= $cmd['id'] ?>,'<?= h($cmd['numero_commande']) ?>',<?= $bob_a_choisir ? 'false' : 'true' ?>)"><i class="ph ph-film-strip" aria-hidden="true"></i> <?= $bob_a_choisir ? 'Choisir les bobines' : 'Bobines choisies' ?></button>
             <?php endif; ?>
             <?php if($is_gestionnaire && $cmd['statut']==='en_attente_livraison'): ?>
-              <?php if($bob_a_choisir && $is_gsb): /* il choisit lui-même : bouton ci-dessus */ ?>
+              <?php if($bob_a_choisir && $peut_choisir_bob): /* il choisit lui-même : bouton ci-dessus */ ?>
               <?php elseif($bob_a_choisir): ?>
               <span class="btn btn-sm" style="background:#F1F5F9;color:#475569;border:1.5px dashed #CBD5E1;cursor:default;white-space:nowrap" title="Le GSB doit d'abord choisir les bobines de cette commande"><i class="ph ph-hourglass" aria-hidden="true"></i> En attente du GSB</span>
               <?php else: ?>
@@ -2225,7 +2229,7 @@ $lbl_prepa   = $is_coord ? 'En préparation' : 'À préparer';
 <?php endif; ?>
 
 <!-- ═══ MODAL BOBINES (GSB) — choix des bobines d'une ligne « bobine » ═══ -->
-<?php if($is_gsb || $is_gestionnaire): ?>
+<?php if($peut_choisir_bob): ?>
 <div id="modalBobines" style="display:none;position:fixed;inset:0;background:rgba(6,3,58,.55);z-index:1000;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto">
   <div style="background:white;border-radius:18px;padding:26px;width:680px;max-width:96vw;box-shadow:0 20px 60px rgba(0,0,0,.25);margin:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -3087,7 +3091,7 @@ async function ouvrirLivraison(cmdId,numCmd){
               ${depotsData.map(d=>`<option value="${d.id}" ${d.id===depotParDefaut(l)?'selected':''}>${escB(d.nom)} (${d.type==='magasin'?'magasin':'entrepôt'})</option>`).join('')}
             </select></div>
             <div id="stockDepot${i}" style="font-size:12px;font-weight:700;margin-top:3px"></div>`:''}
-          ${(estRouleau(l.type_article)&&(l.bobines||[]).length)?`<div style="font-size:12px;margin-top:3px;color:#075985">Bobines choisies par le GSB : <strong style="font-family:monospace">${l.bobines.map(b=>escB(b.numero)).join(', ')}</strong></div>`:''}
+          ${(estRouleau(l.type_article)&&(l.bobines||[]).length)?`<div style="font-size:12px;margin-top:3px;color:#075985">Bobines choisies : <strong style="font-family:monospace">${l.bobines.map(b=>escB(b.numero)).join(', ')}</strong></div>`:''}
           ${l.statut_ligne==='rejete'?'<span style="background:#FEE2E2;color:#991B1B;padding:2px 7px;border-radius:8px;font-size:10.5px;font-weight:700">❌ Ligne rejetée — '+escB(l.motif_rejet)+'</span>':''}
         </div>
         <div>
@@ -3100,7 +3104,7 @@ async function ouvrirLivraison(cmdId,numCmd){
             data-idx="${i}" data-qte="${l.quantite}" data-libelle="${escB(l.libelle)}"
             value="${l.qte_bobines ?? l.quantite}" min="0" step="1" onchange="checkEcart(${i})"
             style="border-radius:8px;text-align:center;font-weight:800"
-            ${l.qte_bobines!==undefined?'readonly title="Quantité issue des bobines choisies par le GSB"':''}>`}
+            ${l.qte_bobines!==undefined?'readonly title="Quantité issue des bobines choisies"':''}>`}
         </div>
         <div id="motifGrp${i}" style="display:none">
           <label style="font-size:12px;font-weight:700;color:var(--warning-d);display:block;margin-bottom:4px">Motif écart *</label>
