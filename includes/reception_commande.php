@@ -31,6 +31,12 @@ require_once __DIR__ . '/achats.php';
 
 const RCP_DECISIONS = ['restitue' => 'Remis en stock au dépôt', 'renvoye' => 'Renvoyé (nouvelle commande)', 'perte' => 'Passé en perte'];
 
+/** Libellé d'une décision : une commande inter-site rend au site fournisseur, pas au dépôt. */
+function rcp_libelle_decision(string $dec, array $cmd): string {
+    if ($dec === 'restitue' && !empty($cmd['site_source_id'])) return 'Rendu au site fournisseur';
+    return RCP_DECISIONS[$dec] ?? $dec;
+}
+
 function rcp_disponible(): bool {
     static $ok = null;
     return $ok ??= db_colonne_existe('commande_lignes', 'quantite_recue')
@@ -474,7 +480,7 @@ function rcp_traiter(int $cmd_id, array $decisions, string $notes, array $user, 
         }
 
         $resume = [];
-        foreach (array_count_values($a_faire) as $d => $n) $resume[] = "$n " . mb_strtolower(RCP_DECISIONS[$d]);
+        foreach (array_count_values($a_faire) as $d => $n) $resume[] = "$n " . mb_strtolower(rcp_libelle_decision($d, $cmd));
         $resume = implode(', ', $resume) . ($renvoi_num ? " — commande $renvoi_num à expédier" : '');
         audit_log($user['id'], 'UPDATE', 'commandes', $cmd_id, "Écarts de réception traités : $resume" . ($notes !== '' ? " ($notes)" : ''));
 

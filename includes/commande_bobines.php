@@ -85,12 +85,13 @@ function cmdbob_par_ligne(int $cmd_id, string $statut = 'assigne'): array {
     if (!cmdbob_actif()) return [];
     $r = [];
     foreach (db_fetch_all(
-        "SELECT clb.commande_ligne_id, clb.bobine_id, clb.numero_bobine, b.stock_systeme, b.qte_initiale
+        "SELECT clb.commande_ligne_id, clb.bobine_id, clb.numero_bobine, b.stock_systeme, b.qte_initiale, b.films_restants
          FROM commande_ligne_bobines clb
          LEFT JOIN op_bobines b ON b.id = clb.bobine_id
          WHERE clb.commande_id=? AND clb.statut=? ORDER BY clb.numero_bobine", [$cmd_id, $statut]) as $x) {
         $r[(int)$x['commande_ligne_id']][] = ['id' => (int)$x['bobine_id'], 'numero' => $x['numero_bobine'],
                                               'stock_systeme' => (int)$x['stock_systeme'],
+                                              'films_restants' => (int)$x['films_restants'],
                                               'qte_initiale'  => (int)$x['qte_initiale']];
     }
     return $r;
@@ -121,8 +122,10 @@ function cmdbob_films_demandes(array $l): int {
  * ou 499 compte pour une bobine de 500 : son manque d'origine est toléré.
  * $bobines : lignes avec stock_systeme et qte_initiale.
  * $inter_site : commande servie par un autre site (includes/commande_inter_site.php) —
- * il cède ce qu'il a, entamé compris : jamais plus que demandé, mais moins
- * est admis (l'écart se justifie à l'enlèvement).
+ * il cède ce qu'il a, entamé compris (stock_systeme porte alors les films
+ * restants ERP) : moins que demandé, ou tout ce qu'il faut pour couvrir la
+ * demande, mais pas un rouleau inutile — sans le plus petit rouleau choisi,
+ * la demande ne doit pas être déjà couverte. L'écart se justifie à l'enlèvement.
  * Renvoie null si le choix est bon, sinon le message à afficher.
  */
 function cmdbob_controle(array $l, array $bobines, bool $inter_site = false): ?string {
@@ -135,10 +138,16 @@ function cmdbob_controle(array $l, array $bobines, bool $inter_site = false): ?s
         $somme  += (int)$b['stock_systeme'];
         $tolere += min(CMDBOB_MANQUE_INITIAL_MAX, max(0, $fb - (int)$b['qte_initiale']));
     }
+    if ($inter_site) {
+        if ($somme <= 0) return "Choisissez au moins un rouleau.";
+        $plus_petit = min(array_map(fn($b) => (int)$b['stock_systeme'], $bobines));
+        if (count($bobines) > 1 && $somme - $plus_petit >= $cible)
+            return "Un rouleau de trop : sans le plus petit ($plus_petit $mot), les rouleaux choisis couvrent déjà les $cible $mot demandés.";
+        return null;
+    }
     if ($somme > $cible)
         return "Les rouleaux choisis totalisent $somme $mot : c'est " . ($somme - $cible)
              . " de plus que les $cible $mot demandés.";
-    if ($inter_site) return $somme > 0 ? null : "Choisissez au moins un rouleau.";
     if ($somme < $cible - $tolere)
         return "Les rouleaux choisis totalisent $somme $mot : il manque " . ($cible - $somme)
              . " $mot pour atteindre les $cible demandés.";
@@ -147,12 +156,12 @@ function cmdbob_controle(array $l, array $bobines, bool $inter_site = false): ?s
 
 /**
  * Quantité livrée d'une ligne bobine, dans son unité : la commande en bobines,
- * ou les films des bobines choisies. Inter-site, en bobines : le nombre de
- * rouleaux cédés (il peut être inférieur à la commande).
+ * ou les films des bobines choisies. Inter-site : en bobines, le nombre de
+ * rouleaux cédés ; en films, leurs films restants ERP (pas OptoTrace).
  */
 function cmdbob_qte_livree(array $l, array $bobines, bool $inter_site = false): int {
-    if (cmdbob_en_bobines($l)) return $inter_site ? min((int)$l['quantite'], count($bobines)) : (int)$l['quantite'];
-    return array_sum(array_map(fn($b) => (int)$b['stock_systeme'], $bobines));
+    if (cmdbob_en_bobines($l)) return $inter_site ? count($bobines) : (int)$l['quantite'];
+    return array_sum(array_map(fn($b) => (int)($inter_site ? ($b['films_restants'] ?? $b['stock_systeme']) : $b['stock_systeme']), $bobines));
 }
 
 /** Nombre de lignes bobine validées d'une commande pour lesquelles le GSB n'a encore rien choisi. */

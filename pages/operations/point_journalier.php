@@ -877,6 +877,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
     // ── CHARGER BOBINES D'UN SITE
     if ($action === 'get_bobines_site') {
         $site_id = (int)($_POST['site_id'] ?? 0);
+        // Point rouvert (modification) : ses bobines restent proposées même si
+        // une commande les a réservées depuis (le serveur les accepte, cf.
+        // $_pj_bob_avant dans save_point).
+        $point_edit = (int)($_POST['point_id'] ?? 0);
         // Uniquement les bobines EN UTILISATION pour le PJ
         $rows = db_fetch_all(
             "SELECT b.id, b.numero, b.type_code, b.serie, b.films_restants, b.stock_systeme,
@@ -884,9 +888,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_ajax()) {
              FROM op_bobines b
              LEFT JOIN op_types_vehicule tv ON tv.id=b.type_vehicule_id
              WHERE b.site_id=? AND b.statut='en_cours'
-               AND " . cmdbob_sql_libre('b') . "
+               AND (" . cmdbob_sql_libre('b') . "
+                    OR b.id IN (SELECT fu.bobine_id FROM op_films_utilises fu
+                                JOIN op_points_journaliers p ON p.id = fu.point_id
+                                WHERE fu.point_id = ? AND p.site_id = ?))
              ORDER BY b.serie, b.numero ASC",
-            [$site_id]
+            [$site_id, $point_edit, $site_id]
         );
         json_response(true, '', $rows);
     }
@@ -3015,7 +3022,7 @@ async function loadBobines(){
   const fc=document.getElementById('films-container');
   if(!sid){fc.innerHTML='<div style="text-align:center;color:var(--muted);padding:20px">Sélectionnez un site.</div>';return;}
   fc.innerHTML='<div style="text-align:center;color:var(--muted);padding:20px">⏳ Chargement...</div>';
-  const d = await ap({action:'get_bobines_site',site_id:sid});
+  const d = await ap({action:'get_bobines_site',site_id:sid,point_id:currentPointId||0});
   bobinesCache={};
   bobinesEnCours = d.data||[];
   bobinesEnCours.forEach(b=>bobinesCache[b.id]=b);

@@ -46,7 +46,7 @@ function cis_est_source_valide(int $site_source, int $site_dest): bool {
  * retirés : la céder fausserait le point).
  */
 function cis_sql_bobine_cessible(string $a = 'b'): string {
-    return "$a.statut IN ('en_stock','en_cours') AND $a.stock_systeme > 0
+    return "$a.statut IN ('en_stock','en_cours') AND $a.films_restants > 0
             AND " . cmdbob_sql_libre($a) . "
             AND NOT EXISTS (SELECT 1 FROM op_films_utilises fu
                             JOIN op_points_journaliers p ON p.id = fu.point_id
@@ -57,9 +57,11 @@ function cis_sql_bobine_cessible(string $a = 'b'): string {
 function cis_bobines_cessibles(array $l, int $site_source): array {
     $code = cmdbob_type_code((int)$l['article_id']);
     return db_fetch_all(
-        "SELECT b.id, b.numero, b.stock_systeme, b.qte_initiale, b.statut FROM op_bobines b
+        // Films réellement restants (ERP) sous le nom stock_systeme : c'est
+        // la quantité que compte le choix, comme à l'entrepôt.
+        "SELECT b.id, b.numero, b.films_restants AS stock_systeme, b.qte_initiale, b.statut FROM op_bobines b
          WHERE b.type_code=? AND b.site_id=? AND " . cis_sql_bobine_cessible('b') . "
-         ORDER BY b.stock_systeme DESC, b.numero", [$code, $site_source]);
+         ORDER BY b.films_restants DESC, b.numero", [$code, $site_source]);
 }
 
 /**
