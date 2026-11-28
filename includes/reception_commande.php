@@ -465,9 +465,11 @@ function rcp_traiter(int $cmd_id, array $decisions, string $notes, array $user, 
                  $cmd['created_by'], $user['id']]);
             $renvoi_id = (int)db_last_id();
             // Renvoi d'une commande inter-site : même site fournisseur.
+            // Renvoi d'une sortie diverse : même site fournisseur, déjà engagé.
             if (!empty($cmd['site_source_id']))
-                db_query("UPDATE commandes SET site_source_id=?, motif_inter_site=? WHERE id=?",
-                    [(int)$cmd['site_source_id'], "Renvoi des manquants de {$cmd['numero_commande']}", $renvoi_id]);
+                db_query("UPDATE commandes SET site_source_id=?, motif_inter_site=?, commande_origine_id=?, accepte_par=?, accepte_at=NOW() WHERE id=?",
+                    [(int)$cmd['site_source_id'], "Renvoi des manquants de {$cmd['numero_commande']}",
+                     $cmd['commande_origine_id'] ?? null, $cmd['accepte_par'] ?? null, $renvoi_id]);
             foreach ($renvois as $lid => $q) {
                 $l = db_fetch_one("SELECT * FROM commande_lignes WHERE id=?", [$lid]);
                 db_query("INSERT INTO commande_lignes (commande_id,type_article,article_id,libelle,quantite,unite,prix_unitaire,statut_ligne)

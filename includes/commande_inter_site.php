@@ -1,13 +1,15 @@
 <?php
 // ============================================================
 //  includes/commande_inter_site.php
-//  Commandes inter-sites (sql/migration_commandes_inter_site.sql) : un site A
-//  commande à un autre site de production B plutôt qu'à un dépôt.
-//   1. le coordinateur de A crée la commande, site fournisseur B, motif ;
-//      il voit seulement si B a de quoi servir chaque ligne (« disponible /
-//      insuffisant »), jamais ses quantités ;
-//   2. le superviseur valide ligne par ligne, comme toute commande ;
-//   3. le coordinateur de B (ou le GSB) choisit les bobines précises chez B,
+//  Sorties diverses (sql/migration_commandes_inter_site.sql) : un site A est
+//  servi par un autre site de production B plutôt que par un dépôt.
+//   1. A commande normalement ; le superviseur valide ;
+//   2. le gestionnaire de stock, ligne par ligne, fait sortir tout ou partie
+//      de la quantité chez un ou plusieurs sites : chaque site reçoit une
+//      commande liée (commande_origine_id, ligne_origine_id) ; le reste part
+//      du dépôt comme d'habitude ;
+//   3. B accepte (ou refuse, la quantité revient alors à la commande
+//      d'origine), puis son coordinateur (ou le GSB) choisit les bobines,
 //      entamées comprises, hors bobines d'un point de B pas encore validé ;
 //   4. le gestionnaire de stock envoie un chauffeur : l'enlèvement débite le
 //      stock de B (pas le stock central) ; le BL part avec le chauffeur ;
@@ -23,7 +25,9 @@ const CIS_TYPES = ['bobine', 'vignette', 'rivet', 'pmma', 'article'];
 
 function cis_actif(): bool {
     static $a = null;
-    return $a ??= db_colonne_existe('commandes', 'site_source_id');
+    // Les colonnes de la sortie diverse arrivent avec la même migration.
+    return $a ??= db_colonne_existe('commandes', 'commande_origine_id')
+               && db_colonne_existe('commande_lignes', 'ligne_origine_id');
 }
 
 /** Sites qui peuvent fournir un autre site : sites de production actifs, hors $exclu. */
@@ -108,6 +112,66 @@ function cis_ligne_en_films(array $l): array {
         $l['unite']    = 'UNITE';
     }
     return $l;
+}
+
+/**
+ * Quantité d'une ligne enfant (en films si rouleaux) ramenée dans l'unité de
+ * la ligne d'origine : une ligne commandée en BOBINE a été convertie en films.
+ */
+function cis_qte_vers_origine(array $origine, int $qte_enfant): int {
+    if (cmdbob_est_rouleau($origine['type_article'] ?? '') && cmdbob_en_bobines($origine)) {
+        $fb = max(1, cmdbob_films_bobine($origine));
+        return intdiv($qte_enfant, $fb);
+    }
+    return $qte_enfant;
+}
+
+/** Stock de la ligne chez un site, pour le gestionnaire : films restants cessibles, ou stock suivi. */
+function cis_stock_site(array $l, int $site_id): int {
+    if (cmdbob_est_rouleau($l['type_article'] ?? '')) {
+        if (empty($l['article_id'])) return 0;
+        return array_sum(array_map(fn($b) => (int)$b['stock_systeme'], cis_bobines_cessibles($l, $site_id)));
+    }
+    return (int)(rcp_stock($l, $site_id) ?? 0);
+}
+
+/** Sorties diverses issues d'une ligne : numéro, site, quantité, état. */
+function cis_sorties_ligne(int $ligne_id): array {
+    if (!cis_actif()) return [];
+    $r = [];
+    foreach (db_fetch_all(
+        "SELECT c.id, c.numero_commande, c.statut, c.accepte_at, c.site_source_id, s.nom AS site_nom,
+                cl.quantite, cl.unite, cl.quantite_livree, cl.type_article
+         FROM commande_lignes cl
+         JOIN commandes c ON c.id = cl.commande_id
+         LEFT JOIN sites s ON s.id = c.site_source_id
+         WHERE cl.ligne_origine_id = ? ORDER BY c.id", [$ligne_id]) as $x) {
+        // Commande de reprise (sortie diverse refusée après l'expédition) :
+        // elle part du dépôt, sans acceptation.
+        $reprise = empty($x['site_source_id']);
+        $etat = match (true) {
+            $reprise && $x['statut'] === 'en_attente_livraison' => 'à expédier',
+            $x['statut'] === 'rejete' => 'refusée',
+            $x['statut'] === 'annule' => 'annulée',
+            $x['statut'] === 'en_attente_livraison' && empty($x['accepte_at']) => 'à accepter',
+            $x['statut'] === 'en_attente_livraison' => 'acceptée',
+            $x['statut'] === 'en_cours_livraison' => 'enlevée',
+            in_array($x['statut'], ['recu', 'livre'], true) => 'reçue',
+            default => $x['statut'],
+        };
+        $unite = cmdbob_est_rouleau($x['type_article']) && strtoupper((string)$x['unite']) === 'UNITE'
+            ? ($x['type_article'] === 'vignette' ? 'vignettes' : 'films') : $x['unite'];
+        $r[] = ['commande_id' => (int)$x['id'], 'numero' => $x['numero_commande'],
+                'site' => $reprise ? 'le dépôt' : $x['site_nom'],
+                'quantite' => (int)$x['quantite'], 'unite' => $unite, 'etat' => $etat, 'reprise' => $reprise];
+    }
+    return $r;
+}
+
+/** Libellé court des sorties diverses d'une ligne (traçabilité dans le détail et le BL). */
+function cis_libelle_sorties(array $sorties): string {
+    return implode(' ; ', array_map(fn($s) => "{$s['quantite']} {$s['unite']} " . ($s['reprise'] ? 'repris par ' : 'chez ')
+        . "{$s['site']} ({$s['numero']}, {$s['etat']})", $sorties));
 }
 
 /** Le site est-il un dépôt (entrepôt, magasin) ? Seul un dépôt suit le stock central des articles. */

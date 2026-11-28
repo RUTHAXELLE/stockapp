@@ -170,6 +170,7 @@ function cmdbob_lignes_a_choisir(int $cmd_id): int {
     return (int)db_fetch_value(
         "SELECT COUNT(*) FROM commande_lignes cl
          WHERE cl.commande_id=? AND cl.type_article IN " . CMDBOB_TYPES_SQL . " AND cl.statut_ligne='valide'
+           AND cl.quantite > 0   -- ligne entièrement servie par sortie diverse : rien à choisir
            AND NOT EXISTS (SELECT 1 FROM commande_ligne_bobines clb
                            WHERE clb.commande_ligne_id = cl.id AND clb.statut = 'assigne')", [$cmd_id]);
 }

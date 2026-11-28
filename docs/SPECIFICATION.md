@@ -1357,41 +1357,53 @@ reposent sur la quantité **reçue**.
 prix ni stock central. La liste est triée selon ce que chaque rôle doit
 traiter.
 
-**Commandes inter-sites** (`includes/commande_inter_site.php`,
-`sql/migration_commandes_inter_site.sql`). `commandes.site_source_id` désigne
-un site de production fournisseur (NULL : commande servie par un dépôt),
-avec `motif_inter_site` (obligatoire) et `chauffeur` (à l'enlèvement).
+**Sorties diverses** (`includes/commande_inter_site.php`,
+`sql/migration_commandes_inter_site.sql`). Une ligne d'une commande
+`en_attente_livraison` peut être servie, en tout ou partie, par un autre
+site de production. Colonnes : `commandes.site_source_id` (site
+fournisseur), `commande_origine_id` (commande d'origine), `motif_inter_site`,
+`accepte_par` / `accepte_at`, `chauffeur` ; `commande_lignes.ligne_origine_id`.
 
-- **Création** : types cédables `bobine`, `vignette`, `rivet`, `pmma`,
-  `article` hors catégories d'équipement (`cis_controle_ligne()`) ; source
-  ≠ destination, site actif hors entrepôt, magasin et siège. La règle « une
-  commande en attente par site » vaut séparément pour les commandes au dépôt
-  et inter-sites. L'action `cis_dispo` ne renvoie au demandeur qu'un booléen
-  par ligne (`cis_disponible()`).
-- **Choix des bobines** : coordinateur du site source ou GSB
-  (`cmd_peut_choisir_bob()`), parmi `cis_bobines_cessibles()` — `en_stock`
-  ou `en_cours`, films restants > 0, libres (`cmdbob_sql_libre()`) et
-  absentes de tout point non validé. Les films comptés sont les films
-  restants ERP (`films_restants`), pas la quantité OptoTrace. Contrôle
-  souple (`cmdbob_controle(..., true)`) : moins que demandé, ou tout ce qu'il
-  faut pour couvrir la demande, sans rouleau inutile (sans le plus petit, la
-  demande ne doit pas être déjà couverte). Une ligne de rouleaux commandée
-  en BOBINE est convertie en films à la création (`cis_ligne_en_films()` :
-  N × contenance du type, unité UNITE) : le livré est la somme des films
-  restants cédés, et tout manque exige un motif à l'enlèvement.
+- **Création** (fonction Magasin, action `sortie_diverse`) : ligne validée,
+  quantité entre 1 et la quantité restante, types cédables (`bobine`,
+  `vignette`, `rivet`, `pmma`, `article` hors équipements,
+  `cis_controle_ligne()`), pas de bobines déjà choisies sur la ligne. Une
+  commande liée par site fournisseur tant qu'elle n'est pas acceptée (une
+  nouvelle ligne s'y ajoute) ; statut `en_attente_livraison`, validée d'office.
+  La ligne d'origine est diminuée ; une ligne de rouleaux est convertie en
+  films (`cis_ligne_en_films()`). Si plus rien ne reste à expédier, la
+  commande d'origine passe `livre` (« Entièrement servie par sorties
+  diverses »). `sd_sites` donne au magasin le stock de chaque site.
+- **Acceptation** (coordinateur du site fournisseur, ou administrateur) :
+  `accepter_sortie` renseigne `accepte_at` ; sans elle, ni choix des bobines
+  (`cmd_peut_choisir_bob()`), ni enlèvement. `refuser_sortie` (motif) passe
+  la commande liée `rejete` et rend la quantité à la ligne d'origine
+  (`cis_qte_vers_origine()`) ; une commande d'origine fermée rouvre, une
+  commande déjà expédiée reçoit une commande de **reprise** au dépôt
+  (`commande_origine_id` renseigné, `site_source_id` NULL).
+- **Choix des bobines** : coordinateur du site source ou GSB, parmi
+  `cis_bobines_cessibles()` — `en_stock` ou `en_cours`, films restants > 0,
+  libres (`cmdbob_sql_libre()`), absentes de tout point non validé. Films
+  comptés : `films_restants` (ERP). Contrôle souple
+  (`cmdbob_controle(..., true)`) : moins que demandé, ou de quoi couvrir la
+  demande, sans rouleau inutile.
 - **Réservation** : `cmdbob_reservee()` exclut la bobine du point journalier
-  (`get_bobines_site`, refus à l'enregistrement sauf si elle était déjà dans
-  le point), de l'affectation manuelle et de la demande d'utilisation.
-- **Enlèvement** (fonction Magasin) : chaque ligne est débitée du site source
-  (`depot_source_id` = source, sans `articles.stock_global`) ; chaque bobine
-  est revérifiée encore sur le site et hors point non validé ; mouvement
-  `transfert` « Enlevée chez … par … ». BL titré « Transfert inter-site »
-  (site fournisseur, chauffeur, réceptionnaire).
+  (sauf si elle était déjà dans le point rouvert), de l'affectation manuelle
+  et de la demande d'utilisation.
+- **Enlèvement** (fonction Magasin, après acceptation) : chaque ligne est
+  débitée du site source (`depot_source_id`, sans `articles.stock_global`) ;
+  chaque bobine est revérifiée ; chauffeur obligatoire ; BL « Sortie diverse
+  de … ».
 - **Réception et écarts** : inchangées ; une remise en stock rend la quantité
-  au site source (`rcp_remettre_en_stock()`, stock central seulement pour un
-  dépôt) ; un renvoi garde le site source.
-- **Visibilité** : `cmd_visible()` ouvre la commande au coordinateur du site
-  source, qui ne la réceptionne, ne la corrige ni ne l'annule.
+  au site source (« Rendu au site fournisseur ») ; un renvoi garde le site
+  source, déjà accepté.
+- **Traçabilité** : `cis_sorties_ligne()` liste, pour une ligne d'origine,
+  les commandes liées et leur état ; repris dans `get_lignes`, le détail, le
+  BL et la liste (`nb_sorties`, `origine_numero`).
+- **Visibilité** : `cmd_visible()` ouvre la commande liée au coordinateur du
+  site source, qui l'accepte, la prépare, mais ne la réceptionne, ne la
+  corrige ni ne l'annule. Le stock des sites et des dépôts
+  (`get_stock_depot`, `sd_sites`) est réservé au magasin.
 
 ### 9.8 Équipements et articles
 

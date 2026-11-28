@@ -528,44 +528,44 @@ Livré partiellement, Livré, Non reçu, Reçu partiel.
 > central, et sans le BL (le site signe celui qui arrive avec la
 > marchandise). La liste montre d'abord ce que chacun doit traiter.
 
-#### Commander à un autre site (inter-site)
+#### Sortie diverse : faire servir une ligne par un autre site
 
-Quand un site manque d'une matière qu'un autre site a en stock, il peut la
-lui commander au lieu de l'entrepôt. La commande suit le même circuit, avec
-trois différences : qui prépare, qui transporte, et d'où sort le stock.
+Quand le dépôt manque d'une matière qu'un autre site a en stock, le
+gestionnaire de stock peut faire servir tout ou partie d'une ligne par ce
+site. Le site demandeur commande normalement et ne choisit rien.
 
-1. **Le coordinateur du site demandeur** coche « Commander à un autre
-   site », choisit le **site fournisseur** et donne un **motif**. Seuls les
-   bobines, vignettes, rivets, PMMA et articles du catalogue se commandent
-   ainsi (un équipement passe par une affectation). Pour chaque ligne, la
-   colonne « Chez le fournisseur » indique **Disponible** ou
-   **Insuffisant**, sans montrer les quantités de l'autre site.
-2. **Le superviseur valide** ligne par ligne, comme pour toute commande.
-3. **Le coordinateur du site fournisseur** (ou le GSB) choisit les bobines à
-   céder, en stock ou entamées. Une bobine saisie dans un point pas encore
-   validé ne peut pas être choisie. Il peut céder moins que demandé, ou
-   tout ce qu'il faut pour couvrir la demande, mais pas un rouleau inutile.
-   Les quantités affichées sont les films restants. Une commande en bobines
-   est convertie en films (2 bobines = 1000 films) : si le fournisseur cède
-   500 + 150, il part 650 films et le gestionnaire justifie l'écart de 350 à
-   l'enlèvement. Les bobines choisies sont réservées : elles disparaissent du point
-   journalier du site fournisseur et ne peuvent plus être mises en
-   utilisation.
-4. **Le gestionnaire de stock envoie un chauffeur** : bouton « Enlever
-   chez … », nom du chauffeur obligatoire. L'enlèvement débite le stock du
-   site fournisseur. Le BL « Transfert inter-site » part avec le chauffeur ;
-   le site fournisseur le signe à la remise, le site demandeur à l'arrivée.
-5. **Le site demandeur réceptionne**, ligne par ligne, comme d'habitude.
-   Un manque remis en stock retourne au **site fournisseur**.
+1. **Le site commande, le superviseur valide**, comme d'habitude.
+2. **Le gestionnaire de stock**, dans la fenêtre d'expédition, clique sur
+   **Sortie diverse** sous la ligne : il choisit le site (la liste montre le
+   stock de chaque site) et la quantité. La ligne peut être **partagée** (par
+   exemple 600 rivets du dépôt et 400 chez un site) et servie par **plusieurs
+   sites**. Chaque site reçoit une **commande liée**, numérotée à part ; la
+   ligne d'origine est diminuée d'autant. Les bobines, vignettes, rivets,
+   PMMA et articles du catalogue peuvent partir ainsi, pas les équipements.
+   Une ligne dont les bobines sont déjà choisies doit d'abord être refaite.
+3. **Le site fournisseur accepte ou refuse** (boutons Accepter / Refuser,
+   motif obligatoire pour un refus). Un refus rend la quantité à la commande
+   d'origine ; si celle-ci est déjà expédiée, une commande de **reprise**
+   part du dépôt.
+4. **Une fois acceptée**, son coordinateur (ou le GSB) choisit les bobines à
+   céder, en stock ou entamées, hors bobines d'un point pas encore validé. Il
+   peut céder moins que demandé, ou tout ce qu'il faut pour couvrir la
+   demande, mais pas un rouleau inutile. Les quantités affichées sont les
+   films restants ; une ligne en bobines est convertie en films (2 bobines =
+   1000 films). Les bobines choisies sont réservées : elles disparaissent du
+   point journalier du site fournisseur.
+5. **Le gestionnaire de stock envoie un chauffeur** (« Enlever chez … », nom
+   obligatoire) : le stock du site fournisseur est débité, le BL « Sortie
+   diverse » part avec le chauffeur.
+6. **Le site demandeur réceptionne** la commande liée comme une autre. Un
+   manque remis en stock retourne au site fournisseur.
 
-Une commande inter-site porte la mention « depuis … » dans la liste. Le
-coordinateur du site fournisseur la voit aussi, mais il ne la réceptionne
-pas et ne l'annule pas. Un site peut avoir en même temps une commande à
-l'entrepôt et une commande inter-site en attente de validation.
-
-> **Commande bobines.** L'ancien écran Bobines → Commande bobines ne prend
-> plus de nouvelle demande : il renvoie vers Commandes. Les commandes déjà
-> en cours y vont jusqu'à leur réception.
+**Traçabilité.** Dans la liste, la commande d'origine indique son nombre de
+sorties diverses, et chaque commande liée porte « ↳ sortie diverse de … » et
+« depuis … ». Le détail et le BL de la commande d'origine listent, ligne par
+ligne, ce qui est parti en sortie diverse, chez qui, et où en est chaque
+commande liée (à accepter, acceptée, refusée, enlevée, reçue). Toutes les
+décisions sont dans le journal d'audit.
 
 ### 6.8 Archives des BL
 

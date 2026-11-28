@@ -754,21 +754,27 @@ d'origine, un renvoi ou une perte imputée au dépôt d'origine.
 prix ni stock central. Les bons de livraison signés sont consultables et
 exportables par le magasin, les superviseurs et l'administration.
 
-**EF-CMD-8** — Un site peut commander à un autre site de production
-(commande inter-site), avec un motif obligatoire, pour les bobines,
-vignettes, rivets, PMMA et articles du catalogue. Le demandeur voit seulement
-si le site fournisseur peut servir chaque ligne (« disponible /
-insuffisant »), jamais ses quantités.
+**EF-CMD-8** — Sur une commande validée, le gestionnaire de stock peut, ligne
+par ligne, faire servir tout ou partie de la quantité par un ou plusieurs
+autres sites de production (« sortie diverse »), pour les bobines, vignettes,
+rivets, PMMA et articles du catalogue. Chaque site reçoit une commande liée ;
+le reste part du dépôt. Le site demandeur commande normalement.
 
-**EF-CMD-9** — Après validation du superviseur, le coordinateur du site
-fournisseur (ou le GSB) choisit les bobines à céder, entamées comprises, hors
-bobines d'un point pas encore validé. Les bobines choisies ne sont plus
-utilisables par le site fournisseur.
+**EF-CMD-9** — Le site fournisseur accepte ou refuse la sortie diverse (motif
+obligatoire en cas de refus) avant toute préparation. Un refus rend la
+quantité à la commande d'origine, ou crée une commande de reprise au dépôt si
+elle est déjà expédiée.
 
-**EF-CMD-10** — Le gestionnaire de stock envoie un chauffeur (nom
-obligatoire) : l'enlèvement débite le stock du site fournisseur et produit un
-bon de livraison « Transfert inter-site ». Le site demandeur réceptionne ;
-un manque remis en stock retourne au site fournisseur.
+**EF-CMD-10** — Une fois la sortie acceptée, le coordinateur du site
+fournisseur (ou le GSB) choisit les bobines à céder ; le gestionnaire de stock
+envoie un chauffeur (nom obligatoire) ; l'enlèvement débite le stock du site
+fournisseur et produit un bon de livraison. Le site demandeur réceptionne ; un
+manque remis en stock retourne au site fournisseur.
+
+**EF-CMD-11** — Traçabilité : chaque commande liée porte sa commande
+d'origine, chaque ligne d'origine liste ses sorties diverses (site, quantité,
+état), dans la liste, le détail et le bon de livraison, et chaque décision est
+journalisée.
 
 ### 5.14 Notifications par mail
 

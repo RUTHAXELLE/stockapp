@@ -4,12 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cahier des charges — ERP EMUCI</title>
-<meta name="description" content="Cahier des charges de l'ERP EMUCI, arrêté au commit 29a140d">
+<meta name="description" content="Cahier des charges de l'ERP EMUCI, arrêté au commit ddbab6f">
 <meta name="author" content="GAYE Emmanuel">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
 <style>
+
 
 
 
@@ -246,6 +247,14 @@ h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
   color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
   border-bottom:2px solid var(--accent)}
 figure .mermaid{background:transparent}
+
+h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
+  border-bottom:2px solid var(--accent)}
+figure .mermaid{background:transparent}
+.contact{margin:.6rem 0 0;font-size:.85rem;color:var(--muted,#4d5876)}
+.contact b{color:inherit;font-weight:700}
+.contact a{color:inherit;text-decoration:none;border-bottom:1px dotted currentColor}
 
 h1.partie{font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;
   color:var(--accent-ink);margin:2.6rem 0 .4rem;padding-bottom:.35rem;
@@ -1159,19 +1168,24 @@ d'origine, un renvoi ou une perte imputée au dépôt d'origine.</p>
 <p><strong>EF-CMD-7</strong> — Le coordinateur ne voit que les commandes de son site, sans
 prix ni stock central. Les bons de livraison signés sont consultables et
 exportables par le magasin, les superviseurs et l'administration.</p>
-<p><strong>EF-CMD-8</strong> — Un site peut commander à un autre site de production
-(commande inter-site), avec un motif obligatoire, pour les bobines,
-vignettes, rivets, PMMA et articles du catalogue. Le demandeur voit seulement
-si le site fournisseur peut servir chaque ligne (« disponible /
-insuffisant »), jamais ses quantités.</p>
-<p><strong>EF-CMD-9</strong> — Après validation du superviseur, le coordinateur du site
-fournisseur (ou le GSB) choisit les bobines à céder, entamées comprises, hors
-bobines d'un point pas encore validé. Les bobines choisies ne sont plus
-utilisables par le site fournisseur.</p>
-<p><strong>EF-CMD-10</strong> — Le gestionnaire de stock envoie un chauffeur (nom
-obligatoire) : l'enlèvement débite le stock du site fournisseur et produit un
-bon de livraison « Transfert inter-site ». Le site demandeur réceptionne ;
-un manque remis en stock retourne au site fournisseur.</p>
+<p><strong>EF-CMD-8</strong> — Sur une commande validée, le gestionnaire de stock peut, ligne
+par ligne, faire servir tout ou partie de la quantité par un ou plusieurs
+autres sites de production (« sortie diverse »), pour les bobines, vignettes,
+rivets, PMMA et articles du catalogue. Chaque site reçoit une commande liée ;
+le reste part du dépôt. Le site demandeur commande normalement.</p>
+<p><strong>EF-CMD-9</strong> — Le site fournisseur accepte ou refuse la sortie diverse (motif
+obligatoire en cas de refus) avant toute préparation. Un refus rend la
+quantité à la commande d'origine, ou crée une commande de reprise au dépôt si
+elle est déjà expédiée.</p>
+<p><strong>EF-CMD-10</strong> — Une fois la sortie acceptée, le coordinateur du site
+fournisseur (ou le GSB) choisit les bobines à céder ; le gestionnaire de stock
+envoie un chauffeur (nom obligatoire) ; l'enlèvement débite le stock du site
+fournisseur et produit un bon de livraison. Le site demandeur réceptionne ; un
+manque remis en stock retourne au site fournisseur.</p>
+<p><strong>EF-CMD-11</strong> — Traçabilité : chaque commande liée porte sa commande
+d'origine, chaque ligne d'origine liste ses sorties diverses (site, quantité,
+état), dans la liste, le détail et le bon de livraison, et chaque décision est
+journalisée.</p>
 <h3>5.14 Notifications par mail</h3>
 <p><strong>EF-MAIL-1</strong> — Toute notification de l'application est aussi envoyée par
 mail, en file d'attente, sans bloquer l'action qui la déclenche.</p>
@@ -1652,7 +1666,7 @@ ajustées dans les écrans de paramétrage avant la mise en service.</strong></p
 <div class="impr-pied" style="margin-top:10mm;padding-top:4mm;border-top:1px solid #c3ccdf;
      font-size:9pt;color:#4d5876">
   Cahier des charges — ERP EMUCI — document interne. État du logiciel au commit
-  <code>29a140d</code>. Toute évolution fonctionnelle rend une section caduque :
+  <code>ddbab6f</code>. Toute évolution fonctionnelle rend une section caduque :
   vérifiez la version avant de vous y fier.<br>
   Auteur : GAYE Emmanuel — gayerodrigue@gmail.com — <span style="white-space:nowrap">+225 01 03 55 96 52</span>
 </div>
